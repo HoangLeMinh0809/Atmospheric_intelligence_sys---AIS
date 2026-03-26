@@ -12,7 +12,7 @@ docker exec namenode hdfs dfs -chmod -R 777 /checkpoints
 
 echo ""
 echo "=== Submit Spark Streaming Job ==="
-docker exec spark-master spark-submit \
+docker exec spark-master /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \
   --deploy-mode client \
   --name "StockPricesDaily_Streaming" \

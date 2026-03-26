@@ -17,6 +17,7 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_OPTS: -Dzookeeper.4lw.commands.whitelist=ruok
     networks:
       - bigdata-net
     healthcheck:
@@ -156,16 +157,48 @@ services:
       kafka:
         condition: service_healthy
     volumes:
-      - ./data:/data:ro                  # mount read-only thư mục data
       - ./company.xls.csv:/app/company.xls.csv:ro
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: stock-prices-daily
-      DATA_DIR: /data/stock_prices/data_raw
-      # Giới hạn số file xử lý (để test), 0 = tất cả
-      MAX_FILES: "5"
-      # Delay giữa mỗi message (ms) để không flood Kafka
+      # Số lượng công ty cào (từ đầu CSV), mặc định 50
+      NUM_COMPANIES: "5"
+      # Lookback: lấy dữ liệu bao nhiêu ngày về trước, mặc định 30
+      LOOKBACK_DAYS: "30"
+      # Delay giữa mỗi message gửi Kafka (ms)
       SEND_DELAY_MS: "10"
+      # Delay giữa mỗi request tới CafeF (ms), tránh bị rate-limit
+      API_DELAY_MS: "500"
+      # Khoảng cách giữa các vòng cào (giây). 86400=1 ngày, 0=chạy 1 lần
+      SCRAPE_INTERVAL_SECONDS: "86400"
+    networks:
+      - bigdata-net
+
+  # ---------------------------------------------------------------------------
+  # MONITORING UI — theo dõi throughput và trạng thái lưu dữ liệu vào HDFS
+  # ---------------------------------------------------------------------------
+  monitoring-ui:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile
+    container_name: monitoring-ui
+    hostname: monitoring-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      datanode:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: stock-prices-daily
+      HDFS_WEBHDFS_BASE: http://namenode:9870/webhdfs/v1
+      HDFS_OUTPUT_PATH: /data/stock_prices_daily
+      NAMENODE_JMX_URL: http://namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystem
+      METRICS_SAMPLE_SECONDS: "5"
+    ports:
+      - "8501:8501"
     networks:
       - bigdata-net
 

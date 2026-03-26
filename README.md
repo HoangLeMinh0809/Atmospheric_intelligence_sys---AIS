@@ -303,6 +303,26 @@ docker exec namenode hdfs dfs -ls -R /data/stock_prices_daily/
 docker exec namenode hdfs dfs -du -h /data/stock_prices_daily/
 ```
 
+### Bước 7 — Mở Monitoring UI (Realtime)
+
+```bash
+# Build và chạy dashboard service
+docker-compose up -d --build monitoring-ui
+
+# Mở UI
+# http://localhost:8501
+```
+
+Dashboard hiển thị:
+
+- Kafka throughput (messages/second)
+- Kafka total messages (tổng offset)
+- Số file Parquet + tổng dung lượng trong HDFS
+- Trạng thái DataNode (live/dead)
+- Cờ `Persisted To DataNode`:
+  - `YES`: đã có file parquet trong `/data/stock_prices_daily` và có DataNode live
+  - `NO`: chưa có file parquet hoặc DataNode chưa live
+
 ### Quick Start — Chạy tất cả
 
 ```bash
@@ -325,6 +345,29 @@ docker-compose run --rm ingest
 
 # 5. Submit Spark job (mở terminal riêng vì nó block)
 bash scripts/submit_spark.sh
+
+# 6. Mở monitoring dashboard
+docker-compose up -d --build monitoring-ui
+```
+
+### Quick Start (Windows) — 1 lệnh chạy full pipeline + UI
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
+```
+
+Script sẽ tự động:
+
+- Start tất cả container cần thiết: zookeeper, kafka, namenode, datanode, spark-master, spark-worker, monitoring-ui, ingest
+- Tạo Kafka topic `stock-prices-daily` nếu chưa có
+- Tạo HDFS directories + cấp quyền
+- Submit Spark Structured Streaming job ở background
+- Mở sẵn UI monitor tại `http://localhost:8501`
+
+Nếu cần tăng thời gian chờ service healthy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_all.ps1 -WaitSeconds 180
 ```
 
 ---
@@ -384,6 +427,13 @@ Mở HDFS Web UI: **http://localhost:9870** → Utilities → Browse the file sy
 # Script kiểm tra toàn bộ pipeline
 bash scripts/check_pipeline.sh
 ```
+
+### 7.5 Theo dõi realtime trên UI
+
+- Mở: **http://localhost:8501**
+- Nếu throughput = 0 trong thời gian dài: ingest có thể chưa đẩy thêm message.
+- Nếu Kafka total tăng nhưng `Persisted To DataNode = NO`: Spark chưa ghi ra HDFS hoặc HDFS path chưa có file parquet.
+- Nếu có lỗi kết nối, dashboard sẽ hiển thị ở dòng cuối phần `Cluster Status`.
 
 ---
 
