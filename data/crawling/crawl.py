@@ -10,12 +10,12 @@ API_KEY     = os.getenv("OPENAQ_API_KEY", "eda537e3a24d2d2b1951fd126d8816e91bc74
 BASE_URL    = "https://api.openaq.org/v3"
 OUTPUT_FILE = "openaq_vietnam_hourly.csv"
 
-HOURS_BACK = int(os.getenv("HOURS_BACK", "1"))
+HOURS_BACK = int(os.getenv("HOURS_BACK", "24"))
 DATE_TO   = datetime.now(timezone.utc)
 DATE_FROM = DATE_TO - timedelta(hours=HOURS_BACK)
 TARGET_PARAMETERS = {"pm25", "pm10", "no2", "o3", "co", "so2"}
 # Đặt số nhỏ hơn (vd: 5) để chạy thử nhanh; None = tất cả trạm
-MAX_LOCATIONS = None
+MAX_LOCATIONS = 100
 REQUEST_DELAY = 0.35
 PAGE_LIMIT = 1000  
 HEADERS = {
