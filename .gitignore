@@ -1,0 +1,38 @@
+# =============================================================================
+# Docker / Big Data
+# =============================================================================
+
+# HDFS data (persistent volumes)
+namenode_data/
+datanode_data/
+
+# Spark
+checkpoints/*
+!checkpoints/.gitkeep
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+.env
