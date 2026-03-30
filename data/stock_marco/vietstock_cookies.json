@@ -1,0 +1,116 @@
+﻿[
+    {
+        "name":  "ASP.NET_SessionId",
+        "value":  "sdwpizavvhdph5vw5qhmpfrb",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "__RequestVerificationToken",
+        "value":  "G8wve5h7AhUiUCiJGRoy9ae1h5mBdaJfvOHd8UC1RVSR--JmukWOeR7L87-JswtVYmgNJ_LMiBenYrTFdK2MIGcvf1tzH1I0GhgyMZjbGTw1",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "Theme",
+        "value":  "Light",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "_gid",
+        "value":  "GA1.2.1768606475.1773549035",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "AnonymousNotification",
+        "value":  "",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "language",
+        "value":  "en-US",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "FCCDCF",
+        "value":  "%5Bnull%2Cnull%2Cnull%2Cnull%2Cnull%2Cnull%2C%5B%5B32%2C%22%5B%5C%22820ceb2a-dcab-4857-b8da-7f5119ba3788%5C%22%2C%5B1773550556%2C487000000%5D%5D%22%5D%5D%5D",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "__qca",
+        "value":  "I0-692340243-1773550753361",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "CookieLogin",
+        "value":  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1lIjoibW9uYXJjbGVkQGdtYWlsLmNvbSIsImh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3dzLzIwMDUvMDUvaWRlbnRpdHkvY2xhaW1zL2hhc2giOiJzay1UeVlDSWREOHctTW1sa0xwSU5jOUhnIiwiaHR0cDovL3NjaGVtYXMueG1sc29hcC5vcmcvd3MvMjAwNS8wNS9pZGVudGl0eS9jbGFpbXMvbmFtZWlkZW50aWZpZXIiOiJtb25hcmNsZWRAZ21haWwuY29tIiwiZXhwIjoxNzc2MTgxMTA4LCJpc3MiOiIudmlldHN0b2NrLnZuIiwiYXVkIjoiLnZpZXRzdG9jay52biJ9.VE-uFe3s5rPAl0hwJMqM5OhBrr7lWp_XKnZTJnBO-oA",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "vst_usr_lg_token",
+        "value":  "P2ptUCS6o06vQOIj9/rrHQ==",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "_ga_EXMM0DKVEX",
+        "value":  "GS2.1.s1773592285$o3$g0$t1773592285$j60$l0$h0",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "_ga",
+        "value":  "GA1.2.1203614282.1773549035",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "cto_bidid",
+        "value":  "ViJ3al95aUUyemRnSyUyRkRBbUU1MWMweFJsTWhHT1RkY0JxckVTeUolMkZObXFjYm5tNEVPNlJmZ3g5c1A2TFNKMVNFV1BldXQ2UUdZTUhhNmluWGdlTlJkV3glMkYlMkY4NnJZbXhneTlOV2JPYVJxcFhGUHRzJTNE",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "cto_dna_bundle",
+        "value":  "eBE4fV85WWN6V3plQ1NWYUlYVXk2YWxWdVhZZ2xRcjdqeU5JYUlBWCUyQk5zQ2lvN2s4VUV1dTVnOU1VaGZLYkczcjhlJTJGMU0yS1hxUnN3MVBTa2J5YkY4WENVRlElM0QlM0Q",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "FCNEC",
+        "value":  "%5B%5B%22AKsRol9YzBBm6OR0gVeQpeID7zdYktjC-YOuqWhrmUeU2z8DbTOLDu9Pkucw06rkpiHzKQsQsnK7AB-Meyo-AA6D5VkKi318avcrG82BqUWSoQ1CjDJ5KT4wSSsIQtO1gKDXWYsezaqjqjMEGon-KCbWxrUNrWU8Fg%3D%3D%22%5D%5D",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "__gads",
+        "value":  "ID=71814085f679c847:T=1773550544:RT=1773592275:S=ALNI_MbNKUSr-MDqzAf1kEApvlc3-KbcCw",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "__gpi",
+        "value":  "UID=0000121dd0964918:T=1773550544:RT=1773592275:S=ALNI_MYG0-0GmRYJWBxm-ys7fS4peEpgoQ",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "__eoi",
+        "value":  "ID=3bce21f01d11b311:T=1773550544:RT=1773592275:S=AA-AfjaDbrR0ckWT41TAtBjI0NaL",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    },
+    {
+        "name":  "cto_bundle",
+        "value":  "xoNiJ185WWN6V3plQ1NWYUlYVXk2YWxWdVhaUEE1JTJCdGVhbHZxZmtJRG0yNm1PQUhnTUpRUzdYb08lMkZvQkZDOXVxazU4UzlKdEE0aGI0RzBCSzM2UyUyRmJQcUZWQWtRMmF4Z3FBJTJCQlJqaFdLSHJwdmMlMkZ6OGFXbGM4TUQ4blhSd3pla0NWZWlZSlBvelY5QiUyRlNGQ29GcDBCenE5JTJGZyUzRCUzRA",
+        "domain":  "finance.vietstock.vn",
+        "path":  "/"
+    }
+]

@@ -198,6 +198,28 @@ services:
     networks:
       - bigdata-net
 
+  # ---------------------------------------------------------------------------
+  # OPENAQ INGEST — đọc file output từ crawler (csv) và gửi vào Kafka
+  # ---------------------------------------------------------------------------
+  openaq-ingest:
+    build:
+      context: ./ingest
+      dockerfile: Dockerfile
+    container_name: openaq-ingest
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./data:/data:ro
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: openaq-hourly
+      INPUT_FILE: /data/crawling/openaq_vietnam_hourly.csv
+      SEND_DELAY_MS: "0"
+    command: ["python", "-u", "openaq_ingest.py"]
+    networks:
+      - bigdata-net
+
 # =============================================================================
 # NETWORKS
 # =============================================================================
