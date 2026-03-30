@@ -20,6 +20,11 @@ services:
       KAFKA_OPTS: -Dzookeeper.4lw.commands.whitelist=ruok
     networks:
       - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ---------------------------------------------------------------------------
   # KAFKA — message broker, nhận events từ ingest, cung cấp cho Spark
@@ -29,7 +34,8 @@ services:
     container_name: kafka
     hostname: kafka
     depends_on:
-      zookeeper: 
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"       # internal (docker network)
       - "29092:29092"     # external (host machine)
@@ -142,24 +148,57 @@ services:
   # ---------------------------------------------------------------------------
   # PYTHON INGEST — đọc file Excel, chuẩn hóa, gửi vào Kafka
   # ---------------------------------------------------------------------------
+  ingest:
     build:
+      context: ./ingest
       dockerfile: Dockerfile
+    container_name: ingest
     depends_on:
       kafka:
         condition: service_healthy
     volumes:
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-    networks:
-      - bigdata-net
-    build:
-      dockerfile: Dockerfile
-    depends_on:
-      kafka:
-        condition: service_healthy
+      - ./company.xls.csv:/app/company.xls.csv:ro
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: stock-prices-daily
+      # Số lượng công ty cào (từ đầu CSV), mặc định 50
+      NUM_COMPANIES: "5"
+      # Lookback: lấy dữ liệu bao nhiêu ngày về trước, mặc định 30
+      LOOKBACK_DAYS: "30"
+      # Delay giữa mỗi message gửi Kafka (ms)
+      SEND_DELAY_MS: "10"
+      # Delay giữa mỗi request tới CafeF (ms), tránh bị rate-limit
+      API_DELAY_MS: "500"
+      # Khoảng cách giữa các vòng cào (giây). 86400=1 ngày, 0=chạy 1 lần
+      SCRAPE_INTERVAL_SECONDS: "86400"
+    networks:
+      - bigdata-net
+
+  # ---------------------------------------------------------------------------
+  # MONITORING UI — theo dõi throughput và trạng thái lưu dữ liệu vào HDFS
+  # ---------------------------------------------------------------------------
+  monitoring-ui:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile
+    container_name: monitoring-ui
+    hostname: monitoring-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      datanode:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: stock-prices-daily
+      HDFS_WEBHDFS_BASE: http://namenode:9870/webhdfs/v1
+      HDFS_OUTPUT_PATH: /data/stock_prices_daily
+      NAMENODE_JMX_URL: http://namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystem
+      METRICS_SAMPLE_SECONDS: "5"
+    ports:
+      - "8501:8501"
     networks:
       - bigdata-net
 
