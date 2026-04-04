@@ -191,6 +191,35 @@ services:
     networks:
       - bigdata-net
 
+  # ---------------------------------------------------------------------------
+  # SENTINEL-5P INGEST — cào CDSE và gửi summary events vào Kafka
+  # ---------------------------------------------------------------------------
+  sentinel5p-ingest:
+    build:
+      context: ./ingest
+      dockerfile: Dockerfile
+    container_name: sentinel5p-ingest
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./data:/data
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: sentinel5p-summary
+      # Credentials: set in your environment or .env (do not commit)
+      CDSE_USERNAME: ${CDSE_USERNAME}
+      CDSE_PASSWORD: ${CDSE_PASSWORD}
+      DOWNLOAD_DIR: /data/sentinel5p_data
+      BBOX: "100,8,110,24"
+      DATE_START: "${S5P_DATE_START:-}"
+      DATE_END: "${S5P_DATE_END:-}"
+      MAX_RESULTS: "1"
+      PRODUCTS: "NO2,CO,O3,SO2,CH4,AER"
+    command: ["python", "-u", "sentinel5p_ingest.py"]
+    networks:
+      - bigdata-net
+
 # =============================================================================
 # NETWORKS
 # =============================================================================
