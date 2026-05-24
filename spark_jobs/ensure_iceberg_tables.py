@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pyspark.sql import SparkSession
 
-from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, TABLES
+from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, TABLES
 
 
 def build_spark() -> SparkSession:
@@ -13,13 +13,13 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", HDFS_NAMENODE)
         .getOrCreate()
     )
 
 
 def create_namespaces(spark: SparkSession) -> None:
-    for namespace in ["weather", "air_quality", "satellite", "features", "models", "trajectory"]:
+    for namespace in ["weather", "air_quality", "satellite", "features", "models", "trajectory", "predictions"]:
         spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.{namespace}")
 
 
@@ -768,12 +768,183 @@ def ensure_tables(spark: SparkSession) -> None:
         """
     )
 
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["serving_features_gold"]} (
+            base_hour TIMESTAMP,
+            location_id STRING,
+            location_name STRING,
+            feature_version STRING,
+            feature_set_name STRING,
+            dataset_version STRING,
+            schema_hash STRING,
+            pm25_median DOUBLE,
+            pm25_mean DOUBLE,
+            station_count INT,
+            coverage_avg DOUBLE,
+            vis_km DOUBLE,
+            uv DOUBLE,
+            condition_code INT,
+            is_day INT,
+            will_it_rain INT,
+            chance_of_rain INT,
+            wind_u10 DOUBLE,
+            wind_v10 DOUBLE,
+            wind_speed DOUBLE,
+            wind_dir DOUBLE,
+            pbl_height_m DOUBLE,
+            low_pbl BOOLEAN,
+            surface_pressure DOUBLE,
+            temperature_2m_c DOUBLE,
+            dewpoint_2m_c DOUBLE,
+            total_precipitation_mm DOUBLE,
+            s5p_no2_mean DOUBLE,
+            s5p_co_mean DOUBLE,
+            s5p_so2_mean DOUBLE,
+            s5p_o3_mean DOUBLE,
+            s5p_aer_ai_mean DOUBLE,
+            s5p_no2_valid_pct DOUBLE,
+            s5p_aer_ai_valid_pct DOUBLE,
+            aod_047_mean DOUBLE,
+            aod_055_mean DOUBLE,
+            aod_mean DOUBLE,
+            aod_max DOUBLE,
+            aod_valid_pct DOUBLE,
+            pm25_grad_n DOUBLE,
+            pm25_grad_s DOUBLE,
+            pm25_grad_e DOUBLE,
+            pm25_grad_w DOUBLE,
+            pm25_spatial_std DOUBLE,
+            pm25_grad_mag DOUBLE,
+            dominant_cluster INT,
+            n_traj INT,
+            traj_source_lat DOUBLE,
+            traj_source_lon DOUBLE,
+            traj_path_no2_mean DOUBLE,
+            traj_path_aer_mean DOUBLE,
+            traj_path_no2_aer_ratio DOUBLE,
+            hour_of_day INT,
+            day_of_week INT,
+            month INT,
+            season STRING,
+            is_weekend BOOLEAN,
+            hour_sin DOUBLE,
+            hour_cos DOUBLE,
+            dow_sin DOUBLE,
+            dow_cos DOUBLE,
+            month_sin DOUBLE,
+            month_cos DOUBLE,
+            is_rush_hour BOOLEAN,
+            pm25_lag_1h DOUBLE,
+            pm25_lag_3h DOUBLE,
+            pm25_lag_6h DOUBLE,
+            pm25_lag_12h DOUBLE,
+            pm25_lag_24h DOUBLE,
+            pm25_roll_mean_3h DOUBLE,
+            pm25_roll_mean_6h DOUBLE,
+            pm25_roll_mean_24h DOUBLE,
+            pm25_roll_max_24h DOUBLE,
+            pm25_roll_std_24h DOUBLE,
+            year INT,
+            month_partition INT,
+            created_at TIMESTAMP,
+            spark_processed_at TIMESTAMP
+        )
+        USING ICEBERG
+        PARTITIONED BY (year, month_partition)
+        TBLPROPERTIES (
+            'format-version'='2',
+            'write.merge.mode'='merge-on-read',
+            'write.update.mode'='merge-on-read',
+            'write.delete.mode'='merge-on-read'
+        )
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["prediction_gold"]} (
+            prediction_id STRING,
+            base_hour TIMESTAMP,
+            location_id STRING,
+            location_name STRING,
+            pm25_now DOUBLE,
+            pm25_6h DOUBLE,
+            risk_6h STRING,
+            pm25_12h DOUBLE,
+            risk_12h STRING,
+            pm25_24h DOUBLE,
+            risk_24h STRING,
+            dominant_cluster INT,
+            source_lat DOUBLE,
+            source_lon DOUBLE,
+            path_no2_mean DOUBLE,
+            path_aer_mean DOUBLE,
+            pm25_grad_mag DOUBLE,
+            model_version STRING,
+            model_version_6h STRING,
+            model_version_12h STRING,
+            model_version_24h STRING,
+            model_status STRING,
+            feature_version STRING,
+            feature_schema_hash STRING,
+            inference_run_id STRING,
+            created_at TIMESTAMP,
+            year INT,
+            month_partition INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (year, month_partition)
+        TBLPROPERTIES (
+            'format-version'='2',
+            'write.merge.mode'='merge-on-read',
+            'write.update.mode'='merge-on-read',
+            'write.delete.mode'='merge-on-read'
+        )
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["model_registry_gold"]} (
+            model_version STRING,
+            model_run_id STRING,
+            horizon_hour INT,
+            location_id STRING,
+            model_type STRING,
+            model_path STRING,
+            artifact_uri STRING,
+            feature_set_name STRING,
+            feature_version STRING,
+            training_dataset_version STRING,
+            feature_schema_hash STRING,
+            status STRING,
+            mae DOUBLE,
+            rmse DOUBLE,
+            mape DOUBLE,
+            promoted_at TIMESTAMP,
+            promoted_by STRING,
+            created_at TIMESTAMP,
+            effective_from TIMESTAMP,
+            effective_to TIMESTAMP
+        )
+        USING ICEBERG
+        PARTITIONED BY (status, horizon_hour)
+        TBLPROPERTIES (
+            'format-version'='2',
+            'write.merge.mode'='merge-on-read',
+            'write.update.mode'='merge-on-read',
+            'write.delete.mode'='merge-on-read'
+        )
+        """
+    )
+
 
 def main() -> None:
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")
     ensure_tables(spark)
-    print("Ensured Iceberg namespaces and TODO_1/TODO_2 bronze/silver/gold/model tables")
+    print("Ensured Iceberg namespaces and TODO_1/TODO_2/TODO_3 bronze/silver/gold/model/prediction tables")
     spark.stop()
 
 

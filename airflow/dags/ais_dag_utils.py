@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 SPARK_COMMON_CONF = " \
   --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-client:3.2.1,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2 \
   --conf \"spark.hadoop.fs.defaultFS=hdfs://namenode:9000\" \
@@ -38,6 +40,18 @@ def spark_submit_command(
     with_cassandra: bool = False,
     detached: bool = False,
 ) -> str:
+    runtime = os.getenv("AIS_SPARK_RUNTIME", "compose").strip().lower()
+    if runtime == "k8s":
+        cleaned_args = extra_args.strip()
+        suffix = f" {cleaned_args}" if cleaned_args else ""
+        env_prefix = f"KAFKA_STARTING_OFFSETS={starting_offsets} " if starting_offsets else ""
+        job_type = _k8s_job_type_for_file(job_file, extra_args=cleaned_args, with_cassandra=with_cassandra)
+        return (
+            "set -euo pipefail\n"
+            "cd /opt/ais\n"
+            f"{env_prefix}bash ./scripts/submit_spark_k8s.sh {job_type}{suffix}"
+        )
+
     conf = CASSANDRA_CONF if with_cassandra else SPARK_COMMON_CONF
     detach_flag = "-d " if detached else ""
     cleaned_args = extra_args.strip()
@@ -50,6 +64,46 @@ def spark_submit_command(
         "cd /opt/ais\n"
         f"{env_prefix}docker exec {detach_flag}spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --name \"{app_name}\"{conf} {job_file}{suffix}"
     )
+
+
+def _k8s_job_type_for_file(job_file: str, *, extra_args: str = "", with_cassandra: bool = False) -> str:
+    if with_cassandra:
+        dataset = extra_args.strip().split()[0] if extra_args.strip() else ""
+        if dataset in {"weather", "openaq"}:
+            return f"cassandra-{dataset}"
+        raise ValueError(f"No Spark-on-K8s Cassandra job mapping for args: {extra_args!r}")
+
+    mapping = {
+        "weather_streaming.py": "weather",
+        "openaq_hourly_streaming.py": "openaq",
+        "sentinel5p_summary_streaming.py": "sentinel5p",
+        "maiac_summary_streaming.py": "maiac",
+        "era5_files_streaming.py": "era5-files",
+        "hanoi_openaq_silver.py": "hanoi-openaq-silver",
+        "hanoi_weather_surface_proxy_silver.py": "hanoi-weather-silver",
+        "era5_surface_hanoi_silver.py": "era5-surface-hanoi-silver",
+        "era5_pressure_levels_to_arl.py": "era5-pressure-arl",
+        "hysplit_trajectory_run.py": "hysplit-run",
+        "hysplit_trajectory_parse_silver.py": "hysplit-parse",
+        "hysplit_trajectory_cluster_silver.py": "hysplit-cluster",
+        "sentinel5p_hanoi_silver.py": "sentinel5p-hanoi-silver",
+        "openaq_spatial_gradient_silver.py": "openaq-gradient",
+        "sentinel5p_grid_silver.py": "s5p-grid-silver",
+        "trajectory_path_sampling_silver.py": "traj-path-sampling",
+        "trajectory_hourly_features_silver.py": "traj-hourly-features",
+        "maiac_hanoi_silver.py": "maiac-hanoi-silver",
+        "hanoi_pm25_master_features_gold.py": "hanoi-master-features-gold",
+        "hanoi_pm25_training_dataset_gold.py": "hanoi-training-dataset-gold",
+        "train_hanoi_pm25.py": "hanoi-train-baseline",
+        "ensure_iceberg_tables.py": "ensure-iceberg",
+        "iceberg_maintenance.py": "maintenance-iceberg",
+        "reconcile_iceberg_cassandra.py": "reconcile-serving",
+    }
+    basename = job_file.rstrip("/").split("/")[-1]
+    try:
+        return mapping[basename]
+    except KeyError as exc:
+        raise ValueError(f"No Spark-on-K8s job mapping for {job_file}") from exc
 
 
 def spark_cassandra_command(dataset: str) -> str:
