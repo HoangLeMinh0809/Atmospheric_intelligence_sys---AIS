@@ -18,6 +18,10 @@ ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
 ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", "hdfs://namenode:9000/warehouse/iceberg")
 HDFS_NAMENODE = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
 
+# Base URI for storing model artifacts (mounted path in containers, or a remote URI in production).
+# Used by training/promote scripts to build artifact URIs.
+MODEL_ARTIFACT_BASE_URI = os.getenv("MODEL_ARTIFACT_BASE_URI", "/opt/models")
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "hanoi": {
         "bbox": {"west": 105.25, "east": 106.10, "south": 20.55, "north": 21.40},

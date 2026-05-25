@@ -907,15 +907,15 @@ def ensure_tables(spark: SparkSession) -> None:
     spark.sql(
         f"""
         CREATE TABLE IF NOT EXISTS {TABLES["model_registry_gold"]} (
+            location_id STRING,
+            horizon_hour INT,
+            feature_version STRING,
             model_version STRING,
             model_run_id STRING,
-            horizon_hour INT,
-            location_id STRING,
             model_type STRING,
             model_path STRING,
             artifact_uri STRING,
             feature_set_name STRING,
-            feature_version STRING,
             training_dataset_version STRING,
             feature_schema_hash STRING,
             status STRING,
@@ -929,7 +929,7 @@ def ensure_tables(spark: SparkSession) -> None:
             effective_to TIMESTAMP
         )
         USING ICEBERG
-        PARTITIONED BY (status, horizon_hour)
+        PARTITIONED BY (status, location_id, horizon_hour)
         TBLPROPERTIES (
             'format-version'='2',
             'write.merge.mode'='merge-on-read',
@@ -937,6 +937,25 @@ def ensure_tables(spark: SparkSession) -> None:
             'write.delete.mode'='merge-on-read'
         )
         """
+    )
+
+    # Ensure newer columns exist when table was created with an older schema.
+    ensure_columns(
+        spark,
+        TABLES["model_registry_gold"],
+        {
+            "location_id": "STRING",
+            "horizon_hour": "INT",
+            "feature_version": "STRING",
+            "model_version": "STRING",
+            "model_run_id": "STRING",
+            "artifact_uri": "STRING",
+            "feature_schema_hash": "STRING",
+            "promoted_at": "TIMESTAMP",
+            "promoted_by": "STRING",
+            "effective_from": "TIMESTAMP",
+            "effective_to": "TIMESTAMP",
+        },
     )
 
 

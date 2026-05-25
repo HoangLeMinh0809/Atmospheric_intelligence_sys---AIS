@@ -94,6 +94,7 @@ def _k8s_job_type_for_file(job_file: str, *, extra_args: str = "", with_cassandr
         "maiac_hanoi_silver.py": "maiac-hanoi-silver",
         "hanoi_pm25_master_features_gold.py": "hanoi-master-features-gold",
         "hanoi_pm25_training_dataset_gold.py": "hanoi-training-dataset-gold",
+        "hanoi_pm25_serving_features_gold.py": "hanoi-serving-features-gold",
         "train_hanoi_pm25.py": "hanoi-train-baseline",
         "ensure_iceberg_tables.py": "ensure-iceberg",
         "iceberg_maintenance.py": "maintenance-iceberg",
