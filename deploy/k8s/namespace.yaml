@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ais
+  labels:
+    app.kubernetes.io/name: ais
+    app.kubernetes.io/part-of: atmospheric-intelligence-system

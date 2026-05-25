@@ -1,0 +1,26 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ais-workload-runtime-reader
+  namespace: ais
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ais-workload-runtime-reader
+  namespace: ais
+subjects:
+  - kind: ServiceAccount
+    name: ais-workload
+    namespace: ais
+roleRef:
+  kind: Role
+  name: ais-workload-runtime-reader
+  apiGroup: rbac.authorization.k8s.io

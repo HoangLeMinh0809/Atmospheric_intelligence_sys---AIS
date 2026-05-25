@@ -1,0 +1,118 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-submit-template
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: spark-submit-template
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spark-submit-template
+    spec:
+      serviceAccountName: spark
+      restartPolicy: Never
+      containers:
+        - name: spark-submit
+          image: ais-spark-runtime:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ais-runtime-config
+            - secretRef:
+                name: ais-runtime-secrets
+                optional: true
+          command:
+            - /opt/spark/bin/spark-submit
+          args:
+            - --master
+            - $(SPARK_K8S_MASTER)
+            - --deploy-mode
+            - cluster
+            - --packages
+            - $(SPARK_JARS_PACKAGES)
+            - --name
+            - ais-spark-job
+            - --conf
+            - spark.kubernetes.namespace=$(SPARK_K8S_NAMESPACE)
+            - --conf
+            - spark.kubernetes.container.image=$(SPARK_IMAGE)
+            - --conf
+            - spark.kubernetes.authenticate.driver.serviceAccountName=$(SPARK_DRIVER_SERVICE_ACCOUNT)
+            - --conf
+            - spark.kubernetes.driver.request.cores=$(SPARK_DRIVER_REQUEST_CORES)
+            - --conf
+            - spark.kubernetes.driver.limit.cores=$(SPARK_DRIVER_LIMIT_CORES)
+            - --conf
+            - spark.kubernetes.executor.request.cores=$(SPARK_EXECUTOR_REQUEST_CORES)
+            - --conf
+            - spark.kubernetes.executor.limit.cores=$(SPARK_EXECUTOR_LIMIT_CORES)
+            - --conf
+            - spark.executor.instances=$(SPARK_EXECUTOR_INSTANCES)
+            - --conf
+            - spark.executor.memory=$(SPARK_EXECUTOR_MEMORY)
+            - --conf
+            - spark.executor.cores=$(SPARK_EXECUTOR_CORES)
+            - --conf
+            - spark.driver.memory=$(SPARK_DRIVER_MEMORY)
+            - --conf
+            - spark.hadoop.fs.defaultFS=$(HDFS_NAMENODE)
+            - --conf
+            - spark.hadoop.dfs.client.use.datanode.hostname=$(HDFS_CLIENT_USE_DATANODE_HOSTNAME)
+            - --conf
+            - spark.jars.ivy=$(SPARK_IVY_DIR)
+            - --conf
+            - spark.kubernetes.driverEnv.KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS)
+            - --conf
+            - spark.kubernetes.driverEnv.HDFS_NAMENODE=$(HDFS_NAMENODE)
+            - --conf
+            - spark.kubernetes.driverEnv.HDFS_WEBHDFS_BASE=$(HDFS_WEBHDFS_BASE)
+            - --conf
+            - spark.kubernetes.driverEnv.HDFS_CLIENT_USE_DATANODE_HOSTNAME=$(HDFS_CLIENT_USE_DATANODE_HOSTNAME)
+            - --conf
+            - spark.kubernetes.driverEnv.ICEBERG_CATALOG=$(ICEBERG_CATALOG)
+            - --conf
+            - spark.kubernetes.driverEnv.ICEBERG_CATALOG_URI=$(ICEBERG_CATALOG_URI)
+            - --conf
+            - spark.kubernetes.driverEnv.ICEBERG_WAREHOUSE=$(ICEBERG_WAREHOUSE)
+            - --conf
+            - spark.kubernetes.driverEnv.CASSANDRA_HOST=$(CASSANDRA_HOST)
+            - --conf
+            - spark.kubernetes.driverEnv.HANOI_PIPELINE_CONFIG=$(HANOI_PIPELINE_CONFIG)
+            - --conf
+            - spark.executorEnv.KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS)
+            - --conf
+            - spark.executorEnv.HDFS_NAMENODE=$(HDFS_NAMENODE)
+            - --conf
+            - spark.executorEnv.HDFS_WEBHDFS_BASE=$(HDFS_WEBHDFS_BASE)
+            - --conf
+            - spark.executorEnv.HDFS_CLIENT_USE_DATANODE_HOSTNAME=$(HDFS_CLIENT_USE_DATANODE_HOSTNAME)
+            - --conf
+            - spark.executorEnv.ICEBERG_CATALOG=$(ICEBERG_CATALOG)
+            - --conf
+            - spark.executorEnv.ICEBERG_CATALOG_URI=$(ICEBERG_CATALOG_URI)
+            - --conf
+            - spark.executorEnv.ICEBERG_WAREHOUSE=$(ICEBERG_WAREHOUSE)
+            - --conf
+            - spark.executorEnv.CASSANDRA_HOST=$(CASSANDRA_HOST)
+            - --conf
+            - spark.executorEnv.HANOI_PIPELINE_CONFIG=$(HANOI_PIPELINE_CONFIG)
+            - --conf
+            - spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+            - --conf
+            - spark.sql.catalog.$(ICEBERG_CATALOG)=org.apache.iceberg.spark.SparkCatalog
+            - --conf
+            - spark.sql.catalog.$(ICEBERG_CATALOG).type=hadoop
+            - --conf
+            - spark.sql.catalog.$(ICEBERG_CATALOG).warehouse=$(ICEBERG_WAREHOUSE)
+            - local:///opt/spark-jobs/ensure_iceberg_tables.py
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi

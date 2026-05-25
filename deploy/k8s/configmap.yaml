@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ais-runtime-config
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: ais
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+data:
+  KAFKA_BOOTSTRAP_SERVERS: host.docker.internal:29092
+  KAFKA_HOST: host.docker.internal
+  KAFKA_PORT: "29092"
+  HDFS_NAMENODE: hdfs://host.docker.internal:9000
+  HDFS_WEBHDFS_BASE: http://host.docker.internal:9870/webhdfs/v1
+  HDFS_CLIENT_USE_DATANODE_HOSTNAME: "true"
+  ICEBERG_CATALOG: ais
+  ICEBERG_CATALOG_URI: ""
+  ICEBERG_WAREHOUSE: hdfs://host.docker.internal:9000/warehouse/iceberg
+  CASSANDRA_HOST: host.docker.internal
+  MODEL_ARTIFACT_BASE_URI: /opt/models/hanoi_pm25
+  HANOI_PIPELINE_CONFIG: /opt/config/hanoi_pipeline.yaml
+  FEATURE_VERSION: v1
+  FEATURE_SET_NAME: hanoi_pm25_core_v1
+  LOCATION_ID: hanoi
+  LOCATION_NAME: Hanoi
+  DATASET_VERSION: hanoi_pm25_v1
+  MODEL_TYPE: lightgbm
+  MODEL_RUNS_TABLE: ais.models.hanoi_pm25_model_runs_gold
+  MODEL_REGISTRY_TABLE: ais.models.hanoi_pm25_model_registry_gold
+  SERVING_FEATURE_TABLE: ais.features.hanoi_pm25_serving_features_gold
+  PREDICTION_TABLE: ais.predictions.hanoi_pm25_forecast_gold
+  AIRFLOW_K8S_NAMESPACE: ais
+  AIRFLOW_K8S_SERVICE_ACCOUNT: ais-workload
+  API_PORT: "8080"
+  READINESS_TIMEOUT_SECONDS: "5"
+  FEATURE_FRESHNESS_MAX_MINUTES: "180"
+  PREDICTION_FRESHNESS_MAX_MINUTES: "180"
+  PM25_API_BASE_URL: http://pm25-api.ais.svc.cluster.local
+  SPARK_K8S_MASTER: k8s://https://kubernetes.default.svc
+  SPARK_K8S_NAMESPACE: ais
+  SPARK_DRIVER_SERVICE_ACCOUNT: spark
+  SPARK_IMAGE: ais-spark-runtime:local
+  SPARK_JARS_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1
+  SPARK_IVY_DIR: /tmp/.ivy2
+  SPARK_EXECUTOR_INSTANCES: "2"
+  SPARK_EXECUTOR_MEMORY: 1g
+  SPARK_EXECUTOR_CORES: "1"
+  SPARK_DRIVER_MEMORY: 1g
+  SPARK_DRIVER_REQUEST_CORES: 500m
+  SPARK_DRIVER_LIMIT_CORES: "1"
+  SPARK_EXECUTOR_REQUEST_CORES: 500m
+  SPARK_EXECUTOR_LIMIT_CORES: "1"

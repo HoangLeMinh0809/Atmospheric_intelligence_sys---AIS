@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pm25-serving-check
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: pm25-serving-check
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pm25-serving-check
+    spec:
+      serviceAccountName: ais-workload
+      restartPolicy: Never
+      containers:
+        - name: check
+          image: ais-ml-runtime:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ais-runtime-config
+            - secretRef:
+                name: ais-runtime-secrets
+                optional: true
+          command: ["python"]
+          args:
+            - scripts/check_pm25_serving.py
+            - --check
+            - config
+            - --check
+            - api-readiness
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
