@@ -192,6 +192,7 @@ ensure_exclusive_stream_resources() {
     "OpenAQHourly_Streaming"
     "Sentinel5PSummary_Streaming"
     "MAIACSummary_Streaming"
+    "ERA5Files_Streaming"
   )
 
   for app in "${stream_apps[@]}"; do
@@ -379,11 +380,6 @@ if [ "$ENABLE_ERA5" = "true" ]; then
     ERA5_DATASET_TYPE="$era5_dataset_type" \
       bash scripts/submit_spark.sh era5-ingest
 
-    # One-shot metadata sink flush
-    STOP_AFTER_BATCH=true \
-    KAFKA_STARTING_OFFSETS=earliest \
-      bash scripts/submit_spark.sh era5-files
-
     if [ "$era5_dataset_type" = "pressure_levels" ]; then
       START_DATE="$ERA5_START_DATE" \
       END_DATE="$ERA5_END_DATE" \
@@ -396,8 +392,6 @@ if [ "$ENABLE_ERA5" = "true" ]; then
       echo "[INFO] Skip ERA5 post-processing for ERA5_DATASET_TYPE=${era5_dataset_type}"
     fi
   done
-
-  kill_spark_app_by_name "ERA5Files_Streaming"
 
   echo "[OK] ERA5 metadata backfill done"
 else

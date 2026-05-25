@@ -243,20 +243,57 @@ def iter_events(
     window_end_text = to_utc_iso(end_utc)
     window_now_text = to_utc_iso(now_utc)
 
-    for location in locations:
+    for location_index, location in enumerate(locations, start=1):
         location_id = location.get("id")
         if not location_id:
             continue
 
+        location_name = str(location.get("name") or "")
+        logger.info(
+            "OpenAQ location %s/%s id=%s name=%r: fetching sensors",
+            location_index,
+            len(locations),
+            location_id,
+            location_name,
+        )
         sensors = get_sensors(location_id)
+        logger.info(
+            "OpenAQ location %s/%s id=%s: sensors=%s",
+            location_index,
+            len(locations),
+            location_id,
+            len(sensors),
+        )
         time.sleep(REQUEST_DELAY_SEC)
 
-        for sensor in sensors:
+        for sensor_index, sensor in enumerate(sensors, start=1):
             parameter_name = str(sensor.get("parameter", {}).get("name") or "").strip().lower()
             if parameter_name not in TARGET_PARAMETERS:
                 continue
 
+            sensor_id = sensor.get("id")
+            logger.info(
+                "OpenAQ location %s/%s id=%s sensor %s/%s id=%s parameter=%s: fetching hourly data",
+                location_index,
+                len(locations),
+                location_id,
+                sensor_index,
+                len(sensors),
+                sensor_id,
+                parameter_name,
+            )
             measurements = get_hourly_data(sensor.get("id"), start_utc, end_utc)
+            logger.info(
+                "OpenAQ location %s/%s id=%s sensor %s/%s id=%s parameter=%s: measurements=%s",
+                location_index,
+                len(locations),
+                location_id,
+                sensor_index,
+                len(sensors),
+                sensor_id,
+                parameter_name,
+                len(measurements),
+            )
             time.sleep(REQUEST_DELAY_SEC)
 
             for measurement in measurements:

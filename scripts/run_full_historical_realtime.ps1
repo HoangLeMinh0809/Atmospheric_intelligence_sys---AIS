@@ -60,11 +60,22 @@ function Wait-ForHealthy {
 
 function Initialize-Topics {
     $topics = @("openaq-hourly", "weather_history", "sentinel5p-summary", "maiac-summary", "era5-files")
+    $partitions = 3
 
     Write-Host "=== Create AIS Kafka topics ==="
     foreach ($topic in $topics) {
         Write-Host "- Create topic: $topic"
-        docker exec kafka kafka-topics --create --bootstrap-server kafka:9092 --replication-factor 1 --partitions 3 --topic $topic --if-not-exists | Out-Host
+        docker exec kafka kafka-topics --create --bootstrap-server kafka:9092 --replication-factor 1 --partitions $partitions --topic $topic --if-not-exists | Out-Host
+
+        $description = docker exec kafka kafka-topics --describe --bootstrap-server kafka:9092 --topic $topic
+        $topicLine = $description | Select-Object -First 1
+        if ($topicLine -match "PartitionCount:\s*(\d+)") {
+            $currentPartitions = [int]$Matches[1]
+            if ($currentPartitions -lt $partitions) {
+                Write-Host "  Increase partitions: $currentPartitions -> $partitions"
+                docker exec kafka kafka-topics --alter --bootstrap-server kafka:9092 --topic $topic --partitions $partitions | Out-Host
+            }
+        }
     }
 }
 
@@ -141,11 +152,12 @@ if ($enableEra5) {
     $prevFullRefresh = $env:FULL_REFRESH
 
     try {
+        Write-Host "=== [4/9] Start ERA5 Spark metadata sink (detached) ==="
+        Submit-SparkJobDetached -AppName "ERA5Files_Streaming" -JobFile "/opt/spark-jobs/era5_files_streaming.py" -HdfsDataDir "/warehouse/iceberg/weather/era5_files_bronze" -HdfsCheckpointDir "/checkpoints/era5_files"
+
         foreach ($era5DatasetType in $era5DatasetTypes) {
             Write-Host "=== [4/9] ERA5 dataset: $era5DatasetType ==="
             bash -lc "ERA5_START_DATE='$era5StartDate' ERA5_END_DATE='$era5EndDate' ERA5_DATASET_TYPE='$era5DatasetType' KAFKA_TOPIC='era5-files' bash scripts/submit_spark.sh era5-ingest" | Out-Host
-
-            bash -lc "STOP_AFTER_BATCH=true KAFKA_STARTING_OFFSETS=earliest KAFKA_TOPIC='era5-files' bash scripts/submit_spark.sh era5-files" | Out-Host
 
             if ($era5DatasetType -eq "surface") {
                 Write-Host "=== [4/9] ERA5 surface -> Hanoi silver ==="

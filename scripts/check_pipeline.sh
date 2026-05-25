@@ -58,8 +58,14 @@ elif [ "$PIPELINE" = "maiac" ]; then
   HDFS_CHECKPOINT_DIR="/checkpoints/maiac_summary"
   APP_NAME="MAIACSummary_Streaming"
   GROUP_ID="ais-stream-maiac"
+elif [ "$PIPELINE" = "era5-files" ]; then
+  TOPIC="era5-files"
+  ICEBERG_DATA_DIR="/warehouse/iceberg/weather/era5_files_bronze"
+  HDFS_CHECKPOINT_DIR="/checkpoints/era5_files"
+  APP_NAME="ERA5Files_Streaming"
+  GROUP_ID="ais-stream-era5-files"
 else
-  echo "Usage: $0 [openaq|weather|sentinel5p|maiac]"
+  echo "Usage: $0 [openaq|weather|sentinel5p|maiac|era5-files]"
   exit 1
 fi
 
