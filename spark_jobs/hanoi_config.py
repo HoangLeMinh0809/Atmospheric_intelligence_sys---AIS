@@ -16,6 +16,7 @@ except ModuleNotFoundError:  # pragma: no cover - Spark images may not have PyYA
 
 ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
 ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", "hdfs://namenode:9000/warehouse/iceberg")
+HDFS_NAMENODE = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "hanoi": {
@@ -102,7 +103,10 @@ TABLES = {
     "maiac_silver": f"{ICEBERG_CATALOG}.satellite.maiac_hanoi_daily_silver",
     "master_gold": f"{ICEBERG_CATALOG}.features.hanoi_pm25_master_hourly_gold",
     "training_gold": f"{ICEBERG_CATALOG}.features.hanoi_pm25_training_dataset_gold",
+    "serving_features_gold": f"{ICEBERG_CATALOG}.features.hanoi_pm25_serving_features_gold",
+    "prediction_gold": f"{ICEBERG_CATALOG}.predictions.hanoi_pm25_forecast_gold",
     "model_runs_gold": f"{ICEBERG_CATALOG}.models.hanoi_pm25_model_runs_gold",
+    "model_registry_gold": f"{ICEBERG_CATALOG}.models.hanoi_pm25_model_registry_gold",
     "era5_arl_bronze": f"{ICEBERG_CATALOG}.weather.era5_arl_files_bronze",
     "hysplit_runs_bronze": f"{ICEBERG_CATALOG}.trajectory.hysplit_runs_bronze",
     "hysplit_traj_silver": f"{ICEBERG_CATALOG}.trajectory.hysplit_trajectories_silver",
