@@ -102,6 +102,15 @@ FEATURE_COLUMNS = [
 ]
 
 
+# Stable schema hash for FEATURE_COLUMNS; used for serving/inference compatibility checks.
+import hashlib
+import json
+
+FEATURE_SCHEMA_HASH = hashlib.sha256(
+    json.dumps({"features": FEATURE_COLUMNS}, separators=(",", ":"), sort_keys=True).encode("utf-8")
+).hexdigest()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train baseline Hanoi PM2.5 models from gold training dataset")
     parser.add_argument("--dataset-version", default=os.getenv("DATASET_VERSION", "hanoi_pm25_v1"))
@@ -109,6 +118,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-type", default=os.getenv("MODEL_TYPE", "lightgbm"), choices=["lightgbm", "xgboost"])
     default_output_dir = "/opt/models/hanoi_pm25" if Path("/opt/models").exists() else "models/hanoi_pm25"
     parser.add_argument("--output-dir", default=os.getenv("MODEL_OUTPUT_DIR", default_output_dir))
+
+    # Promotion/registry related identifiers.
+    parser.add_argument("--feature-version", default=os.getenv("FEATURE_VERSION", "hanoi_pm25_core_v1"))
+    # Model version is an explicit label (e.g. v1, v2, 20260525_01). Default uses UTC timestamp.
+    parser.add_argument("--model-version", default=os.getenv("MODEL_VERSION", ""))
     return parser.parse_args()
 
 
@@ -245,7 +259,7 @@ def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int,
     x_val = features[val_mask].reindex(columns=aligned_features, fill_value=0)
     y_val = labels[val_mask]
     x_test = features[test_mask].reindex(columns=aligned_features, fill_value=0)
-    y_test = labels[test_mask]
+    y_test = labels[test_mask].reindex(columns=aligned_features, fill_value=0)
 
     val_mae, val_rmse, val_mape = metrics(model, x_val, y_val)
     test_mae, test_rmse, test_mape = metrics(model, x_test, y_test)
@@ -261,22 +275,12 @@ def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int,
     test_start, test_end = split_bounds(prepared, "test")
     created_at = datetime.utcnow()
 
-    print(
-        "train_metrics "
-        f"horizon={horizon} "
-        f"split=train count={int(train_mask.sum())}"
-    )
-    print(
-        "validation_metrics "
-        f"horizon={horizon} "
-        f"mae={val_mae} rmse={val_rmse} mape={val_mape} "
-        f"count={int(val_mask.sum())}"
-    )
-    print(
-        "test_metrics "
-        f"horizon={horizon} "
-        f"mae={test_mae} rmse={test_rmse} mape={test_mape} "
-        f"count={int(test_mask.sum())}"
+    artifact_base = os.getenv("MODEL_ARTIFACT_BASE_URI", "/opt/models").rstrip("/")
+    model_version = args.model_version
+    ext = "txt"  # train_hanoi_pm25.py writes .txt
+    artifact_uri = (
+        f"{artifact_base}/hanoi_pm25/{args.feature_version}/{model_version}"
+        f"/horizon={int(horizon)}/model.{ext}"
     )
 
     return {
@@ -297,11 +301,18 @@ def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int,
         "mape": test_mape if test_mape is not None else val_mape,
         "feature_importance_path": str(importance_path),
         "created_at": created_at,
+        "feature_version": args.feature_version,
+        "model_version": model_version,
+        "artifact_uri": artifact_uri,
+        "feature_schema_hash": FEATURE_SCHEMA_HASH,
     }
 
 
 def main() -> None:
     args = parse_args()
+    if not args.model_version:
+        args.model_version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+
     tables = get_table_names()
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")

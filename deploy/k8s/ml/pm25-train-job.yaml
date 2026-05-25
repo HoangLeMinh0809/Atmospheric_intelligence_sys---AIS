@@ -28,6 +28,14 @@ spec:
           command: ["python"]
           args:
             - ml/train_hanoi_pm25.py
+            - --dataset-version
+            - $(DATASET_VERSION)
+            - --feature-set-name
+            - $(FEATURE_SET_NAME)
+            - --model-type
+            - $(MODEL_TYPE)
+            - --output-dir
+            - $(MODEL_ARTIFACT_BASE_URI)/hanoi_pm25
           resources:
             requests:
               cpu: "1"
