@@ -226,7 +226,7 @@ def prepare_features(row: dict[str, Any], model_feature_names: list[str]) -> pd.
 
 def predict_one(spark: SparkSession, model_meta: dict[str, Any], feature_row: dict[str, Any]) -> float:
     model_type = str(model_meta.get("model_type") or "").lower()
-    raw_path = model_meta.get("model_path") or model_meta.get("artifact_uri")
+    raw_path = model_meta.get("artifact_uri") or model_meta.get("model_path")
     model_path = resolve_model_path(spark, str(raw_path))
 
     if model_type == "lightgbm":

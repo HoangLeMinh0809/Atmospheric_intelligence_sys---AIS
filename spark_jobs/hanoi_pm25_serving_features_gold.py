@@ -4,19 +4,102 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 # Keep feature selection aligned with training.
 # This import works in-repo and inside the Spark runtime image (/opt/ais).
-from ml.train_hanoi_pm25 import FEATURE_COLUMNS  # noqa: E402
+for candidate in [
+    Path(__file__).resolve().parents[1] / "ml",
+    Path("/opt/ais/ml"),
+]:
+    if candidate.exists() and str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
+
+from train_hanoi_pm25 import FEATURE_COLUMNS  # noqa: E402
 
 
 DEFAULT_SOURCE_TABLE = "ais.features.hanoi_pm25_master_hourly_gold"
 DEFAULT_TARGET_TABLE = "ais.features.hanoi_pm25_serving_features_gold"
 LEAKAGE_COLUMNS = {"pm25_next_6h", "pm25_next_12h", "pm25_next_24h"}
+FEATURE_COLUMN_TYPES = {
+    "pm25_median": "DOUBLE",
+    "pm25_mean": "DOUBLE",
+    "station_count": "INT",
+    "coverage_avg": "DOUBLE",
+    "vis_km": "DOUBLE",
+    "uv": "DOUBLE",
+    "condition_code": "INT",
+    "is_day": "INT",
+    "will_it_rain": "INT",
+    "chance_of_rain": "INT",
+    "wind_u10": "DOUBLE",
+    "wind_v10": "DOUBLE",
+    "wind_speed": "DOUBLE",
+    "wind_dir": "DOUBLE",
+    "pbl_height_m": "DOUBLE",
+    "low_pbl": "BOOLEAN",
+    "surface_pressure": "DOUBLE",
+    "temperature_2m_c": "DOUBLE",
+    "dewpoint_2m_c": "DOUBLE",
+    "total_precipitation_mm": "DOUBLE",
+    "s5p_no2_mean": "DOUBLE",
+    "s5p_co_mean": "DOUBLE",
+    "s5p_so2_mean": "DOUBLE",
+    "s5p_o3_mean": "DOUBLE",
+    "s5p_aer_ai_mean": "DOUBLE",
+    "s5p_no2_valid_pct": "DOUBLE",
+    "s5p_aer_ai_valid_pct": "DOUBLE",
+    "aod_047_mean": "DOUBLE",
+    "aod_055_mean": "DOUBLE",
+    "aod_mean": "DOUBLE",
+    "aod_max": "DOUBLE",
+    "aod_valid_pct": "DOUBLE",
+    "pm25_grad_n": "DOUBLE",
+    "pm25_grad_s": "DOUBLE",
+    "pm25_grad_e": "DOUBLE",
+    "pm25_grad_w": "DOUBLE",
+    "pm25_spatial_std": "DOUBLE",
+    "pm25_grad_mag": "DOUBLE",
+    "dominant_cluster": "INT",
+    "n_traj": "INT",
+    "traj_source_lat": "DOUBLE",
+    "traj_source_lon": "DOUBLE",
+    "traj_path_no2_mean": "DOUBLE",
+    "traj_path_aer_mean": "DOUBLE",
+    "traj_path_no2_aer_ratio": "DOUBLE",
+    "hour_of_day": "INT",
+    "day_of_week": "INT",
+    "month": "INT",
+    "season": "STRING",
+    "is_weekend": "BOOLEAN",
+    "hour_sin": "DOUBLE",
+    "hour_cos": "DOUBLE",
+    "dow_sin": "DOUBLE",
+    "dow_cos": "DOUBLE",
+    "month_sin": "DOUBLE",
+    "month_cos": "DOUBLE",
+    "is_rush_hour": "BOOLEAN",
+    "pm25_lag_1h": "DOUBLE",
+    "pm25_lag_3h": "DOUBLE",
+    "pm25_lag_6h": "DOUBLE",
+    "pm25_lag_12h": "DOUBLE",
+    "pm25_lag_24h": "DOUBLE",
+    "pm25_roll_mean_3h": "DOUBLE",
+    "pm25_roll_mean_6h": "DOUBLE",
+    "pm25_roll_mean_24h": "DOUBLE",
+    "pm25_roll_max_24h": "DOUBLE",
+    "pm25_roll_std_24h": "DOUBLE",
+}
+METADATA_COLUMN_TYPES = {
+    "year": "INT",
+    "month_partition": "INT",
+    "spark_processed_at": "TIMESTAMP",
+}
 
 
 def as_bool(raw: str) -> bool:
@@ -41,16 +124,26 @@ def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     warehouse = os.getenv("ICEBERG_WAREHOUSE", "")
     hdfs_namenode = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
+    packages = os.getenv(
+        "SPARK_JARS_PACKAGES",
+        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
+    )
+    ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
     builder = (
         SparkSession.builder.appName("HanoiPM25ServingFeaturesGold")
+        .config("spark.jars.packages", packages)
+        .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{catalog}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{catalog}.type", "hadoop")
     )
     if warehouse:
         builder = builder.config(f"spark.sql.catalog.{catalog}.warehouse", warehouse)
-    builder = builder.config("spark.hadoop.fs.defaultFS", hdfs_namenode)
+    builder = builder.config("spark.hadoop.fs.defaultFS", hdfs_namenode).config(
+        "spark.hadoop.dfs.client.use.datanode.hostname",
+        os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+    )
     return builder.getOrCreate()
 
 
@@ -106,6 +199,10 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    existing = set(spark.table(table_name).columns)
+    for column, dtype in {**FEATURE_COLUMN_TYPES, **METADATA_COLUMN_TYPES}.items():
+        if column not in existing:
+            spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
 def main() -> None:
@@ -154,6 +251,9 @@ def main() -> None:
             .withColumn("location_id", F.lit(args.location_id))
             .withColumn("location_name", F.lit(args.location_name))
             .withColumn("created_at", F.lit(created_at))
+            .withColumn("spark_processed_at", F.current_timestamp())
+            .withColumn("year", F.year("base_hour").cast("int"))
+            .withColumn("month_partition", F.month("base_hour").cast("int"))
         )
 
         # Validate schema matches FEATURE_COLUMNS (i.e. all features exist, no leakage).

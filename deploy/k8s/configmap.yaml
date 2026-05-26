@@ -17,7 +17,7 @@ data:
   ICEBERG_CATALOG_URI: ""
   ICEBERG_WAREHOUSE: hdfs://host.docker.internal:9000/warehouse/iceberg
   CASSANDRA_HOST: host.docker.internal
-  MODEL_ARTIFACT_BASE_URI: /opt/models/hanoi_pm25
+  MODEL_ARTIFACT_BASE_URI: hdfs://host.docker.internal:9000/models
   HANOI_PIPELINE_CONFIG: /opt/config/hanoi_pipeline.yaml
   FEATURE_VERSION: hanoi_pm25_core_v1
   FEATURE_SET_NAME: hanoi_pm25_core_v1

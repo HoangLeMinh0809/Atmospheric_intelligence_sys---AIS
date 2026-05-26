@@ -43,13 +43,24 @@ def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     warehouse = os.getenv("ICEBERG_WAREHOUSE", "")
     hdfs_namenode = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
+    packages = os.getenv(
+        "SPARK_JARS_PACKAGES",
+        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
+    )
+    ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
     builder = (
         SparkSession.builder.appName("PromoteHanoiPM25Model")
+        .config("spark.jars.packages", packages)
+        .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{catalog}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{catalog}.type", "hadoop")
         .config("spark.hadoop.fs.defaultFS", hdfs_namenode)
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
     )
     if warehouse:
         builder = builder.config(f"spark.sql.catalog.{catalog}.warehouse", warehouse)
@@ -77,16 +88,19 @@ def main() -> None:
             raise SystemExit(f"No model run found for model_run_id={args.model_run_id} horizon={args.horizon_hour}")
         run = run_row[0].asDict()
 
-        # Explicit version label; default -> UTC timestamp.
-        model_version = (args.model_version or "").strip() or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-
-        # Artifact URI convention (stable, does not depend on local path):
-        # MODEL_ARTIFACT_BASE_URI/hanoi_pm25/{feature_version}/{model_version}/horizon={horizon_hour}/model.<ext>
-        ext = "txt"  # train_hanoi_pm25.py currently writes .txt
-        artifact_uri = (
-            f"{model_artifact_base}/hanoi_pm25/{args.feature_version}/{model_version}"
-            f"/horizon={int(args.horizon_hour)}/model.{ext}"
+        # Prefer immutable metadata written by training; fall back to the documented convention for old runs.
+        model_version = (
+            (args.model_version or "").strip()
+            or str(run.get("model_version") or "").strip()
+            or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         )
+        artifact_uri = str(run.get("artifact_uri") or "").strip()
+        if not artifact_uri:
+            ext = "txt"
+            artifact_uri = (
+                f"{model_artifact_base}/hanoi_pm25/{args.feature_version}/{model_version}"
+                f"/horizon={int(args.horizon_hour)}/model.{ext}"
+            )
 
         promoted_at = datetime.now(timezone.utc)
 
@@ -100,7 +114,7 @@ def main() -> None:
             "model_version": model_version,
             "model_run_id": args.model_run_id,
             "model_type": run.get("model_type"),
-            "model_path": run.get("model_path"),
+            "model_path": run.get("model_path") or artifact_uri,
             "artifact_uri": artifact_uri,
             "feature_set_name": run.get("feature_set_name"),
             "training_dataset_version": run.get("dataset_version"),

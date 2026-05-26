@@ -780,6 +780,16 @@ def ensure_tables(spark: SparkSession) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    ensure_columns(
+        spark,
+        TABLES["model_runs_gold"],
+        {
+            "feature_version": "STRING",
+            "model_version": "STRING",
+            "artifact_uri": "STRING",
+            "feature_schema_hash": "STRING",
+        },
+    )
 
     spark.sql(
         f"""

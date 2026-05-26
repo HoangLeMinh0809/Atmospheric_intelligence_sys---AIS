@@ -9,6 +9,7 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 
 from hanoi_config import (
+    HDFS_NAMENODE,
     ICEBERG_CATALOG,
     ICEBERG_WAREHOUSE,
     get_gold_horizons_hours,
@@ -98,6 +99,83 @@ OUTPUT_COLUMNS = [
     "spark_processed_at",
 ]
 
+OUTPUT_COLUMN_TYPES = {
+    "hour": "TIMESTAMP",
+    "pm25_median": "DOUBLE",
+    "pm25_mean": "DOUBLE",
+    "station_count": "INT",
+    "coverage_avg": "DOUBLE",
+    "vis_km": "DOUBLE",
+    "uv": "DOUBLE",
+    "condition_code": "INT",
+    "is_day": "INT",
+    "will_it_rain": "INT",
+    "chance_of_rain": "INT",
+    "wind_u10": "DOUBLE",
+    "wind_v10": "DOUBLE",
+    "wind_speed": "DOUBLE",
+    "wind_dir": "DOUBLE",
+    "pbl_height_m": "DOUBLE",
+    "low_pbl": "BOOLEAN",
+    "surface_pressure": "DOUBLE",
+    "temperature_2m_c": "DOUBLE",
+    "dewpoint_2m_c": "DOUBLE",
+    "total_precipitation_mm": "DOUBLE",
+    "s5p_no2_mean": "DOUBLE",
+    "s5p_co_mean": "DOUBLE",
+    "s5p_so2_mean": "DOUBLE",
+    "s5p_o3_mean": "DOUBLE",
+    "s5p_aer_ai_mean": "DOUBLE",
+    "s5p_no2_valid_pct": "DOUBLE",
+    "s5p_aer_ai_valid_pct": "DOUBLE",
+    "aod_047_mean": "DOUBLE",
+    "aod_055_mean": "DOUBLE",
+    "aod_mean": "DOUBLE",
+    "aod_max": "DOUBLE",
+    "aod_valid_pct": "DOUBLE",
+    "pm25_grad_n": "DOUBLE",
+    "pm25_grad_s": "DOUBLE",
+    "pm25_grad_e": "DOUBLE",
+    "pm25_grad_w": "DOUBLE",
+    "pm25_spatial_std": "DOUBLE",
+    "pm25_grad_mag": "DOUBLE",
+    "dominant_cluster": "INT",
+    "n_traj": "INT",
+    "traj_source_lat": "DOUBLE",
+    "traj_source_lon": "DOUBLE",
+    "traj_path_no2_mean": "DOUBLE",
+    "traj_path_aer_mean": "DOUBLE",
+    "traj_path_no2_aer_ratio": "DOUBLE",
+    "hour_of_day": "INT",
+    "day_of_week": "INT",
+    "month": "INT",
+    "season": "STRING",
+    "is_weekend": "BOOLEAN",
+    "hour_sin": "DOUBLE",
+    "hour_cos": "DOUBLE",
+    "dow_sin": "DOUBLE",
+    "dow_cos": "DOUBLE",
+    "month_sin": "DOUBLE",
+    "month_cos": "DOUBLE",
+    "is_rush_hour": "BOOLEAN",
+    "pm25_lag_1h": "DOUBLE",
+    "pm25_lag_3h": "DOUBLE",
+    "pm25_lag_6h": "DOUBLE",
+    "pm25_lag_12h": "DOUBLE",
+    "pm25_lag_24h": "DOUBLE",
+    "pm25_roll_mean_3h": "DOUBLE",
+    "pm25_roll_mean_6h": "DOUBLE",
+    "pm25_roll_mean_24h": "DOUBLE",
+    "pm25_roll_max_24h": "DOUBLE",
+    "pm25_roll_std_24h": "DOUBLE",
+    "pm25_next_6h": "DOUBLE",
+    "pm25_next_12h": "DOUBLE",
+    "pm25_next_24h": "DOUBLE",
+    "year": "INT",
+    "month_partition": "INT",
+    "spark_processed_at": "TIMESTAMP",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi PM2.5 master feature gold table")
@@ -112,14 +190,25 @@ def as_bool(raw: str) -> bool:
 
 
 def build_spark() -> SparkSession:
+    packages = os.getenv(
+        "SPARK_JARS_PACKAGES",
+        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
+    )
+    ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     return (
         SparkSession.builder
         .appName("HanoiPM25MasterFeaturesGold")
+        .config("spark.jars.packages", packages)
+        .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", HDFS_NAMENODE))
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
         .getOrCreate()
     )
 
@@ -209,6 +298,10 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    existing = set(spark.table(table_name).columns)
+    for column, dtype in OUTPUT_COLUMN_TYPES.items():
+        if column not in existing:
+            spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
 def apply_date_range(df, time_col: str, start_date: str, end_date: str):

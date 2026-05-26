@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pandas as pd
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
 for candidate in [
     Path(__file__).resolve().parents[1] / "spark_jobs",
@@ -17,7 +22,7 @@ for candidate in [
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_table_names  # noqa: E402
+from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_table_names  # noqa: E402
 
 
 TARGETS = {
@@ -102,13 +107,22 @@ FEATURE_COLUMNS = [
 ]
 
 
-# Stable schema hash for FEATURE_COLUMNS; used for serving/inference compatibility checks.
-import hashlib
-import json
-
 FEATURE_SCHEMA_HASH = hashlib.sha256(
     json.dumps({"features": FEATURE_COLUMNS}, separators=(",", ":"), sort_keys=True).encode("utf-8")
 ).hexdigest()
+
+BOOLEAN_FEATURES = {"low_pbl", "is_weekend", "is_rush_hour"}
+INTEGER_FEATURES = {
+    "station_count",
+    "condition_code",
+    "is_day",
+    "will_it_rain",
+    "dominant_cluster",
+    "n_traj",
+    "hour_of_day",
+    "day_of_week",
+    "month",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,14 +141,25 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_spark() -> SparkSession:
+    packages = os.getenv(
+        "SPARK_JARS_PACKAGES",
+        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
+    )
+    ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     return (
         SparkSession.builder
         .appName("TrainHanoiPM25Baseline")
+        .config("spark.jars.packages", packages)
+        .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", HDFS_NAMENODE))
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
         .getOrCreate()
     )
 
@@ -160,12 +185,25 @@ def ensure_model_runs_table(spark: SparkSession, table_name: str) -> None:
             rmse DOUBLE,
             mape DOUBLE,
             feature_importance_path STRING,
-            created_at TIMESTAMP
+            created_at TIMESTAMP,
+            feature_version STRING,
+            model_version STRING,
+            artifact_uri STRING,
+            feature_schema_hash STRING
         )
         USING ICEBERG
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    existing = set(spark.table(table_name).columns)
+    for column, dtype in {
+        "feature_version": "STRING",
+        "model_version": "STRING",
+        "artifact_uri": "STRING",
+        "feature_schema_hash": "STRING",
+    }.items():
+        if column not in existing:
+            spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
 def prepare_frame(pdf: pd.DataFrame, target_col: str):
@@ -175,6 +213,26 @@ def prepare_frame(pdf: pd.DataFrame, target_col: str):
     features = pd.get_dummies(pdf[FEATURE_COLUMNS], columns=["season"], dummy_na=True)
     labels = pdf[target_col].astype(float)
     return pdf, features, labels
+
+
+def default_feature_expr(name: str):
+    if name == "season":
+        return F.lit("unknown")
+    if name in BOOLEAN_FEATURES:
+        return F.lit(False)
+    if name in INTEGER_FEATURES:
+        return F.lit(0)
+    return F.lit(0.0)
+
+
+def ensure_training_feature_columns(df):
+    existing = set(df.columns)
+    missing = [name for name in FEATURE_COLUMNS if name not in existing]
+    for name in missing:
+        df = df.withColumn(name, default_feature_expr(name))
+    if missing:
+        print(f"Filled missing training feature columns with defaults: {missing}")
+    return df
 
 
 def fit_model(model_type: str, x_train: pd.DataFrame, y_train: pd.Series):
@@ -225,6 +283,39 @@ def save_model(model, model_type: str, path: Path) -> None:
         model.save_model(str(path))
 
 
+def is_hdfs_uri(uri: str) -> bool:
+    return urlparse(uri).scheme == "hdfs"
+
+
+def hdfs_join(*parts: str) -> str:
+    first = parts[0].rstrip("/")
+    rest = [part.strip("/") for part in parts[1:] if part]
+    return "/".join([first, *rest])
+
+
+def copy_local_to_hdfs(spark: SparkSession, local_path: Path, hdfs_uri: str) -> None:
+    jvm = spark.sparkContext._jvm
+    conf = spark.sparkContext._jsc.hadoopConfiguration()
+    fs = jvm.org.apache.hadoop.fs.FileSystem.get(jvm.java.net.URI(hdfs_uri), conf)
+    target = jvm.org.apache.hadoop.fs.Path(hdfs_uri)
+    fs.mkdirs(target.getParent())
+    fs.copyFromLocalFile(False, True, jvm.org.apache.hadoop.fs.Path(str(local_path)), target)
+
+
+def materialize_artifact(spark: SparkSession, local_path: Path, artifact_uri: str) -> str:
+    if is_hdfs_uri(artifact_uri):
+        copy_local_to_hdfs(spark, local_path, artifact_uri)
+        return artifact_uri
+
+    if artifact_uri.startswith("file://"):
+        artifact_uri = artifact_uri.removeprefix("file://")
+
+    target = Path(artifact_uri)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(local_path.read_bytes())
+    return str(target)
+
+
 def write_importance(model, features: list[str], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     importance = getattr(model, "feature_importances_", None)
@@ -242,7 +333,14 @@ def split_bounds(pdf: pd.DataFrame, split: str) -> tuple[datetime | None, dateti
     return split_pdf["hour"].min().to_pydatetime(), split_pdf["hour"].max().to_pydatetime()
 
 
-def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int, target_col: str, output_dir: Path) -> dict:
+def train_one_horizon(
+    spark: SparkSession,
+    pdf: pd.DataFrame,
+    args: argparse.Namespace,
+    horizon: int,
+    target_col: str,
+    output_dir: Path,
+) -> dict:
     prepared, features, labels = prepare_frame(pdf, target_col)
     train_mask = prepared["split"] == "train"
     val_mask = prepared["split"] == "validation"
@@ -259,14 +357,18 @@ def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int,
     x_val = features[val_mask].reindex(columns=aligned_features, fill_value=0)
     y_val = labels[val_mask]
     x_test = features[test_mask].reindex(columns=aligned_features, fill_value=0)
-    y_test = labels[test_mask].reindex(columns=aligned_features, fill_value=0)
+    y_test = labels[test_mask]
 
     val_mae, val_rmse, val_mape = metrics(model, x_val, y_val)
     test_mae, test_rmse, test_mape = metrics(model, x_test, y_test)
 
     suffix = f"{args.model_type}_pm25_{horizon}h"
-    model_path = output_dir / f"{suffix}.txt"
-    importance_path = output_dir / f"{suffix}_feature_importance.csv"
+    local_output_dir = output_dir
+    if is_hdfs_uri(os.getenv("MODEL_ARTIFACT_BASE_URI", "")):
+        local_output_dir = Path(tempfile.mkdtemp(prefix="hanoi-pm25-model-"))
+
+    model_path = local_output_dir / f"{suffix}.txt"
+    importance_path = local_output_dir / f"{suffix}_feature_importance.csv"
     save_model(model, args.model_type, model_path)
     write_importance(model, aligned_features, importance_path)
 
@@ -278,10 +380,17 @@ def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int,
     artifact_base = os.getenv("MODEL_ARTIFACT_BASE_URI", "/opt/models").rstrip("/")
     model_version = args.model_version
     ext = "txt"  # train_hanoi_pm25.py writes .txt
-    artifact_uri = (
-        f"{artifact_base}/hanoi_pm25/{args.feature_version}/{model_version}"
-        f"/horizon={int(horizon)}/model.{ext}"
+    artifact_uri = hdfs_join(artifact_base, "hanoi_pm25", args.feature_version, model_version, f"horizon={horizon}", f"model.{ext}")
+    importance_uri = hdfs_join(
+        artifact_base,
+        "hanoi_pm25",
+        args.feature_version,
+        model_version,
+        f"horizon={horizon}",
+        "feature_importance.csv",
     )
+    materialized_model_uri = materialize_artifact(spark, model_path, artifact_uri)
+    materialized_importance_uri = materialize_artifact(spark, importance_path, importance_uri)
 
     return {
         "model_run_id": f"{args.dataset_version}_{args.feature_set_name}_{args.model_type}_{horizon}h_{created_at.strftime('%Y%m%d%H%M%S')}",
@@ -289,7 +398,7 @@ def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int,
         "feature_set_name": args.feature_set_name,
         "horizon_hour": int(horizon),
         "model_type": args.model_type,
-        "model_path": str(model_path),
+        "model_path": materialized_model_uri,
         "train_start": train_start,
         "train_end": train_end,
         "validation_start": validation_start,
@@ -299,11 +408,11 @@ def train_one_horizon(pdf: pd.DataFrame, args: argparse.Namespace, horizon: int,
         "mae": test_mae if test_mae is not None else val_mae,
         "rmse": test_rmse if test_rmse is not None else val_rmse,
         "mape": test_mape if test_mape is not None else val_mape,
-        "feature_importance_path": str(importance_path),
+        "feature_importance_path": materialized_importance_uri,
         "created_at": created_at,
         "feature_version": args.feature_version,
         "model_version": model_version,
-        "artifact_uri": artifact_uri,
+        "artifact_uri": materialized_model_uri,
         "feature_schema_hash": FEATURE_SCHEMA_HASH,
     }
 
@@ -322,15 +431,15 @@ def main() -> None:
         spark.table(tables["training_gold"])
         .filter(f"dataset_version = '{args.dataset_version}'")
         .filter(f"feature_set_name = '{args.feature_set_name}'")
-        .select("split", "hour", *FEATURE_COLUMNS, *TARGETS.values())
         .orderBy("hour")
     )
+    source = ensure_training_feature_columns(source).select("split", "hour", *FEATURE_COLUMNS, *TARGETS.values())
     pdf = source.toPandas()
     if pdf.empty:
         raise SystemExit("No rows found in gold training dataset for requested dataset_version/feature_set_name")
 
     output_dir = Path(args.output_dir)
-    rows = [train_one_horizon(pdf, args, horizon, target, output_dir) for horizon, target in TARGETS.items()]
+    rows = [train_one_horizon(spark, pdf, args, horizon, target, output_dir) for horizon, target in TARGETS.items()]
     spark.createDataFrame(rows).writeTo(tables["model_runs_gold"]).append()
     print(f"Wrote model metadata rows: {len(rows)} -> {tables['model_runs_gold']}")
     spark.stop()
