@@ -1,19 +1,32 @@
 from __future__ import annotations
 
+import os
+
 from pyspark.sql import SparkSession
 
 from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, TABLES
 
 
 def build_spark() -> SparkSession:
+    packages = os.getenv(
+        "SPARK_JARS_PACKAGES",
+        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
+    )
+    ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     return (
         SparkSession.builder
         .appName("AIS_EnsureIcebergTables")
+        .config("spark.jars.packages", packages)
+        .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
         .config("spark.hadoop.fs.defaultFS", HDFS_NAMENODE)
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
         .getOrCreate()
     )
 

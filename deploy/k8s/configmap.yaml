@@ -19,7 +19,7 @@ data:
   CASSANDRA_HOST: host.docker.internal
   MODEL_ARTIFACT_BASE_URI: /opt/models/hanoi_pm25
   HANOI_PIPELINE_CONFIG: /opt/config/hanoi_pipeline.yaml
-  FEATURE_VERSION: v1
+  FEATURE_VERSION: hanoi_pm25_core_v1
   FEATURE_SET_NAME: hanoi_pm25_core_v1
   LOCATION_ID: hanoi
   LOCATION_NAME: Hanoi

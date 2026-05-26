@@ -15,6 +15,10 @@ spec:
     spec:
       serviceAccountName: ais-workload
       restartPolicy: Never
+      hostAliases:
+        - ip: "192.168.65.254"
+          hostnames:
+            - datanode
       containers:
         - name: predict
           image: ais-ml-runtime:local
@@ -29,6 +33,7 @@ spec:
           args:
             - ml/predict_hanoi_pm25.py
             - --dry-run
+            - "0"
           resources:
             requests:
               cpu: 500m

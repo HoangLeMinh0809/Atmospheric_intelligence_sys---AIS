@@ -99,6 +99,7 @@ services:
         condition: service_healthy
     ports:
       - "9864:9864"    # Web UI
+      - "9866:9866"    # HDFS data transfer for Kubernetes/host clients
     volumes:
       - datanode_data:/hadoop/dfs/data
     environment:
