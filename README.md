@@ -6,6 +6,18 @@ Refactored architecture (April 2026):
 - Realtime/near-realtime sources run as long-running Spark Structured Streaming jobs.
 - Airflow is used for orchestration, supervision, backfill, and maintenance.
 
+## Trạng thái dự án (2026-05-27)
+
+Bảng dưới đây phản ánh mức độ triển khai theo TODO trong repo hiện tại (code + manifest đã có):
+
+| Hạng mục | Trạng thái | Ghi chú |
+|---|---|---|
+| Core pipeline (ingest -> Kafka -> Spark -> Iceberg -> Cassandra) | Đã triển khai | Ingest + streaming vào Iceberg bronze, Cassandra serving weather/openaq, Airflow DAGs + Monitoring UI. |
+| TODO1 - Hanoi PM2.5 silver/gold | Đã triển khai | `config/hanoi_pipeline.yaml`, `spark_jobs/hanoi_config.py`, các job silver/gold + script `scripts/run_todo1_end_to_end.sh`. |
+| TODO2 - Tier-2 trajectory | Đã triển khai | ERA5 pressure-level ingest, HYSPLIT run/parse/cluster, trajectory feature jobs. |
+| TODO3 - Kubernetes compute layer | Đang hoàn thiện | `deploy/k8s`, `scripts/submit_spark_k8s.sh`, DAG `ais_pm25_k8s_compute`, ML train/predict jobs, PM2.5 API. Cần hardening + vận hành production. |
+| UI | Demo | UI hiện dùng mock data (chưa nối data production). |
+
 ## 1. Refactored architecture
 
 ### 1.1 Architecture diagram
@@ -414,8 +426,8 @@ Summary streaming jobs (realtime path):
 
 | Job | Kafka topic | Sink |
 |-----|-------------|------|
-| `sentinel5p_summary_streaming.py` | `sentinel5p-summary` | `hdfs://namenode:9000/data/sentinel5p_summary/` |
-| `maiac_summary_streaming.py` | `maiac-summary` | `hdfs://namenode:9000/data/maiac_summary/` |
+| `sentinel5p_summary_streaming.py` | `sentinel5p-summary` | `ais.satellite.sentinel5p_summary_bronze` |
+| `maiac_summary_streaming.py` | `maiac-summary` | `ais.satellite.maiac_summary_bronze` |
 
 Iceberg warehouse:
 
