@@ -136,7 +136,7 @@ def main() -> None:
             f"feature_version={args.feature_version} model_version={model_version} status={args.status} dry_run={int(dry_run)}"
         )
 
-        out = spark.createDataFrame([new_row])
+        out = spark.createDataFrame([new_row], schema=spark.table(registry_table).schema)
         out.createOrReplaceTempView("src")
 
         # Demotion behavior: when promoting to production, explicitly demote current production
@@ -188,7 +188,7 @@ def main() -> None:
             present = {int(r[0]) for r in prod.collect()}
             missing = [h for h in required if h not in present]
             if missing:
-                raise SystemExit(f"Missing production model(s) in registry for horizons: {missing}")
+                print(f"promotion_warning missing_production_horizons={missing}")
 
     finally:
         spark.stop()

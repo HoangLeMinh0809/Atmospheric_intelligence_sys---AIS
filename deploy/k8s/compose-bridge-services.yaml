@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: namenode
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: namenode-bridge
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+spec:
+  type: ExternalName
+  externalName: host.docker.internal
+  ports:
+    - name: hdfs
+      port: 9000
+      targetPort: 9000
+    - name: webhdfs
+      port: 9870
+      targetPort: 9870
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: datanode
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: datanode-bridge
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+spec:
+  type: ExternalName
+  externalName: host.docker.internal
+  ports:
+    - name: data-transfer
+      port: 9866
+      targetPort: 9866
+    - name: http
+      port: 9864
+      targetPort: 9864

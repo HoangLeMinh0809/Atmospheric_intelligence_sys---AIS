@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Optional HYSPLIT install:
 # Place the official NOAA Linux HYSPLIT archive under spark/hysplit/ before
 # building. The public NOAA download requires accepting their use agreement.
-COPY hysplit/ /tmp/hysplit/
+COPY spark/hysplit/ /tmp/hysplit/
 RUN set -eux; \
     mkdir -p /opt/hysplit; \
     archive="$(find /tmp/hysplit -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar' -o -name '*.zip' \) | head -n 1)"; \
@@ -64,5 +64,13 @@ RUN rm -rf /root/.cache/pip && \
     else \
       echo "Skipping optional xgboost install."; \
     fi
+
+COPY spark_jobs/ /opt/spark-jobs/
+COPY ml/ /opt/ml/
+COPY config/ /opt/config/
+COPY scripts/ /opt/ais/scripts/
+
+ENV PYTHONPATH=/opt/spark-jobs:/opt/ml:/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
+ENV HANOI_PIPELINE_CONFIG=/opt/config/hanoi_pipeline.yaml
 
 USER root

@@ -2,39 +2,15 @@ from __future__ import annotations
 
 import argparse
 import os
-from math import sqrt
 
-import pandas as pd
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.types import (
-    DoubleType,
-    IntegerType,
-    StructField,
-    StructType,
-    TimestampType,
-)
+from pyspark.sql import Window
 
 from hanoi_config import (
     ICEBERG_CATALOG,
     ICEBERG_WAREHOUSE,
     get_hanoi_center,
     get_table_names,
-)
-
-
-OUTPUT_SCHEMA = StructType(
-    [
-        StructField("hour", TimestampType(), False),
-        StructField("pm25_grad_n", DoubleType(), True),
-        StructField("pm25_grad_s", DoubleType(), True),
-        StructField("pm25_grad_e", DoubleType(), True),
-        StructField("pm25_grad_w", DoubleType(), True),
-        StructField("pm25_spatial_std", DoubleType(), True),
-        StructField("pm25_grad_mag", DoubleType(), True),
-        StructField("spark_processed_at", TimestampType(), False),
-        StructField("year", IntegerType(), False),
-        StructField("month", IntegerType(), False),
-    ]
 )
 
 
@@ -94,75 +70,81 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
-def _inverse_distance_weighted(points: pd.DataFrame, target_lat: float, target_lon: float, k: int = 3) -> float | None:
-    if points.empty:
-        return None
-
-    distances = ((points["latitude"] - target_lat) ** 2 + (points["longitude"] - target_lon) ** 2) ** 0.5
-    nearest = points.assign(_dist=distances).sort_values("_dist").head(min(k, len(points)))
-    if nearest.empty:
-        return None
-
-    weights = 1.0 / nearest["_dist"].clip(lower=1e-6)
-    numerator = float((weights * nearest["pm25"]).sum())
-    denominator = float(weights.sum())
-    if denominator == 0.0:
-        return None
-    return numerator / denominator
-
-
-def compute_spatial_gradient_factory(center_lat: float, center_lon: float):
+def compute_spatial_gradient(station, center_lat: float, center_lon: float):
     offset = 0.25
 
-    def compute_spatial_gradient(pdf: pd.DataFrame) -> pd.DataFrame:
-        hour = pdf["hour"].iloc[0] if not pdf.empty else None
-        valid = pdf.dropna(subset=["latitude", "longitude", "pm25"]).copy()
-        if valid["location_id"].nunique() < 3:
-            return pd.DataFrame(
-                [
-                    {
-                        "hour": hour,
-                        "pm25_grad_n": None,
-                        "pm25_grad_s": None,
-                        "pm25_grad_e": None,
-                        "pm25_grad_w": None,
-                        "pm25_spatial_std": None,
-                        "pm25_grad_mag": None,
-                        "spark_processed_at": pd.Timestamp.utcnow().tz_localize(None),
-                        "year": int(pd.Timestamp(hour).year) if hour is not None else 1970,
-                        "month": int(pd.Timestamp(hour).month) if hour is not None else 1,
-                    }
-                ]
-            )
+    valid = station.filter(
+        F.col("latitude").isNotNull()
+        & F.col("longitude").isNotNull()
+        & F.col("pm25").isNotNull()
+    )
+    hour_stats = valid.groupBy("hour").agg(
+        F.countDistinct("location_id").alias("location_count"),
+        F.stddev_samp("pm25").alias("pm25_spatial_std_raw"),
+    )
 
-        pm25_n = _inverse_distance_weighted(valid, center_lat + offset, center_lon)
-        pm25_s = _inverse_distance_weighted(valid, center_lat - offset, center_lon)
-        pm25_e = _inverse_distance_weighted(valid, center_lat, center_lon + offset)
-        pm25_w = _inverse_distance_weighted(valid, center_lat, center_lon - offset)
+    targets = F.array(
+        F.struct(F.lit("n").alias("target"), F.lit(center_lat + offset).alias("target_lat"), F.lit(center_lon).alias("target_lon")),
+        F.struct(F.lit("s").alias("target"), F.lit(center_lat - offset).alias("target_lat"), F.lit(center_lon).alias("target_lon")),
+        F.struct(F.lit("e").alias("target"), F.lit(center_lat).alias("target_lat"), F.lit(center_lon + offset).alias("target_lon")),
+        F.struct(F.lit("w").alias("target"), F.lit(center_lat).alias("target_lat"), F.lit(center_lon - offset).alias("target_lon")),
+    )
 
-        grad_mag = None
-        if None not in {pm25_n, pm25_s, pm25_e, pm25_w}:
-            grad_mag = sqrt((pm25_n - pm25_s) ** 2 + (pm25_e - pm25_w) ** 2)
-
-        hour_ts = pd.Timestamp(hour)
-        return pd.DataFrame(
-            [
-                {
-                    "hour": hour,
-                    "pm25_grad_n": pm25_n,
-                    "pm25_grad_s": pm25_s,
-                    "pm25_grad_e": pm25_e,
-                    "pm25_grad_w": pm25_w,
-                    "pm25_spatial_std": float(valid["pm25"].std(ddof=1)) if len(valid) > 1 else 0.0,
-                    "pm25_grad_mag": grad_mag,
-                    "spark_processed_at": pd.Timestamp.utcnow().tz_localize(None),
-                    "year": int(hour_ts.year),
-                    "month": int(hour_ts.month),
-                }
-            ]
+    expanded = (
+        valid.select("hour", "location_id", "latitude", "longitude", "pm25")
+        .withColumn("target_point", F.explode(targets))
+        .select(
+            "hour",
+            "location_id",
+            "latitude",
+            "longitude",
+            "pm25",
+            F.col("target_point.target").alias("target"),
+            F.col("target_point.target_lat").alias("target_lat"),
+            F.col("target_point.target_lon").alias("target_lon"),
         )
+        .withColumn(
+            "distance",
+            F.sqrt(
+                F.pow(F.col("latitude") - F.col("target_lat"), F.lit(2.0))
+                + F.pow(F.col("longitude") - F.col("target_lon"), F.lit(2.0))
+            ),
+        )
+    )
 
-    return compute_spatial_gradient
+    nearest_window = Window.partitionBy("hour", "target").orderBy(F.col("distance").asc())
+    idw = (
+        expanded.withColumn("rank", F.row_number().over(nearest_window))
+        .filter(F.col("rank") <= 3)
+        .withColumn("weight", F.lit(1.0) / F.greatest(F.col("distance"), F.lit(1e-6)))
+        .groupBy("hour", "target")
+        .agg((F.sum(F.col("weight") * F.col("pm25")) / F.sum("weight")).alias("pm25_idw"))
+        .groupBy("hour")
+        .pivot("target", ["n", "s", "e", "w"])
+        .agg(F.first("pm25_idw"))
+    )
+
+    enough_locations = F.col("location_count") >= 3
+    grad_mag = F.sqrt(
+        F.pow(F.col("n") - F.col("s"), F.lit(2.0))
+        + F.pow(F.col("e") - F.col("w"), F.lit(2.0))
+    )
+
+    return (
+        hour_stats.join(idw, on="hour", how="left")
+        .select(
+            F.col("hour"),
+            F.when(enough_locations, F.col("n")).cast("double").alias("pm25_grad_n"),
+            F.when(enough_locations, F.col("s")).cast("double").alias("pm25_grad_s"),
+            F.when(enough_locations, F.col("e")).cast("double").alias("pm25_grad_e"),
+            F.when(enough_locations, F.col("w")).cast("double").alias("pm25_grad_w"),
+            F.when(enough_locations, F.col("pm25_spatial_std_raw")).cast("double").alias("pm25_spatial_std"),
+            F.when(enough_locations, grad_mag).cast("double").alias("pm25_grad_mag"),
+            F.current_timestamp().alias("spark_processed_at"),
+            F.year("hour").cast("int").alias("year"),
+            F.month("hour").cast("int").alias("month"),
+        )
+    )
 
 
 def build_output_df(spark: SparkSession, source_table: str, start_date: str, end_date: str):
@@ -180,8 +162,7 @@ def build_output_df(spark: SparkSession, source_table: str, start_date: str, end
     duplicate_count = int((duplicate_count_row["duplicate_count"] if duplicate_count_row else 0) or 0)
 
     center = get_hanoi_center()
-    gradient_fn = compute_spatial_gradient_factory(center["lat"], center["lon"])
-    output = station.groupBy("hour").applyInPandas(gradient_fn, schema=OUTPUT_SCHEMA)
+    output = compute_spatial_gradient(station, center["lat"], center["lon"])
     return station, output, duplicate_count
 
 

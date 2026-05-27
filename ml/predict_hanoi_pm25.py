@@ -220,8 +220,12 @@ def prepare_features(row: dict[str, Any], model_feature_names: list[str]) -> pd.
     pdf["is_weekend"] = pdf["is_weekend"].fillna(False).astype(int)
     if "is_rush_hour" in pdf:
         pdf["is_rush_hour"] = pdf["is_rush_hour"].fillna(False).astype(int)
+    numeric_columns = [name for name in FEATURE_COLUMNS if name != "season"]
+    for name in numeric_columns:
+        pdf[name] = pd.to_numeric(pdf[name], errors="coerce")
     features = pd.get_dummies(pdf[FEATURE_COLUMNS], columns=["season"], dummy_na=True)
-    return features.reindex(columns=model_feature_names, fill_value=0)
+    features = features.reindex(columns=model_feature_names, fill_value=0)
+    return features.apply(pd.to_numeric, errors="coerce").astype("float64")
 
 
 def predict_one(spark: SparkSession, model_meta: dict[str, Any], feature_row: dict[str, Any]) -> float:
