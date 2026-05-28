@@ -229,8 +229,18 @@ case "$JOB_TYPE" in
     JOB_ARGS=("--lookback-hours" "${RECONCILE_LOOKBACK_HOURS:-24}" "--tolerance" "${RECONCILE_TOLERANCE:-0.95}")
     PACKAGES="${CASSANDRA_PACKAGES}"
     ;;
+  visualization-forecast-dashboard)
+    APP_NAME="AIS_VisualizationForecastDashboard"
+    JOB_FILE="/opt/spark-jobs/visualization_forecast_dashboard_gold.py"
+    JOB_ARGS=("--base-time" "${BASE_TIME:-}" "--dry-run" "${DRY_RUN:-0}")
+    ;;
+  visualization-pm25-timeseries)
+    APP_NAME="AIS_VisualizationPM25Timeseries"
+    JOB_FILE="/opt/spark-jobs/visualization_pm25_timeseries_gold.py"
+    JOB_ARGS=("--base-time" "${BASE_TIME:-}" "--dry-run" "${DRY_RUN:-0}")
+    ;;
   *)
-    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving]"
+    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|visualization-forecast-dashboard|visualization-pm25-timeseries]"
     exit 1
     ;;
 esac

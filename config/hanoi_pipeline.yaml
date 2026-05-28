@@ -101,3 +101,45 @@ sampling:
   path_window_start_h: -72
   path_window_end_h: -24
   max_distance_deg: 0.5
+
+visualization:
+  region_bbox:
+    west: 100.0
+    east: 108.8
+    south: 18.0
+    north: 24.5
+  grid_resolution_deg: 0.1
+  horizons_hours:
+    - 0
+    - 6
+    - 12
+    - 24
+  observation_history_hours: 48
+  forward_plume_required: false
+  cache:
+    format: "geojson"
+    base_uri_hdfs: "hdfs://namenode:9000/visualization_cache"
+    base_uri_s3: ""
+  source_clusters:
+    1:
+      label: "Central Vietnam Industrial Zone"
+      region_type: "industrial"
+      description_vi: "Khu công nghiệp Trung Bộ"
+    2:
+      label: "Haiphong Port Authority"
+      region_type: "port"
+      description_vi: "Cảng Hải Phòng"
+    3:
+      label: "Quang Ninh Mining Region"
+      region_type: "mining"
+      description_vi: "Khu mỏ Quảng Ninh"
+    4:
+      label: "Thailand-Laos Border Industrial"
+      region_type: "transboundary"
+      description_vi: "Khu công nghiệp biên giới Thái-Lào"
+    5:
+      label: "Red River Delta Agricultural"
+      region_type: "agricultural"
+      description_vi: "Đồng bằng Sông Hồng"
+  product_version: "windy_v1"
+  schema_version: 1

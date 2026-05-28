@@ -119,6 +119,14 @@ TABLES = {
     "s5p_grid_silver": f"{ICEBERG_CATALOG}.satellite.sentinel5p_grid_silver",
     "trajectory_path_silver": f"{ICEBERG_CATALOG}.features.trajectory_path_satellite_silver",
     "trajectory_hourly_silver": f"{ICEBERG_CATALOG}.features.trajectory_hourly_features_silver",
+    "visualization_heatmap_grid_gold": f"{ICEBERG_CATALOG}.visualization.pm25_heatmap_grid_gold",
+    "visualization_backward_trajectory_paths_gold": f"{ICEBERG_CATALOG}.visualization.backward_trajectory_paths_gold",
+    "visualization_forward_plume_probability_gold": f"{ICEBERG_CATALOG}.visualization.forward_plume_probability_gold",
+    "visualization_forecast_dashboard_gold": f"{ICEBERG_CATALOG}.visualization.pm25_forecast_dashboard_gold",
+    "visualization_pm25_timeseries_gold": f"{ICEBERG_CATALOG}.visualization.pm25_timeseries_gold",
+    "visualization_source_attribution_gold": f"{ICEBERG_CATALOG}.visualization.source_attribution_gold",
+    "visualization_station_observations_gold": f"{ICEBERG_CATALOG}.visualization.station_observations_gold",
+    "visualization_cache_manifest_gold": f"{ICEBERG_CATALOG}.visualization.visualization_cache_manifest_gold",
 }
 
 
@@ -268,6 +276,91 @@ def get_table_names() -> dict[str, str]:
 
 def filter_hanoi_bbox(df: DataFrame, lat_col: str, lon_col: str) -> DataFrame:
     bbox = get_hanoi_bbox()
+    return df.filter(
+        F.col(lat_col).between(bbox["south"], bbox["north"])
+        & F.col(lon_col).between(bbox["west"], bbox["east"])
+    )
+
+
+def get_visualization_config() -> dict[str, Any]:
+    """Get complete visualization configuration."""
+    return deepcopy(load_config().get("visualization", {}))
+
+
+def get_visualization_region_bbox() -> dict[str, float]:
+    """Get Northern Vietnam region bbox for visualization."""
+    vis_cfg = get_visualization_config()
+    bbox = vis_cfg.get("region_bbox", {})
+    return {
+        "west": float(bbox.get("west", 100.0)),
+        "east": float(bbox.get("east", 108.8)),
+        "south": float(bbox.get("south", 18.0)),
+        "north": float(bbox.get("north", 24.5)),
+    }
+
+
+def get_visualization_grid_resolution_deg() -> float:
+    """Get visualization grid resolution in degrees."""
+    vis_cfg = get_visualization_config()
+    return float(vis_cfg.get("grid_resolution_deg", 0.1))
+
+
+def get_visualization_horizons() -> list[int]:
+    """Get list of forecast horizons for visualization in hours."""
+    vis_cfg = get_visualization_config()
+    return [int(h) for h in vis_cfg.get("horizons_hours", [0, 6, 12, 24])]
+
+
+def get_visualization_observation_history_hours() -> int:
+    """Get observation history window in hours for timeseries."""
+    vis_cfg = get_visualization_config()
+    return int(vis_cfg.get("observation_history_hours", 48))
+
+
+def get_visualization_cache_base_uri() -> str:
+    """Get visualization cache base URI (HDFS or S3)."""
+    vis_cfg = get_visualization_config()
+    cache_cfg = vis_cfg.get("cache", {})
+    hdfs_uri = cache_cfg.get("base_uri_hdfs", "")
+    s3_uri = cache_cfg.get("base_uri_s3", "")
+    uri = hdfs_uri or s3_uri or "hdfs://namenode:9000/visualization_cache"
+    return uri.rstrip("/")
+
+
+def get_visualization_cache_format() -> str:
+    """Get visualization cache format (geojson or json)."""
+    vis_cfg = get_visualization_config()
+    cache_cfg = vis_cfg.get("cache", {})
+    return str(cache_cfg.get("format", "geojson")).lower()
+
+
+def get_visualization_source_clusters() -> dict[int, dict[str, str]]:
+    """Get source cluster labels and metadata."""
+    vis_cfg = get_visualization_config()
+    return deepcopy(vis_cfg.get("source_clusters", {}))
+
+
+def get_visualization_product_version() -> str:
+    """Get visualization product version."""
+    vis_cfg = get_visualization_config()
+    return str(vis_cfg.get("product_version", "windy_v1"))
+
+
+def get_visualization_schema_version() -> int:
+    """Get visualization schema version."""
+    vis_cfg = get_visualization_config()
+    return int(vis_cfg.get("schema_version", 1))
+
+
+def get_visualization_forward_plume_required() -> bool:
+    """Check if forward plume is required for dashboard readiness."""
+    vis_cfg = get_visualization_config()
+    return bool(vis_cfg.get("forward_plume_required", False))
+
+
+def filter_visualization_region(df: DataFrame, lat_col: str, lon_col: str) -> DataFrame:
+    """Filter dataframe to Northern Vietnam visualization region."""
+    bbox = get_visualization_region_bbox()
     return df.filter(
         F.col(lat_col).between(bbox["south"], bbox["north"])
         & F.col(lon_col).between(bbox["west"], bbox["east"])
