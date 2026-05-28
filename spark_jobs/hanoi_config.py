@@ -91,6 +91,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "path_window_end_h": -24,
         "max_distance_deg": 0.5,
     },
+    "visualization": {
+        "product_version": "windy_v1",
+        "schema_version": "1",
+        "region_bbox": {"west": 100.0, "east": 108.8, "south": 18.0, "north": 24.5},
+        "grid_resolution_deg": 0.1,
+        "horizons_hours": [0, 6, 12, 24],
+        "forward_plume_required": False,
+        "source_cluster_labels": {},
+    },
 }
 
 TABLES = {
@@ -119,6 +128,14 @@ TABLES = {
     "s5p_grid_silver": f"{ICEBERG_CATALOG}.satellite.sentinel5p_grid_silver",
     "trajectory_path_silver": f"{ICEBERG_CATALOG}.features.trajectory_path_satellite_silver",
     "trajectory_hourly_silver": f"{ICEBERG_CATALOG}.features.trajectory_hourly_features_silver",
+    "visualization_backward_trajectory_paths_gold": (
+        f"{ICEBERG_CATALOG}.visualization.backward_trajectory_paths_gold"
+    ),
+    "visualization_forward_plume_probability_gold": (
+        f"{ICEBERG_CATALOG}.visualization.forward_plume_probability_gold"
+    ),
+    "visualization_station_observations_gold": f"{ICEBERG_CATALOG}.visualization.station_observations_gold",
+    "visualization_cache_manifest_gold": f"{ICEBERG_CATALOG}.visualization.visualization_cache_manifest_gold",
 }
 
 
@@ -248,6 +265,45 @@ def get_trajectory_config() -> dict[str, Any]:
 
 def get_sampling_config() -> dict[str, Any]:
     return deepcopy(load_config().get("sampling", {}))
+
+
+def get_visualization_config() -> dict[str, Any]:
+    cfg = deepcopy(load_config().get("visualization", {}))
+    cfg["product_version"] = os.getenv("VIS_PRODUCT_VERSION", str(cfg.get("product_version", "windy_v1")))
+    cfg["schema_version"] = os.getenv("VIS_SCHEMA_VERSION", str(cfg.get("schema_version", "1")))
+    cfg["grid_resolution_deg"] = float(
+        os.getenv("VIS_GRID_RESOLUTION_DEG", cfg.get("grid_resolution_deg", 0.1))
+    )
+    cfg["forward_plume_required"] = str(
+        os.getenv("VIS_FORWARD_PLUME_REQUIRED", cfg.get("forward_plume_required", False))
+    ).lower() in {"1", "true", "yes", "y", "on"}
+    horizons = os.getenv("VIS_HORIZONS", "")
+    if horizons:
+        cfg["horizons_hours"] = [int(v.strip()) for v in horizons.split(",") if v.strip()]
+    return cfg
+
+
+def get_visualization_region_bbox() -> dict[str, float]:
+    cfg = get_visualization_config()
+    bbox = cfg.get("region_bbox") or {}
+    bbox = {
+        "west": float(bbox.get("west", 100.0)),
+        "east": float(bbox.get("east", 108.8)),
+        "south": float(bbox.get("south", 18.0)),
+        "north": float(bbox.get("north", 24.5)),
+    }
+    bbox["west"] = float(os.getenv("VIS_REGION_BBOX_WEST", bbox["west"]))
+    bbox["east"] = float(os.getenv("VIS_REGION_BBOX_EAST", bbox["east"]))
+    bbox["south"] = float(os.getenv("VIS_REGION_BBOX_SOUTH", bbox["south"]))
+    bbox["north"] = float(os.getenv("VIS_REGION_BBOX_NORTH", bbox["north"]))
+    return bbox
+
+
+def get_visualization_cache_base_uri() -> str:
+    return os.getenv(
+        "VIS_CACHE_BASE_URI",
+        str(get_visualization_config().get("cache_base_uri", "/tmp/ais_visualization_cache")),
+    ).rstrip("/")
 
 
 def get_era5_pressure_levels() -> list[int]:

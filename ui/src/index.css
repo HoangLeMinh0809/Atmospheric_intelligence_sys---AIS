@@ -169,6 +169,157 @@ select option {
   color: #cbd5e1;
   font-size: 14px;
 }
+
+.map-dashboard {
+  min-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.map-toolbar,
+.map-layout,
+.map-side-panel,
+.map-popup,
+.manifest-panel {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: #0f172a;
+}
+
+.map-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border-radius: 8px;
+}
+
+.map-toolbar h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.map-toolbar p {
+  margin: 5px 0 0;
+  color: #94a3b8;
+}
+
+.toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.toolbar-controls select {
+  height: 34px;
+  border-radius: 6px;
+  padding: 0 9px;
+  font-size: 14px;
+}
+
+.layer-toggle {
+  padding: 7px 9px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+}
+
+.map-layout {
+  display: grid;
+  grid-template-columns: minmax(520px, 1fr) 320px;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 8px;
+}
+
+.air-map {
+  width: 100%;
+  min-height: 560px;
+  background: #dbeafe;
+  border-radius: 6px;
+}
+
+.map-city {
+  fill: #0f172a;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.map-city.small {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.map-side-panel {
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.map-popup,
+.manifest-panel {
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.map-popup h3,
+.manifest-panel h3 {
+  margin: 0 0 10px;
+}
+
+.map-popup p {
+  margin: 7px 0;
+  color: #cbd5e1;
+}
+
+.map-popup.empty {
+  color: #94a3b8;
+}
+
+.manifest-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  font-size: 13px;
+}
+
+.manifest-row strong {
+  text-align: right;
+}
+
+.map-error,
+.map-warning {
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.map-error {
+  border: 1px solid #f87171;
+  background: rgba(127, 29, 29, 0.36);
+}
+
+.map-warning {
+  border: 1px solid #facc15;
+  background: rgba(113, 63, 18, 0.36);
+}
+
+@media (max-width: 1000px) {
+  .map-layout {
+    grid-template-columns: 1fr;
+  }
+}
 .nav-btn {
   padding: 10px 14px;
   border: 1px solid #334155;

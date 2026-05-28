@@ -229,8 +229,27 @@ case "$JOB_TYPE" in
     JOB_ARGS=("--lookback-hours" "${RECONCILE_LOOKBACK_HOURS:-24}" "--tolerance" "${RECONCILE_TOLERANCE:-0.95}")
     PACKAGES="${CASSANDRA_PACKAGES}"
     ;;
+  visualization-station-observations)
+    APP_NAME="VisualizationStationObservationsGold"
+    JOB_FILE="/opt/spark-jobs/visualization_station_observations_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH")
+    ;;
+  visualization-backward-trajectories)
+    APP_NAME="VisualizationBackwardTrajectoryPathsGold"
+    JOB_FILE="/opt/spark-jobs/visualization_backward_trajectory_paths_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH")
+    ;;
+  visualization-forward-plume)
+    APP_NAME="VisualizationForwardPlumeProbabilityGold"
+    JOB_FILE="/opt/spark-jobs/visualization_forward_plume_probability_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH")
+    ;;
+  visualization-export-cache)
+    APP_NAME="ExportVisualizationCache"
+    JOB_FILE="/opt/spark-jobs/export_visualization_cache.py"
+    ;;
   *)
-    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving]"
+    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|visualization-station-observations|visualization-backward-trajectories|visualization-forward-plume|visualization-export-cache]"
     exit 1
     ;;
 esac
@@ -244,7 +263,7 @@ case "$JOB_TYPE" in
       STREAM_ARGS+=("--processing-time" "$PROCESSING_TIME")
     fi
     ;;
-  hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold)
+  hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|visualization-station-observations|visualization-backward-trajectories|visualization-forward-plume)
     if [ -n "$START_DATE" ]; then
       JOB_ARGS+=("--start-date" "$START_DATE")
     fi

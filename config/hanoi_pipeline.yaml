@@ -101,3 +101,22 @@ sampling:
   path_window_start_h: -72
   path_window_end_h: -24
   max_distance_deg: 0.5
+
+visualization:
+  product_version: windy_v1
+  schema_version: "1"
+  region_bbox:
+    west: 100.0
+    east: 108.8
+    south: 18.0
+    north: 24.5
+  grid_resolution_deg: 0.1
+  horizons_hours: [0, 6, 12, 24]
+  forward_plume_required: false
+  source_cluster_labels:
+    0: local_hanoi
+    1: red_river_delta
+    2: northeast_vietnam
+    3: northwest_vietnam
+    4: coastal_gulf_of_tonkin
+    5: transboundary_north

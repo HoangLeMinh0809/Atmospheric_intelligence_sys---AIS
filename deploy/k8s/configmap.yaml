@@ -36,6 +36,23 @@ data:
   FEATURE_FRESHNESS_MAX_MINUTES: "180"
   PREDICTION_FRESHNESS_MAX_MINUTES: "180"
   PM25_API_BASE_URL: http://pm25-api.ais.svc.cluster.local
+  VIS_PRODUCT_VERSION: windy_v1
+  VIS_SCHEMA_VERSION: "1"
+  VIS_REGION_BBOX_WEST: "100.0"
+  VIS_REGION_BBOX_EAST: "108.8"
+  VIS_REGION_BBOX_SOUTH: "18.0"
+  VIS_REGION_BBOX_NORTH: "24.5"
+  VIS_GRID_RESOLUTION_DEG: "0.1"
+  VIS_HORIZONS: 0,6,12,24
+  VIS_FORWARD_PLUME_REQUIRED: "false"
+  VIS_CACHE_BASE_URI: hdfs://host.docker.internal:9000/visualization_cache
+  VIS_CACHE_MANIFEST_TABLE: ais.visualization.visualization_cache_manifest_gold
+  VIS_TRAJECTORY_TABLE: ais.visualization.backward_trajectory_paths_gold
+  VIS_PLUME_TABLE: ais.visualization.forward_plume_probability_gold
+  VIS_STATION_TABLE: ais.visualization.station_observations_gold
+  VIS_API_PORT: "8080"
+  VIS_API_BASE_URL: http://visualization-api.ais.svc.cluster.local
+  VIS_REQUIRED_LAYERS: station_observations,backward_trajectories
   SPARK_K8S_MASTER: k8s://https://kubernetes.default.svc
   SPARK_K8S_NAMESPACE: ais
   SPARK_DRIVER_SERVICE_ACCOUNT: spark
