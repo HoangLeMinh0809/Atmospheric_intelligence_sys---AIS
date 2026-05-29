@@ -9,3 +9,8 @@ resources:
   - rbac.yaml
   - spark/spark-serviceaccount.yaml
   - spark/spark-rbac.yaml
+  - visualization-api/visualization-api-deployment.yaml
+  - visualization-api/visualization-api-service.yaml
+  - ui/ais-ui-deployment.yaml
+  - ui/ais-ui-service.yaml
+  - checks/visualization-serving-check-job.yaml

@@ -32,7 +32,16 @@ def build_spark() -> SparkSession:
 
 
 def create_namespaces(spark: SparkSession) -> None:
-    for namespace in ["weather", "air_quality", "satellite", "features", "models", "trajectory", "predictions"]:
+    for namespace in [
+        "weather",
+        "air_quality",
+        "satellite",
+        "features",
+        "models",
+        "trajectory",
+        "predictions",
+        "visualization",
+    ]:
         spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.{namespace}")
 
 
@@ -981,12 +990,310 @@ def ensure_tables(spark: SparkSession) -> None:
         },
     )
 
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_heatmap_grid_gold"]} (
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            base_time TIMESTAMP,
+            valid_time TIMESTAMP,
+            horizon_h INT,
+            cell_id STRING,
+            lat DOUBLE,
+            lon DOUBLE,
+            lat_min DOUBLE,
+            lat_max DOUBLE,
+            lon_min DOUBLE,
+            lon_max DOUBLE,
+            pm25_value DOUBLE,
+            risk STRING,
+            uncertainty DOUBLE,
+            source_method STRING,
+            observation_count INT,
+            satellite_product_count INT,
+            prediction_id STRING,
+            model_version STRING,
+            feature_version STRING,
+            source_cluster_id INT,
+            source_label STRING,
+            geometry_geojson STRING,
+            generated_at TIMESTAMP,
+            data_freshness_minutes INT,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (horizon_h, year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_backward_trajectory_paths_gold"]} (
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            base_time TIMESTAMP,
+            init_time TIMESTAMP,
+            direction STRING,
+            traj_id STRING,
+            traj_no INT,
+            cluster_id INT,
+            source_label STRING,
+            source_lat DOUBLE,
+            source_lon DOUBLE,
+            source_alt_m DOUBLE,
+            start_lat DOUBLE,
+            start_lon DOUBLE,
+            end_lat DOUBLE,
+            end_lon DOUBLE,
+            age_start_h INT,
+            age_end_h INT,
+            point_count INT,
+            path_no2_mean DOUBLE,
+            path_aer_mean DOUBLE,
+            path_no2_aer_ratio DOUBLE,
+            geometry_geojson STRING,
+            properties_json STRING,
+            style_color STRING,
+            generated_at TIMESTAMP,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (direction, year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_forward_plume_probability_gold"]} (
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            base_time TIMESTAMP,
+            valid_time TIMESTAMP,
+            horizon_h INT,
+            cell_id STRING,
+            lat DOUBLE,
+            lon DOUBLE,
+            lat_min DOUBLE,
+            lat_max DOUBLE,
+            lon_min DOUBLE,
+            lon_max DOUBLE,
+            particle_count BIGINT,
+            total_particle_count BIGINT,
+            probability DOUBLE,
+            available BOOLEAN,
+            unavailable_reason STRING,
+            source_run_count INT,
+            source_method STRING,
+            geometry_geojson STRING,
+            generated_at TIMESTAMP,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (horizon_h, year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_forecast_dashboard_gold"]} (
+            dashboard_id STRING,
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            base_hour TIMESTAMP,
+            location_id STRING,
+            location_name STRING,
+            latest_observed_time TIMESTAMP,
+            pm25_latest_observed DOUBLE,
+            pm25_now DOUBLE,
+            pm25_6h DOUBLE,
+            risk_6h STRING,
+            pm25_12h DOUBLE,
+            risk_12h STRING,
+            pm25_24h DOUBLE,
+            risk_24h STRING,
+            dominant_cluster INT,
+            source_lat DOUBLE,
+            source_lon DOUBLE,
+            source_label STRING,
+            path_no2_mean DOUBLE,
+            path_aer_mean DOUBLE,
+            pm25_grad_mag DOUBLE,
+            model_version STRING,
+            model_version_6h STRING,
+            model_version_12h STRING,
+            model_version_24h STRING,
+            model_status STRING,
+            feature_version STRING,
+            feature_schema_hash STRING,
+            prediction_id STRING,
+            prediction_created_at TIMESTAMP,
+            generated_at TIMESTAMP,
+            prediction_freshness_minutes INT,
+            observation_freshness_minutes INT,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (location_id, year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_pm25_timeseries_gold"]} (
+            series_id STRING,
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            location_id STRING,
+            location_name STRING,
+            base_time TIMESTAMP,
+            timestamp TIMESTAMP,
+            series_type STRING,
+            horizon_h INT,
+            pm25_value DOUBLE,
+            risk STRING,
+            source_table STRING,
+            source_id STRING,
+            model_version STRING,
+            generated_at TIMESTAMP,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (location_id, series_type, year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_source_attribution_gold"]} (
+            attribution_id STRING,
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            base_time TIMESTAMP,
+            valid_time TIMESTAMP,
+            location_id STRING,
+            cluster_id INT,
+            source_label STRING,
+            source_region_type STRING,
+            source_lat DOUBLE,
+            source_lon DOUBLE,
+            contribution_score DOUBLE,
+            confidence DOUBLE,
+            traj_count INT,
+            age_window_start_h INT,
+            age_window_end_h INT,
+            evidence_no2_mean DOUBLE,
+            evidence_aer_mean DOUBLE,
+            evidence_no2_aer_ratio DOUBLE,
+            evidence_pm25_grad_mag DOUBLE,
+            explanation_vi STRING,
+            geometry_geojson STRING,
+            generated_at TIMESTAMP,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (location_id, year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_station_observations_gold"]} (
+            observation_id STRING,
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            observation_time TIMESTAMP,
+            station_id STRING,
+            station_name STRING,
+            location_id STRING,
+            city STRING,
+            lat DOUBLE,
+            lon DOUBLE,
+            pm25 DOUBLE,
+            risk STRING,
+            coverage_pct DOUBLE,
+            unit STRING,
+            provider STRING,
+            source STRING,
+            geometry_geojson STRING,
+            generated_at TIMESTAMP,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLES["visualization_cache_manifest_gold"]} (
+            manifest_id STRING,
+            visualization_run_id STRING,
+            product_version STRING,
+            schema_version STRING,
+            layer_name STRING,
+            base_time TIMESTAMP,
+            valid_time TIMESTAMP,
+            horizon_h INT,
+            location_id STRING,
+            format STRING,
+            content_type STRING,
+            cache_uri STRING,
+            tile_template STRING,
+            bbox_west DOUBLE,
+            bbox_south DOUBLE,
+            bbox_east DOUBLE,
+            bbox_north DOUBLE,
+            row_count BIGINT,
+            byte_size BIGINT,
+            checksum STRING,
+            available BOOLEAN,
+            unavailable_reason STRING,
+            generated_at TIMESTAMP,
+            expires_at TIMESTAMP,
+            year INT,
+            month INT,
+            day INT
+        )
+        USING ICEBERG
+        PARTITIONED BY (layer_name, year, month, day)
+        TBLPROPERTIES ('format-version'='2')
+        """
+    )
+
 
 def main() -> None:
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")
     ensure_tables(spark)
-    print("Ensured Iceberg namespaces and TODO_1/TODO_2/TODO_3 bronze/silver/gold/model/prediction tables")
+    print("Ensured Iceberg namespaces and TODO_1/TODO_2/TODO_3/TODO_4 bronze/silver/gold/model/prediction/visualization tables")
     spark.stop()
 
 

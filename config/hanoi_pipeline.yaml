@@ -101,3 +101,32 @@ sampling:
   path_window_start_h: -72
   path_window_end_h: -24
   max_distance_deg: 0.5
+
+visualization:
+  product_version: "windy_v1"
+  schema_version: "1"
+  region_bbox:
+    west: 100.0
+    east: 108.8
+    south: 18.0
+    north: 24.5
+  region_center:
+    lat: 21.0285
+    lon: 105.8542
+  default_zoom: 7
+  grid_resolution_deg: 0.1
+  horizons_hours: [0, 6, 12, 24]
+  observation_history_hours: 48
+  freshness_max_minutes: 180
+  forward_plume_required: false
+  cache:
+    base_uri: "hdfs://namenode:9000/visualization_cache"
+    format: "geojson"
+  source_cluster_labels:
+    "0": "Unknown/weak trajectory signal"
+    "1": "Northwest uplands transport corridor"
+    "2": "Red River Delta urban-industrial corridor"
+    "3": "Northeast coastal/Quang Ninh corridor"
+    "4": "Southwest agricultural and biomass-burning corridor"
+    "5": "Local Hanoi recirculation"
+    "6": "Long-range regional transport"

@@ -95,6 +95,15 @@ def _k8s_job_type_for_file(job_file: str, *, extra_args: str = "", with_cassandr
         "hanoi_pm25_master_features_gold.py": "hanoi-master-features-gold",
         "hanoi_pm25_training_dataset_gold.py": "hanoi-training-dataset-gold",
         "hanoi_pm25_serving_features_gold.py": "hanoi-serving-features-gold",
+        "visualization_pm25_heatmap_grid_gold.py": "visualization-heatmap-grid",
+        "visualization_backward_trajectory_paths_gold.py": "visualization-backward-trajectories",
+        "visualization_forward_plume_probability_gold.py": "visualization-forward-plume",
+        "visualization_forecast_dashboard_gold.py": "visualization-forecast-dashboard",
+        "visualization_pm25_timeseries_gold.py": "visualization-pm25-timeseries",
+        "visualization_source_attribution_gold.py": "visualization-source-attribution",
+        "visualization_station_observations_gold.py": "visualization-station-observations",
+        "export_visualization_cache.py": "visualization-export-cache",
+        "visualization_quality_checks.py": "visualization-quality-checks",
         "train_hanoi_pm25.py": "hanoi-train-baseline",
         "ensure_iceberg_tables.py": "ensure-iceberg",
         "iceberg_maintenance.py": "maintenance-iceberg",
@@ -195,4 +204,13 @@ def iceberg_maintenance_command(retention_hours: int = 168) -> str:
         app_name="AIS_IcebergMaintenance",
         job_file="/opt/spark-jobs/iceberg_maintenance.py",
         extra_args=f"--retention-hours {retention_hours}",
+    )
+
+
+def visualization_spark_command(job_type: str, *, dry_run: str = "0", extra_args: str = "") -> str:
+    suffix = f" {extra_args.strip()}" if extra_args.strip() else ""
+    return (
+        "set -euo pipefail\n"
+        "cd /opt/ais\n"
+        f"DRY_RUN={dry_run} bash ./scripts/submit_spark_k8s.sh {job_type}{suffix}"
     )

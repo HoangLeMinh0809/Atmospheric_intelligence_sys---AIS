@@ -51,6 +51,12 @@ END_DATE="${END_DATE:-}"
 FULL_REFRESH="${FULL_REFRESH:-0}"
 MAIAC_LOCAL_FALLBACK_PATH="${MAIAC_LOCAL_FALLBACK_PATH:-/opt/maiac_data}"
 MAIAC_RELAXED_QA="${MAIAC_RELAXED_QA:-0}"
+BASE_TIME="${BASE_TIME:-}"
+DRY_RUN="${DRY_RUN:-0}"
+VIS_HORIZONS="${VIS_HORIZONS:-}"
+VIS_PRODUCT_VERSION="${VIS_PRODUCT_VERSION:-windy_v1}"
+VIS_SCHEMA_VERSION="${VIS_SCHEMA_VERSION:-1}"
+VIS_GRID_RESOLUTION_DEG="${VIS_GRID_RESOLUTION_DEG:-}"
 
 KAFKA_HADOOP_PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-client:3.3.4"
 ICEBERG_PACKAGES="${KAFKA_HADOOP_PACKAGES},org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1"
@@ -229,8 +235,53 @@ case "$JOB_TYPE" in
     JOB_ARGS=("--lookback-hours" "${RECONCILE_LOOKBACK_HOURS:-24}" "--tolerance" "${RECONCILE_TOLERANCE:-0.95}")
     PACKAGES="${CASSANDRA_PACKAGES}"
     ;;
+  visualization-heatmap-grid)
+    APP_NAME="VisualizationPM25HeatmapGridGold"
+    JOB_FILE="/opt/spark-jobs/visualization_pm25_heatmap_grid_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-backward-trajectories)
+    APP_NAME="VisualizationBackwardTrajectoryPathsGold"
+    JOB_FILE="/opt/spark-jobs/visualization_backward_trajectory_paths_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-forward-plume)
+    APP_NAME="VisualizationForwardPlumeProbabilityGold"
+    JOB_FILE="/opt/spark-jobs/visualization_forward_plume_probability_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-forecast-dashboard)
+    APP_NAME="VisualizationForecastDashboardGold"
+    JOB_FILE="/opt/spark-jobs/visualization_forecast_dashboard_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-pm25-timeseries)
+    APP_NAME="VisualizationPM25TimeseriesGold"
+    JOB_FILE="/opt/spark-jobs/visualization_pm25_timeseries_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-source-attribution)
+    APP_NAME="VisualizationSourceAttributionGold"
+    JOB_FILE="/opt/spark-jobs/visualization_source_attribution_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-station-observations)
+    APP_NAME="VisualizationStationObservationsGold"
+    JOB_FILE="/opt/spark-jobs/visualization_station_observations_gold.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-export-cache)
+    APP_NAME="ExportVisualizationCache"
+    JOB_FILE="/opt/spark-jobs/export_visualization_cache.py"
+    JOB_ARGS=("--full-refresh" "$FULL_REFRESH" "--dry-run" "$DRY_RUN")
+    ;;
+  visualization-quality-checks)
+    APP_NAME="VisualizationQualityChecks"
+    JOB_FILE="/opt/spark-jobs/visualization_quality_checks.py"
+    JOB_ARGS=("--dry-run" "$DRY_RUN")
+    ;;
   *)
-    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving]"
+    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks]"
     exit 1
     ;;
 esac
@@ -244,13 +295,23 @@ case "$JOB_TYPE" in
       STREAM_ARGS+=("--processing-time" "$PROCESSING_TIME")
     fi
     ;;
-  hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold)
+  hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks)
     if [ -n "$START_DATE" ]; then
       JOB_ARGS+=("--start-date" "$START_DATE")
     fi
     if [ -n "$END_DATE" ]; then
       JOB_ARGS+=("--end-date" "$END_DATE")
     fi
+    if [ -n "$BASE_TIME" ]; then
+      JOB_ARGS+=("--base-time" "$BASE_TIME")
+    fi
+    if [ -n "$VIS_HORIZONS" ]; then
+      JOB_ARGS+=("--horizons" "$VIS_HORIZONS")
+    fi
+    if [ -n "$VIS_GRID_RESOLUTION_DEG" ]; then
+      JOB_ARGS+=("--grid-resolution-deg" "$VIS_GRID_RESOLUTION_DEG")
+    fi
+    JOB_ARGS+=("--product-version" "$VIS_PRODUCT_VERSION" "--schema-version" "$VIS_SCHEMA_VERSION")
     ;;
 esac
 
@@ -451,6 +512,17 @@ spec:
                 --conf "spark.kubernetes.driverEnv.ANCHOR_HOURS=\${ANCHOR_HOURS:-}"
                 --conf "spark.kubernetes.driverEnv.PM25_TRIGGER_THRESHOLD=\${PM25_TRIGGER_THRESHOLD:-}"
                 --conf "spark.kubernetes.driverEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
+                --conf "spark.kubernetes.driverEnv.BASE_TIME=\${BASE_TIME:-}"
+                --conf "spark.kubernetes.driverEnv.DRY_RUN=\${DRY_RUN:-0}"
+                --conf "spark.kubernetes.driverEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"
+                --conf "spark.kubernetes.driverEnv.VIS_SCHEMA_VERSION=\${VIS_SCHEMA_VERSION:-1}"
+                --conf "spark.kubernetes.driverEnv.VIS_HORIZONS=\${VIS_HORIZONS:-0,6,12,24}"
+                --conf "spark.kubernetes.driverEnv.VIS_GRID_RESOLUTION_DEG=\${VIS_GRID_RESOLUTION_DEG:-}"
+                --conf "spark.kubernetes.driverEnv.VIS_CACHE_BASE_URI=\${VIS_CACHE_BASE_URI:-}"
+                --conf "spark.kubernetes.driverEnv.VIS_FORWARD_PLUME_REQUIRED=\${VIS_FORWARD_PLUME_REQUIRED:-false}"
+                --conf "spark.kubernetes.driverEnv.VIS_OBS_HISTORY_HOURS=\${VIS_OBS_HISTORY_HOURS:-48}"
+                --conf "spark.kubernetes.driverEnv.LOCATION_ID=\${LOCATION_ID:-hanoi}"
+                --conf "spark.kubernetes.driverEnv.LOCATION_NAME=\${LOCATION_NAME:-Hanoi}"
                 --conf "spark.executorEnv.KAFKA_BOOTSTRAP_SERVERS=\${KAFKA_BOOTSTRAP_SERVERS:-}"
                 --conf "spark.executorEnv.KAFKA_TOPIC=\${KAFKA_TOPIC:-}"
                 --conf "spark.executorEnv.KAFKA_STARTING_OFFSETS=\${KAFKA_STARTING_OFFSETS:-latest}"
@@ -482,6 +554,17 @@ spec:
                 --conf "spark.executorEnv.ANCHOR_HOURS=\${ANCHOR_HOURS:-}"
                 --conf "spark.executorEnv.PM25_TRIGGER_THRESHOLD=\${PM25_TRIGGER_THRESHOLD:-}"
                 --conf "spark.executorEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
+                --conf "spark.executorEnv.BASE_TIME=\${BASE_TIME:-}"
+                --conf "spark.executorEnv.DRY_RUN=\${DRY_RUN:-0}"
+                --conf "spark.executorEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"
+                --conf "spark.executorEnv.VIS_SCHEMA_VERSION=\${VIS_SCHEMA_VERSION:-1}"
+                --conf "spark.executorEnv.VIS_HORIZONS=\${VIS_HORIZONS:-0,6,12,24}"
+                --conf "spark.executorEnv.VIS_GRID_RESOLUTION_DEG=\${VIS_GRID_RESOLUTION_DEG:-}"
+                --conf "spark.executorEnv.VIS_CACHE_BASE_URI=\${VIS_CACHE_BASE_URI:-}"
+                --conf "spark.executorEnv.VIS_FORWARD_PLUME_REQUIRED=\${VIS_FORWARD_PLUME_REQUIRED:-false}"
+                --conf "spark.executorEnv.VIS_OBS_HISTORY_HOURS=\${VIS_OBS_HISTORY_HOURS:-48}"
+                --conf "spark.executorEnv.LOCATION_ID=\${LOCATION_ID:-hanoi}"
+                --conf "spark.executorEnv.LOCATION_NAME=\${LOCATION_NAME:-Hanoi}"
                 --conf "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
                 --conf "spark.sql.catalog.\${ICEBERG_CATALOG:-ais}=org.apache.iceberg.spark.SparkCatalog"
                 --conf "spark.sql.catalog.\${ICEBERG_CATALOG:-ais}.type=hadoop"

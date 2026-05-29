@@ -288,6 +288,413 @@ select option {
   min-height: 420px;
 }
 
+.air-map-page {
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: #dbe7df;
+  color: #172033;
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.map-canvas svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.map-grid line {
+  stroke: rgba(15, 23, 42, 0.08);
+  stroke-width: 1;
+}
+
+.city-label {
+  fill: rgba(15, 23, 42, 0.64);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.source-dot {
+  fill: #111827;
+  stroke: #facc15;
+  stroke-width: 4;
+  cursor: pointer;
+}
+
+.station-dot {
+  fill: #ffffff;
+  stroke: #0f766e;
+  stroke-width: 3;
+  cursor: pointer;
+}
+
+.topbar {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto;
+  gap: 14px;
+  align-items: center;
+  z-index: 5;
+}
+
+.topbar h1 {
+  margin: 0;
+  color: #111827;
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.topbar span {
+  color: #334155;
+  font-size: 13px;
+}
+
+.time-selector,
+.date-selector,
+.freshness-badge,
+.map-panel,
+.map-popup,
+.status-toast {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(12px);
+}
+
+.time-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 64px);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.date-selector {
+  border-radius: 8px;
+  padding: 5px;
+}
+
+.date-selector input {
+  height: 32px;
+  width: 142px;
+  border: 0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 8px;
+}
+
+.neighbor-layer path {
+  fill: #d5dcc8;
+  stroke: rgba(91, 112, 86, 0.42);
+  stroke-width: 1.2;
+}
+
+.vietnam-outline {
+  fill: #edf4dc;
+  stroke: #256d45;
+  stroke-width: 2.4;
+}
+
+.segmented-btn {
+  height: 42px;
+  border: 0;
+  border-right: 1px solid rgba(15, 23, 42, 0.10);
+  background: transparent;
+  color: #334155;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.segmented-btn.active {
+  background: #111827;
+  color: #ffffff;
+}
+
+.freshness-badge {
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 6px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #334155;
+  font-size: 12px;
+}
+
+.freshness-badge span {
+  color: #047857;
+  font-weight: 800;
+}
+
+.freshness-badge.stale span {
+  color: #b91c1c;
+}
+
+.left-stack,
+.right-stack {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.left-stack {
+  left: 18px;
+  top: 92px;
+  width: min(420px, calc(100vw - 36px));
+}
+
+.right-stack {
+  right: 18px;
+  top: 92px;
+  width: min(360px, calc(100vw - 36px));
+}
+
+.map-panel {
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.map-panel h3 {
+  margin: 0 0 10px;
+  color: #111827;
+  font-size: 15px;
+}
+
+.panel-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.forecast-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.forecast-card {
+  min-height: 86px;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.forecast-card span,
+.forecast-card em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.forecast-card strong {
+  color: #111827;
+  font-size: 26px;
+}
+
+.risk-low {
+  border-top: 4px solid #22c55e;
+}
+
+.risk-medium {
+  border-top: 4px solid #f59e0b;
+}
+
+.risk-high,
+.risk-very_high {
+  border-top: 4px solid #ef4444;
+}
+
+.forecast-meta {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.source-main {
+  display: grid;
+  gap: 4px;
+  color: #334155;
+}
+
+.source-main strong {
+  color: #111827;
+}
+
+.source-panel p,
+.unavailable-note {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.unavailable-note {
+  padding: 8px;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.layer-control {
+  display: grid;
+  gap: 9px;
+}
+
+.layer-toggle {
+  color: #334155;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.layer-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #0f766e;
+}
+
+.chart-card svg {
+  width: 100%;
+  height: 150px;
+}
+
+.chart-axis {
+  stroke: #94a3b8;
+  stroke-width: 1;
+}
+
+.chart-line {
+  stroke: #0f766e;
+  stroke-width: 3;
+}
+
+.chart-point {
+  fill: #0f766e;
+}
+
+.chart-point.forecast {
+  fill: #f97316;
+}
+
+.map-popup {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(460px, calc(100vw - 32px));
+  max-height: 45vh;
+  overflow: auto;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.map-popup button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 0;
+  background: #111827;
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.map-popup h3 {
+  margin: 0 34px 12px 0;
+  color: #111827;
+}
+
+.map-popup dl {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.map-popup dl div {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.map-popup dt {
+  color: #64748b;
+}
+
+.map-popup dd {
+  margin: 0;
+  color: #111827;
+  overflow-wrap: anywhere;
+}
+
+.status-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 7;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: #334155;
+}
+
+.status-toast.error {
+  color: #991b1b;
+  background: rgba(254, 242, 242, 0.95);
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .left-stack,
+  .right-stack {
+    position: relative;
+    left: auto;
+    right: auto;
+    top: auto;
+    width: auto;
+    margin: 0 12px 12px;
+  }
+
+  .left-stack {
+    padding-top: 160px;
+  }
+
+  .forecast-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .time-selector {
+    grid-template-columns: repeat(4, minmax(58px, 1fr));
+  }
+}
+
 .sentinel-table-wrap {
   overflow-x: auto;
   border-radius: 18px;

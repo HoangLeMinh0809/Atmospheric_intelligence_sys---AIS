@@ -91,6 +91,31 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "path_window_end_h": -24,
         "max_distance_deg": 0.5,
     },
+    "visualization": {
+        "product_version": "windy_v1",
+        "schema_version": "1",
+        "region_bbox": {"west": 100.0, "east": 108.8, "south": 18.0, "north": 24.5},
+        "region_center": {"lat": 21.0285, "lon": 105.8542},
+        "default_zoom": 7,
+        "grid_resolution_deg": 0.1,
+        "horizons_hours": [0, 6, 12, 24],
+        "observation_history_hours": 48,
+        "freshness_max_minutes": 180,
+        "forward_plume_required": False,
+        "cache": {
+            "base_uri": "hdfs://namenode:9000/visualization_cache",
+            "format": "geojson",
+        },
+        "source_cluster_labels": {
+            "0": "Unknown/weak trajectory signal",
+            "1": "Northwest uplands transport corridor",
+            "2": "Red River Delta urban-industrial corridor",
+            "3": "Northeast coastal/Quang Ninh corridor",
+            "4": "Southwest agricultural and biomass-burning corridor",
+            "5": "Local Hanoi recirculation",
+            "6": "Long-range regional transport",
+        },
+    },
 }
 
 TABLES = {
@@ -119,6 +144,14 @@ TABLES = {
     "s5p_grid_silver": f"{ICEBERG_CATALOG}.satellite.sentinel5p_grid_silver",
     "trajectory_path_silver": f"{ICEBERG_CATALOG}.features.trajectory_path_satellite_silver",
     "trajectory_hourly_silver": f"{ICEBERG_CATALOG}.features.trajectory_hourly_features_silver",
+    "visualization_heatmap_grid_gold": f"{ICEBERG_CATALOG}.visualization.pm25_heatmap_grid_gold",
+    "visualization_backward_trajectory_paths_gold": f"{ICEBERG_CATALOG}.visualization.backward_trajectory_paths_gold",
+    "visualization_forward_plume_probability_gold": f"{ICEBERG_CATALOG}.visualization.forward_plume_probability_gold",
+    "visualization_forecast_dashboard_gold": f"{ICEBERG_CATALOG}.visualization.pm25_forecast_dashboard_gold",
+    "visualization_pm25_timeseries_gold": f"{ICEBERG_CATALOG}.visualization.pm25_timeseries_gold",
+    "visualization_source_attribution_gold": f"{ICEBERG_CATALOG}.visualization.source_attribution_gold",
+    "visualization_station_observations_gold": f"{ICEBERG_CATALOG}.visualization.station_observations_gold",
+    "visualization_cache_manifest_gold": f"{ICEBERG_CATALOG}.visualization.visualization_cache_manifest_gold",
 }
 
 
@@ -175,7 +208,43 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     bbox["north"] = float(os.getenv("HANOI_BBOX_NORTH", bbox["north"]))
     center["lat"] = float(os.getenv("HANOI_CENTER_LAT", center["lat"]))
     center["lon"] = float(os.getenv("HANOI_CENTER_LON", center["lon"]))
+
+    vis = cfg.setdefault("visualization", {})
+    vis["product_version"] = _env_str("VIS_PRODUCT_VERSION", str(vis.get("product_version", "windy_v1")))
+    vis["schema_version"] = _env_str("VIS_SCHEMA_VERSION", str(vis.get("schema_version", "1")))
+    vis_bbox = vis.setdefault("region_bbox", {})
+    vis_bbox["west"] = _env_float("VIS_REGION_BBOX_WEST", vis_bbox.get("west", 100.0))
+    vis_bbox["east"] = _env_float("VIS_REGION_BBOX_EAST", vis_bbox.get("east", 108.8))
+    vis_bbox["south"] = _env_float("VIS_REGION_BBOX_SOUTH", vis_bbox.get("south", 18.0))
+    vis_bbox["north"] = _env_float("VIS_REGION_BBOX_NORTH", vis_bbox.get("north", 24.5))
+    vis["grid_resolution_deg"] = _env_float("VIS_GRID_RESOLUTION_DEG", vis.get("grid_resolution_deg", 0.1))
+    vis["observation_history_hours"] = _env_int("VIS_OBS_HISTORY_HOURS", vis.get("observation_history_hours", 48))
+    vis["freshness_max_minutes"] = _env_int("VIS_FRESHNESS_MAX_MINUTES", vis.get("freshness_max_minutes", 180))
+    vis["forward_plume_required"] = str(
+        os.getenv("VIS_FORWARD_PLUME_REQUIRED", vis.get("forward_plume_required", False))
+    ).lower() in {"1", "true", "yes", "y"}
+    horizons = os.getenv("VIS_HORIZONS", "")
+    if horizons:
+        vis["horizons_hours"] = [int(v.strip()) for v in horizons.split(",") if v.strip()]
+    cache = vis.setdefault("cache", {})
+    cache["base_uri"] = _env_str("VIS_CACHE_BASE_URI", str(cache.get("base_uri", "hdfs://namenode:9000/visualization_cache")))
+    cache["format"] = _env_str("VIS_CACHE_FORMAT", str(cache.get("format", "geojson")))
     return cfg
+
+
+def _env_str(name: str, default: str) -> str:
+    value = os.getenv(name, "").strip()
+    return value if value else default
+
+
+def _env_float(name: str, default: Any) -> float:
+    value = os.getenv(name, "").strip()
+    return float(value) if value else float(default)
+
+
+def _env_int(name: str, default: Any) -> int:
+    value = os.getenv(name, "").strip()
+    return int(value) if value else int(default)
 
 
 def get_hanoi_bbox() -> dict[str, float]:
@@ -248,6 +317,35 @@ def get_trajectory_config() -> dict[str, Any]:
 
 def get_sampling_config() -> dict[str, Any]:
     return deepcopy(load_config().get("sampling", {}))
+
+
+def get_visualization_config() -> dict[str, Any]:
+    return deepcopy(load_config().get("visualization", {}))
+
+
+def get_visualization_region_bbox() -> dict[str, float]:
+    bbox = get_visualization_config().get("region_bbox", {})
+    return {
+        "west": float(bbox.get("west", 100.0)),
+        "east": float(bbox.get("east", 108.8)),
+        "south": float(bbox.get("south", 18.0)),
+        "north": float(bbox.get("north", 24.5)),
+    }
+
+
+def get_visualization_horizons() -> list[int]:
+    return [int(v) for v in get_visualization_config().get("horizons_hours", [0, 6, 12, 24])]
+
+
+def get_visualization_cache_base_uri() -> str:
+    cfg = get_visualization_config()
+    cache = cfg.get("cache", {})
+    return _env_str("VIS_CACHE_BASE_URI", str(cache.get("base_uri", "hdfs://namenode:9000/visualization_cache"))).rstrip("/")
+
+
+def get_visualization_cluster_labels() -> dict[int, str]:
+    labels = get_visualization_config().get("source_cluster_labels", {})
+    return {int(k): str(v) for k, v in labels.items()}
 
 
 def get_era5_pressure_levels() -> list[int]:

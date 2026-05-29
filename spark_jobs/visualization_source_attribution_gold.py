@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+
+from pyspark.sql import Row
+
+from visualization_common import (
+    add_common_args,
+    as_bool,
+    build_spark,
+    end_of_date,
+    get_tables,
+    latest_row_asof,
+    parse_base_time,
+    point_geojson,
+    read_table_if_exists,
+    run_id,
+    utc_now,
+    visualization_runtime,
+    write_product,
+)
+
+
+def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build PM2.5 source attribution visualization layer")
+    add_common_args(parser)
+    parser.add_argument("--location-id", default=os.getenv("LOCATION_ID", "hanoi"))
+    args = parser.parse_args()
+
+    spark = build_spark("VisualizationSourceAttributionGold")
+    spark.sparkContext.setLogLevel("WARN")
+    tables = get_tables()
+    runtime = visualization_runtime(args)
+    generated_at = utc_now()
+    dry_run = as_bool(args.dry_run)
+    asof_time = parse_base_time(args.base_time) or end_of_date(args.end_date)
+
+    try:
+        hourly = read_table_if_exists(spark, tables["trajectory_hourly_silver"])
+        pred_df = read_table_if_exists(spark, tables["prediction_gold"])
+        if hourly is None:
+            raise RuntimeError(f"Missing trajectory hourly table: {tables['trajectory_hourly_silver']}")
+        item = latest_row_asof(hourly.filter(hourly.dominant_cluster.isNotNull()), "hour", asof_time)
+        if item is None and pred_df is not None:
+            pred = latest_row_asof(pred_df, "base_hour", asof_time, filters=[pred_df.location_id == args.location_id, pred_df.model_status == "production"])
+            item = {
+                "hour": pred.get("base_hour"),
+                "dominant_cluster": pred.get("dominant_cluster"),
+                "n_traj": 0,
+                "source_lat": pred.get("source_lat"),
+                "source_lon": pred.get("source_lon"),
+                "path_no2_mean": pred.get("path_no2_mean"),
+                "path_aer_mean": pred.get("path_aer_mean"),
+                "path_no2_aer_ratio": None,
+            } if pred else None
+        if item is None:
+            item = {
+                "hour": (asof_time or generated_at).replace(tzinfo=None),
+                "dominant_cluster": 0,
+                "n_traj": 0,
+                "source_lat": 21.0285,
+                "source_lon": 105.8542,
+                "path_no2_mean": 0.0,
+                "path_aer_mean": 0.0,
+                "path_no2_aer_ratio": 0.0,
+            }
+
+        base_time = item["hour"]
+        cluster_id = item.get("dominant_cluster")
+        label = runtime["cluster_labels"].get(int(cluster_id), "Unknown source cluster") if cluster_id is not None else "Unknown source cluster"
+        n_traj = int(item.get("n_traj") or 0)
+        no2 = float(item["path_no2_mean"]) if item.get("path_no2_mean") is not None else 0.0
+        aer = float(item["path_aer_mean"]) if item.get("path_aer_mean") is not None else 0.0
+        contribution = clamp(0.25 + min(n_traj, 10) / 20.0 + min(abs(no2) + abs(aer), 2.0) / 8.0)
+        confidence = clamp(0.30 + min(n_traj, 10) / 20.0 + (0.15 if no2 or aer else 0.0))
+        explanation = (
+            "Trajectory/source attribution upstream is not available yet."
+            if n_traj == 0
+            else (
+                f"Cluster {cluster_id} ({label}) is the dominant recent trajectory signal. "
+                f"Score is based on trajectory count, satellite path evidence, and PM2.5 gradient features."
+            )
+        )
+        vis_run_id = run_id("source_attribution", base_time, runtime["product_version"])
+        source_lat = item.get("source_lat")
+        source_lon = item.get("source_lon")
+        row = Row(
+            attribution_id=hashlib.sha1(f"{args.location_id}:{cluster_id}:{base_time}:{runtime['product_version']}".encode()).hexdigest()[:20],
+            visualization_run_id=vis_run_id,
+            product_version=runtime["product_version"],
+            schema_version=runtime["schema_version"],
+            base_time=base_time,
+            valid_time=base_time,
+            location_id=args.location_id,
+            cluster_id=int(cluster_id) if cluster_id is not None else None,
+            source_label=label,
+            source_region_type="trajectory_cluster",
+            source_lat=float(source_lat or 0.0),
+            source_lon=float(source_lon or 0.0),
+            contribution_score=float(contribution),
+            confidence=float(confidence),
+            traj_count=n_traj,
+            age_window_start_h=-72,
+            age_window_end_h=0,
+            evidence_no2_mean=float(item.get("path_no2_mean") or 0.0),
+            evidence_aer_mean=float(item.get("path_aer_mean") or 0.0),
+            evidence_no2_aer_ratio=float(item.get("path_no2_aer_ratio") or 0.0),
+            evidence_pm25_grad_mag=0.0,
+            explanation_vi=explanation,
+            geometry_geojson=point_geojson(source_lon or 0.0, source_lat or 0.0),
+            generated_at=generated_at,
+            year=int(base_time.year),
+            month=int(base_time.month),
+            day=int(base_time.day),
+        )
+        out = spark.createDataFrame([row])
+        count = write_product(out, tables["visualization_source_attribution_gold"], dry_run)
+        print(
+            "job=visualization_source_attribution "
+            f"base_time={base_time} cluster_id={cluster_id} output_count={count} dry_run={int(dry_run)} "
+            f"status={'dry_run_success' if dry_run else 'written'}"
+        )
+    finally:
+        spark.stop()
+
+
+if __name__ == "__main__":
+    main()
