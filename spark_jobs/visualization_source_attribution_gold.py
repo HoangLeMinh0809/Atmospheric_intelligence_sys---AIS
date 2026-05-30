@@ -5,6 +5,14 @@ import hashlib
 import os
 
 from pyspark.sql import Row
+from pyspark.sql.types import (
+    DoubleType,
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
 
 from visualization_common import (
     add_common_args,
@@ -20,6 +28,38 @@ from visualization_common import (
     utc_now,
     visualization_runtime,
     write_product,
+)
+
+OUTPUT_SCHEMA = StructType(
+    [
+        StructField("attribution_id", StringType(), False),
+        StructField("visualization_run_id", StringType(), False),
+        StructField("product_version", StringType(), False),
+        StructField("schema_version", StringType(), False),
+        StructField("base_time", TimestampType(), False),
+        StructField("valid_time", TimestampType(), False),
+        StructField("location_id", StringType(), False),
+        StructField("cluster_id", IntegerType(), False),
+        StructField("source_label", StringType(), False),
+        StructField("source_region_type", StringType(), False),
+        StructField("source_lat", DoubleType(), False),
+        StructField("source_lon", DoubleType(), False),
+        StructField("contribution_score", DoubleType(), False),
+        StructField("confidence", DoubleType(), False),
+        StructField("traj_count", IntegerType(), False),
+        StructField("age_window_start_h", IntegerType(), False),
+        StructField("age_window_end_h", IntegerType(), False),
+        StructField("evidence_no2_mean", DoubleType(), False),
+        StructField("evidence_aer_mean", DoubleType(), False),
+        StructField("evidence_no2_aer_ratio", DoubleType(), False),
+        StructField("evidence_pm25_grad_mag", DoubleType(), False),
+        StructField("explanation_vi", StringType(), False),
+        StructField("geometry_geojson", StringType(), False),
+        StructField("generated_at", TimestampType(), False),
+        StructField("year", IntegerType(), False),
+        StructField("month", IntegerType(), False),
+        StructField("day", IntegerType(), False),
+    ]
 )
 
 
@@ -98,7 +138,7 @@ def main() -> None:
             base_time=base_time,
             valid_time=base_time,
             location_id=args.location_id,
-            cluster_id=int(cluster_id) if cluster_id is not None else None,
+            cluster_id=int(cluster_id) if cluster_id is not None else -1,
             source_label=label,
             source_region_type="trajectory_cluster",
             source_lat=float(source_lat or 0.0),
@@ -119,7 +159,7 @@ def main() -> None:
             month=int(base_time.month),
             day=int(base_time.day),
         )
-        out = spark.createDataFrame([row])
+        out = spark.createDataFrame([row], schema=OUTPUT_SCHEMA)
         count = write_product(out, tables["visualization_source_attribution_gold"], dry_run)
         print(
             "job=visualization_source_attribution "

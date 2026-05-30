@@ -30,9 +30,25 @@ spec:
             - secretRef:
                 name: ais-runtime-secrets
                 optional: true
-          command: ["python"]
+          command: ["/opt/spark/bin/spark-submit"]
           args:
-            - ml/train_hanoi_pm25.py
+            - --master
+            - local[2]
+            - --deploy-mode
+            - client
+            - --packages
+            - org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1
+            - --conf
+            - spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+            - --conf
+            - spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog
+            - --conf
+            - spark.sql.catalog.ais.type=hadoop
+            - --conf
+            - spark.sql.catalog.ais.warehouse=$(ICEBERG_WAREHOUSE)
+            - --conf
+            - spark.hadoop.fs.defaultFS=$(HDFS_NAMENODE)
+            - /opt/ais/ml/train_hanoi_pm25.py
             - --dataset-version
             - $(DATASET_VERSION)
             - --feature-set-name

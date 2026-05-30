@@ -47,6 +47,10 @@ ENV ECCODES_DEFINITION_PATH=/usr/share/eccodes/definitions
 ARG INSTALL_XGBOOST=false
 ARG PIP_DEFAULT_TIMEOUT=300
 ARG PIP_RETRIES=10
+ARG SPARK_KAFKA_PACKAGE=org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3
+ARG SPARK_HADOOP_PACKAGE=org.apache.hadoop:hadoop-client:3.3.4
+ARG SPARK_ICEBERG_PACKAGE=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1
+ARG SPARK_CASSANDRA_PACKAGE=com.datastax.spark:spark-cassandra-connector_2.12:3.5.1
 
 RUN rm -rf /root/.cache/pip && \
     python3 -m pip install --no-cache-dir --default-timeout="${PIP_DEFAULT_TIMEOUT}" --retries="${PIP_RETRIES}" --only-binary=:all: \
@@ -64,6 +68,22 @@ RUN rm -rf /root/.cache/pip && \
     else \
       echo "Skipping optional xgboost install."; \
     fi
+
+# Pre-resolve Spark package dependencies at build time and bake them into the
+# runtime image so spark-submit does not hit Maven at job runtime.
+RUN set -eux; \
+    SPARK_JARS_IVY=/tmp/.ivy2; \
+    printf '%s\n' 'import pyspark  # noqa: F401' 'print("preload spark deps")' > /tmp/preload_deps.py; \
+    /opt/spark/bin/spark-submit \
+      --master local[1] \
+      --packages "${SPARK_KAFKA_PACKAGE},${SPARK_HADOOP_PACKAGE},${SPARK_ICEBERG_PACKAGE},${SPARK_CASSANDRA_PACKAGE}" \
+      --conf "spark.jars.ivy=${SPARK_JARS_IVY}" \
+      /tmp/preload_deps.py; \
+    test -f "${SPARK_JARS_IVY}/jars/org.apache.iceberg_iceberg-spark-runtime-3.5_2.12-1.6.1.jar"; \
+    test -f "${SPARK_JARS_IVY}/jars/org.apache.spark_spark-sql-kafka-0-10_2.12-3.5.3.jar"; \
+    cp -n "${SPARK_JARS_IVY}/jars/"*.jar /opt/spark/jars/; \
+    rm -f /tmp/preload_deps.py; \
+    rm -rf "${SPARK_JARS_IVY}"
 
 COPY spark_jobs/ /opt/spark-jobs/
 COPY ml/ /opt/ml/

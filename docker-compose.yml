@@ -42,7 +42,7 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://host.docker.internal:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -114,8 +114,8 @@ services:
   # ---------------------------------------------------------------------------
   spark-master:
     build:
-      context: ./spark
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: spark/Dockerfile
       args:
         INSTALL_XGBOOST: ${INSTALL_XGBOOST:-false}
         PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-300}
@@ -147,13 +147,6 @@ services:
   # SPARK WORKER — thực thi tasks từ Spark Master
   # ---------------------------------------------------------------------------
   spark-worker:
-    build:
-      context: ./spark
-      dockerfile: Dockerfile
-      args:
-        INSTALL_XGBOOST: ${INSTALL_XGBOOST:-false}
-        PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-300}
-        PIP_RETRIES: ${PIP_RETRIES:-10}
     image: ais-spark:3.5.3
     pull_policy: never
     container_name: spark-worker

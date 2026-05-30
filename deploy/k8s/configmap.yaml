@@ -73,7 +73,7 @@ data:
   SPARK_K8S_NAMESPACE: ais
   SPARK_DRIVER_SERVICE_ACCOUNT: spark
   SPARK_IMAGE: ais-spark-runtime:local
-  SPARK_JARS_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1
+  SPARK_JARS_PACKAGES: ""
   SPARK_IVY_DIR: /tmp/.ivy2
   SPARK_EXECUTOR_INSTANCES: "2"
   SPARK_EXECUTOR_MEMORY: 1g

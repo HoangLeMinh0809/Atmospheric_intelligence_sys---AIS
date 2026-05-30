@@ -99,7 +99,7 @@ def main() -> None:
                     direction="backward",
                     traj_id=traj_id,
                     traj_no=0,
-                    cluster_id=int(cluster_id) if cluster_id is not None else None,
+                    cluster_id=int(cluster_id) if cluster_id is not None else -1,
                     source_label=label or "",
                     source_lat=float(first.get("source_lat") or 0.0),
                     source_lon=float(first.get("source_lon") or 0.0),

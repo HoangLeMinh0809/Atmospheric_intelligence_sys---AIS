@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import subprocess
 import tempfile
+import zipfile
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from urllib import error as urlerror
+from urllib import parse as urlparse
+from urllib import request as urlrequest
 
 from pyspark.sql import SparkSession, Window
 from pyspark.sql import functions as F
@@ -169,7 +174,7 @@ def collect_candidate_files(spark: SparkSession, source_table: str, start_date: 
     return [row.asDict(recursive=True) for row in rows if row["file_path"]]
 
 
-def copy_hdfs_to_local(path: str) -> Path:
+def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
     if not path.startswith("hdfs://"):
         return Path(path)
 
@@ -179,6 +184,7 @@ def copy_hdfs_to_local(path: str) -> Path:
     commands = [
         ["hdfs", "dfs", "-copyToLocal", "-f", remote, str(local_path)],
         ["/opt/hadoop/bin/hdfs", "dfs", "-copyToLocal", "-f", remote, str(local_path)],
+        ["/opt/hadoop-3.2.1/bin/hdfs", "dfs", "-copyToLocal", "-f", remote, str(local_path)],
     ]
     for command in commands:
         try:
@@ -186,7 +192,68 @@ def copy_hdfs_to_local(path: str) -> Path:
             return local_path
         except (FileNotFoundError, subprocess.CalledProcessError):
             continue
+
+    if spark is not None:
+        try:
+            jvm = spark._jvm
+            jsc = spark.sparkContext._jsc
+            hadoop_conf = jsc.hadoopConfiguration()
+            fs = jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
+            src = jvm.org.apache.hadoop.fs.Path(path)
+            dst = jvm.org.apache.hadoop.fs.Path(f"file://{local_path}")
+            fs.copyToLocalFile(False, src, dst, True)
+            if local_path.exists() and local_path.stat().st_size > 0:
+                return local_path
+        except Exception:
+            pass
+
+    webhdfs_base = os.getenv("HDFS_WEBHDFS_BASE", "").rstrip("/")
+    if webhdfs_base:
+        def _looks_like_netcdf(local_file: Path) -> bool:
+            try:
+                header = local_file.read_bytes()[:8]
+            except OSError:
+                return False
+            # netCDF classic starts with CDF, netCDF4/HDF5 starts with HDF signature.
+            return header.startswith(b"CDF") or header.startswith(b"\x89HDF\r\n\x1a\n")
+
+        quoted_remote = urlparse.quote(remote, safe="/")
+        metadata_url = f"{webhdfs_base}{quoted_remote}?op=OPEN&noredirect=true"
+        try:
+            with urlrequest.urlopen(metadata_url, timeout=120) as response:  # nosec B310
+                payload = json.loads(response.read().decode("utf-8"))
+            data_url = payload.get("Location", "")
+            if not data_url:
+                raise RuntimeError(f"WebHDFS OPEN did not return Location for {remote}")
+            with urlrequest.urlopen(data_url, timeout=300) as file_response:  # nosec B310
+                local_path.write_bytes(file_response.read())
+            if _looks_like_netcdf(local_path):
+                return local_path
+        except (urlerror.URLError, TimeoutError, OSError, ValueError, RuntimeError):
+            pass
+
     raise RuntimeError(f"Unable to copy HDFS file to local path: {path}")
+
+
+def resolve_netcdf_path(path: Path) -> Path:
+    try:
+        header = path.read_bytes()[:4]
+    except OSError:
+        return path
+
+    # ZIP signature: PK\x03\x04
+    if header != b"PK\x03\x04":
+        return path
+
+    extract_dir = path.parent / f"{path.stem}_unzipped"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "r") as zf:
+        members = [m for m in zf.namelist() if m.lower().endswith(".nc")]
+        if not members:
+            raise RuntimeError(f"ZIP file does not contain any .nc member: {path}")
+        target_member = members[0]
+        zf.extract(target_member, path=extract_dir)
+    return extract_dir / target_member
 
 
 def _find_variable(dataset, aliases: list[str]):
@@ -288,7 +355,8 @@ def read_era5_file(path: Path, source_file: str, start_date: date | None, end_da
     rows: list[dict[str, Any]] = []
     now = datetime.utcnow()
 
-    with nc.Dataset(str(path)) as dataset:
+    resolved_path = resolve_netcdf_path(path)
+    with nc.Dataset(str(resolved_path)) as dataset:
         times = _time_values(dataset)
         lat, lon, lat_grid, lon_grid = _lat_lon(dataset)
         mask, grid_count = _grid_mask(lat_grid, lon_grid, bbox, center)
@@ -418,7 +486,7 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for item in files:
         source_file = item["file_path"]
-        local_path = copy_hdfs_to_local(source_file)
+        local_path = copy_hdfs_to_local(source_file, spark=spark)
         rows.extend(read_era5_file(local_path, source_file, start_date, end_date))
 
     df = build_output_df(spark, rows)

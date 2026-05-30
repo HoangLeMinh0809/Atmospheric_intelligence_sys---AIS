@@ -37,6 +37,23 @@ def cell_for(lat: float, lon: float, bbox: dict[str, float], resolution: float) 
     }
 
 
+def _age_hours(point: dict, base_time) -> int | None:
+    raw = point.get("age_h")
+    if raw is not None:
+        try:
+            return int(round(abs(float(raw))))
+        except (TypeError, ValueError):
+            pass
+    ts = point.get("timestamp")
+    if ts is not None and base_time is not None:
+        try:
+            delta_h = abs((ts - base_time).total_seconds() / 3600.0)
+            return int(round(delta_h))
+        except Exception:
+            return None
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build optional forward plume probability grid")
     add_common_args(parser)
@@ -62,7 +79,21 @@ def main() -> None:
         rows = []
         for horizon in [h for h in runtime["horizons"] if h in {6, 12, 24}]:
             valid_time = base_time + timedelta(hours=horizon)
-            horizon_points = [r for r in forward if int(r.get("age_h") or -999) == int(horizon)]
+            aged_points = []
+            for r in forward:
+                age = _age_hours(r, base_time)
+                if age is not None:
+                    aged_points.append((r, age))
+
+            horizon_points = [r for r, age in aged_points if age == int(horizon)]
+            if not horizon_points:
+                # Accept small timing drift around requested horizons.
+                horizon_points = [r for r, age in aged_points if abs(age - int(horizon)) <= 1]
+            if not horizon_points and aged_points:
+                # Fallback to nearest available age bucket if forward trajectories exist.
+                min_diff = min(abs(age - int(horizon)) for _, age in aged_points)
+                horizon_points = [r for r, age in aged_points if abs(age - int(horizon)) == min_diff]
+
             if not horizon_points:
                 first = grid_cells(runtime["bbox"], runtime["grid_resolution_deg"])[0]
                 rows.append(

@@ -98,7 +98,7 @@ def main() -> None:
             risk_12h=(pred or {}).get("risk_12h") or risk_value((pred or {}).get("pm25_12h") or fallback[12]),
             pm25_24h=float((pred or {}).get("pm25_24h") or fallback[24]),
             risk_24h=(pred or {}).get("risk_24h") or risk_value((pred or {}).get("pm25_24h") or fallback[24]),
-            dominant_cluster=int(cluster_id) if cluster_id is not None else None,
+            dominant_cluster=int(cluster_id) if cluster_id is not None else -1,
             source_lat=float((pred or {}).get("source_lat") or 21.0285),
             source_lon=float((pred or {}).get("source_lon") or 105.8542),
             source_label=source_label or "",

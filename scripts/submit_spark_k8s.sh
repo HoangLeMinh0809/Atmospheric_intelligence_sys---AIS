@@ -58,9 +58,10 @@ VIS_PRODUCT_VERSION="${VIS_PRODUCT_VERSION:-windy_v1}"
 VIS_SCHEMA_VERSION="${VIS_SCHEMA_VERSION:-1}"
 VIS_GRID_RESOLUTION_DEG="${VIS_GRID_RESOLUTION_DEG:-}"
 
-KAFKA_HADOOP_PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-client:3.3.4"
-ICEBERG_PACKAGES="${KAFKA_HADOOP_PACKAGES},org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1"
-CASSANDRA_PACKAGES="${ICEBERG_PACKAGES},com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
+# Runtime image pre-bakes Spark dependencies; keep package injection opt-in.
+KAFKA_HADOOP_PACKAGES=""
+ICEBERG_PACKAGES=""
+CASSANDRA_PACKAGES=""
 
 APP_NAME=""
 JOB_FILE=""
@@ -311,6 +312,11 @@ case "$JOB_TYPE" in
     if [ -n "$VIS_GRID_RESOLUTION_DEG" ]; then
       JOB_ARGS+=("--grid-resolution-deg" "$VIS_GRID_RESOLUTION_DEG")
     fi
+    ;;
+esac
+
+case "$JOB_TYPE" in
+  visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks)
     JOB_ARGS+=("--product-version" "$VIS_PRODUCT_VERSION" "--schema-version" "$VIS_SCHEMA_VERSION")
     ;;
 esac
@@ -355,7 +361,7 @@ KUBECTL_TIMEOUT="${KUBECTL_TIMEOUT:-1800s}"
 WAIT_FOR_COMPLETION="${WAIT_FOR_COMPLETION:-true}"
 FOLLOW_LOGS="${FOLLOW_LOGS:-true}"
 DELETE_EXISTING="${DELETE_EXISTING:-false}"
-SPARK_PACKAGES="${SPARK_JARS_PACKAGES:-$PACKAGES}"
+SPARK_PACKAGES="${SPARK_JARS_PACKAGES:-}"
 
 require_command kubectl
 
@@ -484,7 +490,6 @@ spec:
                 --conf "spark.kubernetes.driverEnv.KAFKA_BOOTSTRAP_SERVERS=\${KAFKA_BOOTSTRAP_SERVERS:-}"
                 --conf "spark.kubernetes.driverEnv.KAFKA_TOPIC=\${KAFKA_TOPIC:-}"
                 --conf "spark.kubernetes.driverEnv.KAFKA_STARTING_OFFSETS=\${KAFKA_STARTING_OFFSETS:-latest}"
-                --conf "spark.kubernetes.driverEnv.ICEBERG_TABLE=\${ICEBERG_TABLE:-}"
                 --conf "spark.kubernetes.driverEnv.CHECKPOINT_PATH=\${CHECKPOINT_PATH:-}"
                 --conf "spark.kubernetes.driverEnv.START_DATE=\${START_DATE:-}"
                 --conf "spark.kubernetes.driverEnv.END_DATE=\${END_DATE:-}"
@@ -526,7 +531,6 @@ spec:
                 --conf "spark.executorEnv.KAFKA_BOOTSTRAP_SERVERS=\${KAFKA_BOOTSTRAP_SERVERS:-}"
                 --conf "spark.executorEnv.KAFKA_TOPIC=\${KAFKA_TOPIC:-}"
                 --conf "spark.executorEnv.KAFKA_STARTING_OFFSETS=\${KAFKA_STARTING_OFFSETS:-latest}"
-                --conf "spark.executorEnv.ICEBERG_TABLE=\${ICEBERG_TABLE:-}"
                 --conf "spark.executorEnv.CHECKPOINT_PATH=\${CHECKPOINT_PATH:-}"
                 --conf "spark.executorEnv.START_DATE=\${START_DATE:-}"
                 --conf "spark.executorEnv.END_DATE=\${END_DATE:-}"
@@ -574,6 +578,10 @@ spec:
               if [ -n "\${SPARK_JARS_PACKAGES:-}" ]; then
                 submit_args+=(--packages "\${SPARK_JARS_PACKAGES}")
               fi
+              if [ -n "\${ICEBERG_TABLE:-}" ]; then
+                submit_args+=(--conf "spark.kubernetes.driverEnv.ICEBERG_TABLE=\${ICEBERG_TABLE}")
+                submit_args+=(--conf "spark.executorEnv.ICEBERG_TABLE=\${ICEBERG_TABLE}")
+              fi
 
               submit_args+=("local://\${JOB_FILE}")
               submit_args+=("\$@")
@@ -581,17 +589,37 @@ spec:
 YAML
 
 if [ "$FOLLOW_LOGS" = "true" ]; then
-  kubectl -n "$K8S_NAMESPACE" logs -f "job/${SUBMIT_JOB_NAME}" --all-containers=true || true
+  # Avoid transient "container is waiting to start: ContainerCreating" errors by
+  # waiting until the submit pod leaves Pending/ContainerCreating first.
+  log_wait_deadline=$(( $(date +%s) + 120 ))
+  while true; do
+    pod_phase="$(kubectl -n "$K8S_NAMESPACE" get pods -l "job-name=${SUBMIT_JOB_NAME}" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
+    if [ "$pod_phase" = "Running" ] || [ "$pod_phase" = "Succeeded" ] || [ "$pod_phase" = "Failed" ]; then
+      break
+    fi
+    if [ "$(date +%s)" -ge "$log_wait_deadline" ]; then
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "$pod_phase" = "Succeeded" ] || [ "$pod_phase" = "Failed" ]; then
+    kubectl -n "$K8S_NAMESPACE" logs "job/${SUBMIT_JOB_NAME}" --all-containers=true || true
+  else
+    kubectl -n "$K8S_NAMESPACE" logs -f "job/${SUBMIT_JOB_NAME}" --all-containers=true || true
+  fi
 fi
 
 if [ "$WAIT_FOR_COMPLETION" = "true" ]; then
   if kubectl -n "$K8S_NAMESPACE" wait --for=condition=complete "job/${SUBMIT_JOB_NAME}" --timeout="$KUBECTL_TIMEOUT"; then
-    SPARK_APP_LABEL="$(sanitize_name "$SPARK_RUNTIME_APP_NAME")"
-    DRIVER_PHASES="$(kubectl -n "$K8S_NAMESPACE" get pods -l "spark-role=driver,spark-app-name=${SPARK_APP_LABEL}" -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null || true)"
-    if printf "%s\n" "$DRIVER_PHASES" | grep -q " Failed"; then
-      echo "[ERROR] Spark driver pod failed for app ${SPARK_RUNTIME_APP_NAME}" >&2
+    DRIVER_PHASES="$(kubectl -n "$K8S_NAMESPACE" get pods -l "spark-role=driver" -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null | grep "$SUBMIT_JOB_NAME" || true)"
+    if [ -n "$DRIVER_PHASES" ] && printf "%s\n" "$DRIVER_PHASES" | grep -q " Failed"; then
+      echo "[ERROR] Spark driver pod failed for submit job ${SUBMIT_JOB_NAME}" >&2
       printf "%s\n" "$DRIVER_PHASES" >&2
-      kubectl -n "$K8S_NAMESPACE" logs -l "spark-role=driver,spark-app-name=${SPARK_APP_LABEL}" --tail=200 || true
+      DRIVER_POD_NAME="$(printf "%s\n" "$DRIVER_PHASES" | awk 'NR==1{print $1}')"
+      if [ -n "$DRIVER_POD_NAME" ]; then
+        kubectl -n "$K8S_NAMESPACE" logs "$DRIVER_POD_NAME" --tail=200 || true
+      fi
       exit 1
     fi
     echo "[OK] Spark submit job completed: ${SUBMIT_JOB_NAME}"
