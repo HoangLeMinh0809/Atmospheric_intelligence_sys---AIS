@@ -82,7 +82,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/weather_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-weather_history}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.weather.weather_history_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/weather_history/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/weather_history/realtime}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   era5-files)
@@ -90,7 +90,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/era5_files_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-era5-files}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.weather.era5_files_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/era5_files/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/era5_files/realtime}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   openaq)
@@ -98,7 +98,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/openaq_hourly_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-openaq-hourly}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.air_quality.openaq_hourly_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/openaq_hourly/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/openaq_hourly/realtime}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   sentinel5p)
@@ -106,7 +106,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/sentinel5p_summary_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-sentinel5p-summary}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.satellite.sentinel5p_summary_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/sentinel5p_summary/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/sentinel5p_summary/realtime}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   maiac)
@@ -114,7 +114,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/maiac_summary_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-maiac-summary}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.satellite.maiac_summary_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/maiac_summary/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/maiac_summary/realtime}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   hanoi-openaq-silver)
@@ -141,6 +141,15 @@ case "$JOB_TYPE" in
     APP_NAME="HYSPLITTrajectoryRun"
     JOB_FILE="/opt/spark-jobs/hysplit_trajectory_run.py"
     JOB_ARGS=("--full-refresh" "$FULL_REFRESH")
+    if [ -n "${HYSPLIT_TIMEOUT_SEC:-}" ]; then
+      JOB_ARGS+=("--timeout-sec" "$HYSPLIT_TIMEOUT_SEC")
+    fi
+    if [ -n "${HYSPLIT_MAX_RUNS:-}" ]; then
+      JOB_ARGS+=("--max-runs" "$HYSPLIT_MAX_RUNS")
+    fi
+    if [ -n "${HYSPLIT_PARALLELISM:-}" ]; then
+      JOB_ARGS+=("--parallelism" "$HYSPLIT_PARALLELISM")
+    fi
     ;;
   hysplit-parse)
     APP_NAME="HYSPLITTrajectoryParseSilver"
@@ -451,6 +460,12 @@ spec:
               value: "$(printf "%s" "${HYSPLIT_BIN:-/opt/hysplit/exec/hyts_std}")"
             - name: HYSPLIT_OUTPUT_BASE_PATH
               value: "$(printf "%s" "${HYSPLIT_OUTPUT_BASE_PATH:-hdfs://host.docker.internal:9000/raw/hysplit/trajectories}")"
+            - name: HYSPLIT_TIMEOUT_SEC
+              value: "$(printf "%s" "${HYSPLIT_TIMEOUT_SEC:-300}")"
+            - name: HYSPLIT_MAX_RUNS
+              value: "$(printf "%s" "${HYSPLIT_MAX_RUNS:-}")"
+            - name: HYSPLIT_PARALLELISM
+              value: "$(printf "%s" "${HYSPLIT_PARALLELISM:-1}")"
             - name: DIRECTION
               value: "$(printf "%s" "${DIRECTION:-}")"
             - name: ANCHOR_HOURS
@@ -513,6 +528,9 @@ spec:
                 --conf "spark.kubernetes.driverEnv.HYSPLIT_ERA5_2ARL_TEMPLATE=\${HYSPLIT_ERA5_2ARL_TEMPLATE:-}"
                 --conf "spark.kubernetes.driverEnv.HYSPLIT_BIN=\${HYSPLIT_BIN:-}"
                 --conf "spark.kubernetes.driverEnv.HYSPLIT_OUTPUT_BASE_PATH=\${HYSPLIT_OUTPUT_BASE_PATH:-}"
+                --conf "spark.kubernetes.driverEnv.HYSPLIT_TIMEOUT_SEC=\${HYSPLIT_TIMEOUT_SEC:-300}"
+                --conf "spark.kubernetes.driverEnv.HYSPLIT_MAX_RUNS=\${HYSPLIT_MAX_RUNS:-}"
+                --conf "spark.kubernetes.driverEnv.HYSPLIT_PARALLELISM=\${HYSPLIT_PARALLELISM:-1}"
                 --conf "spark.kubernetes.driverEnv.DIRECTION=\${DIRECTION:-}"
                 --conf "spark.kubernetes.driverEnv.ANCHOR_HOURS=\${ANCHOR_HOURS:-}"
                 --conf "spark.kubernetes.driverEnv.PM25_TRIGGER_THRESHOLD=\${PM25_TRIGGER_THRESHOLD:-}"
@@ -554,6 +572,9 @@ spec:
                 --conf "spark.executorEnv.HYSPLIT_ERA5_2ARL_TEMPLATE=\${HYSPLIT_ERA5_2ARL_TEMPLATE:-}"
                 --conf "spark.executorEnv.HYSPLIT_BIN=\${HYSPLIT_BIN:-}"
                 --conf "spark.executorEnv.HYSPLIT_OUTPUT_BASE_PATH=\${HYSPLIT_OUTPUT_BASE_PATH:-}"
+                --conf "spark.executorEnv.HYSPLIT_TIMEOUT_SEC=\${HYSPLIT_TIMEOUT_SEC:-300}"
+                --conf "spark.executorEnv.HYSPLIT_MAX_RUNS=\${HYSPLIT_MAX_RUNS:-}"
+                --conf "spark.executorEnv.HYSPLIT_PARALLELISM=\${HYSPLIT_PARALLELISM:-1}"
                 --conf "spark.executorEnv.DIRECTION=\${DIRECTION:-}"
                 --conf "spark.executorEnv.ANCHOR_HOURS=\${ANCHOR_HOURS:-}"
                 --conf "spark.executorEnv.PM25_TRIGGER_THRESHOLD=\${PM25_TRIGGER_THRESHOLD:-}"
@@ -588,28 +609,6 @@ spec:
               exec /opt/spark/bin/spark-submit "\${submit_args[@]}"
 YAML
 
-if [ "$FOLLOW_LOGS" = "true" ]; then
-  # Avoid transient "container is waiting to start: ContainerCreating" errors by
-  # waiting until the submit pod leaves Pending/ContainerCreating first.
-  log_wait_deadline=$(( $(date +%s) + 120 ))
-  while true; do
-    pod_phase="$(kubectl -n "$K8S_NAMESPACE" get pods -l "job-name=${SUBMIT_JOB_NAME}" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
-    if [ "$pod_phase" = "Running" ] || [ "$pod_phase" = "Succeeded" ] || [ "$pod_phase" = "Failed" ]; then
-      break
-    fi
-    if [ "$(date +%s)" -ge "$log_wait_deadline" ]; then
-      break
-    fi
-    sleep 2
-  done
-
-  if [ "$pod_phase" = "Succeeded" ] || [ "$pod_phase" = "Failed" ]; then
-    kubectl -n "$K8S_NAMESPACE" logs "job/${SUBMIT_JOB_NAME}" --all-containers=true || true
-  else
-    kubectl -n "$K8S_NAMESPACE" logs -f "job/${SUBMIT_JOB_NAME}" --all-containers=true || true
-  fi
-fi
-
 if [ "$WAIT_FOR_COMPLETION" = "true" ]; then
   if kubectl -n "$K8S_NAMESPACE" wait --for=condition=complete "job/${SUBMIT_JOB_NAME}" --timeout="$KUBECTL_TIMEOUT"; then
     DRIVER_PHASES="$(kubectl -n "$K8S_NAMESPACE" get pods -l "spark-role=driver" -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null | grep "$SUBMIT_JOB_NAME" || true)"
@@ -618,16 +617,21 @@ if [ "$WAIT_FOR_COMPLETION" = "true" ]; then
       printf "%s\n" "$DRIVER_PHASES" >&2
       DRIVER_POD_NAME="$(printf "%s\n" "$DRIVER_PHASES" | awk 'NR==1{print $1}')"
       if [ -n "$DRIVER_POD_NAME" ]; then
-        kubectl -n "$K8S_NAMESPACE" logs "$DRIVER_POD_NAME" --tail=200 || true
+        kubectl -n "$K8S_NAMESPACE" logs "$DRIVER_POD_NAME" --tail=300 || true
       fi
       exit 1
     fi
     echo "[OK] Spark submit job completed: ${SUBMIT_JOB_NAME}"
   else
-    echo "[ERROR] Spark submit job did not complete cleanly: ${SUBMIT_JOB_NAME}" >&2
+    echo "[ERROR] Spark submit job did not complete cleanly or timed out: ${SUBMIT_JOB_NAME}" >&2
     kubectl -n "$K8S_NAMESPACE" get job "$SUBMIT_JOB_NAME" -o wide || true
     kubectl -n "$K8S_NAMESPACE" describe job "$SUBMIT_JOB_NAME" || true
     kubectl -n "$K8S_NAMESPACE" get pods -l "job-name=${SUBMIT_JOB_NAME}" -o wide || true
+    kubectl -n "$K8S_NAMESPACE" logs "job/${SUBMIT_JOB_NAME}" --all-containers=true --tail=300 || true
     exit 1
   fi
+fi
+
+if [ "$FOLLOW_LOGS" = "true" ]; then
+  kubectl -n "$K8S_NAMESPACE" logs "job/${SUBMIT_JOB_NAME}" --all-containers=true --tail=300 || true
 fi

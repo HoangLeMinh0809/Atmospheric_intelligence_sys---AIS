@@ -2,34 +2,74 @@ from __future__ import annotations
 
 import os
 
-SPARK_COMMON_CONF = " \
-  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-client:3.2.1,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2 \
-  --conf \"spark.hadoop.fs.defaultFS=hdfs://namenode:9000\" \
-  --conf \"spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions\" \
-  --conf \"spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog\" \
-  --conf \"spark.sql.catalog.ais.type=hadoop\" \
-  --conf \"spark.sql.catalog.ais.warehouse=hdfs://namenode:9000/warehouse/iceberg\" \
-  --conf \"spark.sql.adaptive.enabled=true\" \
-  --conf \"spark.driver.memory=1g\" \
-  --conf \"spark.executor.memory=1g\""
+SPARK_VERSION = os.getenv("SPARK_VERSION", "3.5.3")
+HADOOP_CLIENT_VERSION = os.getenv("HADOOP_CLIENT_VERSION", "3.3.4")
+ICEBERG_VERSION = os.getenv("ICEBERG_VERSION", "1.6.1")
+CASSANDRA_CONNECTOR_VERSION = os.getenv("CASSANDRA_CONNECTOR_VERSION", "3.5.1")
+HDFS_NAMENODE = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
+ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", f"{HDFS_NAMENODE}/warehouse/iceberg")
 
-CASSANDRA_CONF = " \
-    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-client:3.2.1,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,com.datastax.spark:spark-cassandra-connector_2.12:3.5.1 \
-    --conf \"spark.hadoop.fs.defaultFS=hdfs://namenode:9000\" \
-    --conf \"spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions\" \
-    --conf \"spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog\" \
-    --conf \"spark.sql.catalog.ais.type=hadoop\" \
-    --conf \"spark.sql.catalog.ais.warehouse=hdfs://namenode:9000/warehouse/iceberg\" \
-    --conf \"spark.cassandra.connection.host=cassandra\" \
-    --conf \"spark.cassandra.connection.port=9042\" \
-    --conf \"spark.sql.adaptive.enabled=true\" \
-    --conf \"spark.driver.memory=1g\" \
-    --conf \"spark.executor.memory=1g\""
+SPARK_COMMON_CONF = (
+    f" --packages org.apache.spark:spark-sql-kafka-0-10_2.12:{SPARK_VERSION},"
+    f"org.apache.hadoop:hadoop-client:{HADOOP_CLIENT_VERSION},"
+    f"org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:{ICEBERG_VERSION}"
+    f" --conf \"spark.hadoop.fs.defaultFS={HDFS_NAMENODE}\""
+    " --conf \"spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions\""
+    " --conf \"spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog\""
+    " --conf \"spark.sql.catalog.ais.type=hadoop\""
+    f" --conf \"spark.sql.catalog.ais.warehouse={ICEBERG_WAREHOUSE}\""
+    " --conf \"spark.sql.adaptive.enabled=true\""
+    " --conf \"spark.driver.memory=1g\""
+    " --conf \"spark.executor.memory=1g\""
+)
+
+CASSANDRA_CONF = (
+    f" --packages org.apache.spark:spark-sql-kafka-0-10_2.12:{SPARK_VERSION},"
+    f"org.apache.hadoop:hadoop-client:{HADOOP_CLIENT_VERSION},"
+    f"org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:{ICEBERG_VERSION},"
+    f"com.datastax.spark:spark-cassandra-connector_2.12:{CASSANDRA_CONNECTOR_VERSION}"
+    f" --conf \"spark.hadoop.fs.defaultFS={HDFS_NAMENODE}\""
+    " --conf \"spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions\""
+    " --conf \"spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog\""
+    " --conf \"spark.sql.catalog.ais.type=hadoop\""
+    f" --conf \"spark.sql.catalog.ais.warehouse={ICEBERG_WAREHOUSE}\""
+    " --conf \"spark.cassandra.connection.host=cassandra\""
+    " --conf \"spark.cassandra.connection.port=9042\""
+    " --conf \"spark.sql.adaptive.enabled=true\""
+    " --conf \"spark.driver.memory=1g\""
+    " --conf \"spark.executor.memory=1g\""
+)
 
 LOOKBACK_DAYS_TEMPLATE = "{{ dag_run.conf.get('lookback_days', 7) if dag_run and dag_run.conf else 7 }}"
 MAIAC_LOOKBACK_DAYS_TEMPLATE = "{{ dag_run.conf.get('maiac_lookback_days', dag_run.conf.get('lookback_days', 30)) if dag_run and dag_run.conf else 30 }}"
 COMPOSE_PROJECT_NAME_TEMPLATE = "${COMPOSE_PROJECT_NAME:-atmospheric_intelligence_sys---ais}"
 
+
+
+_STREAM_CHECKPOINT_BASE = {
+    "weather_streaming.py": "weather_history",
+    "openaq_hourly_streaming.py": "openaq_hourly",
+    "sentinel5p_summary_streaming.py": "sentinel5p_summary",
+    "maiac_summary_streaming.py": "maiac_summary",
+    "era5_files_streaming.py": "era5_files",
+}
+
+
+def _stream_checkpoint_env(job_file: str, extra_args: str) -> str:
+    """Return CHECKPOINT_PATH env for finite bootstrap/backfill streams.
+
+    Spark Structured Streaming ignores startingOffsets once a checkpoint exists.
+    Batch/bootstrap runs therefore must not share the realtime checkpoint path.
+    """
+    basename = job_file.rstrip("/").split("/")[-1]
+    checkpoint_name = _STREAM_CHECKPOINT_BASE.get(basename)
+    if not checkpoint_name:
+        return ""
+    finite = "--stop-after-batch" in extra_args or os.getenv("STOP_AFTER_BATCH", "").lower() in {"1", "true", "yes"}
+    if not finite:
+        return ""
+    hdfs = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000").rstrip("/")
+    return f"CHECKPOINT_PATH={hdfs}/checkpoints/{checkpoint_name}/bootstrap/${{AIRFLOW_CTX_DAG_RUN_ID:-manual}} "
 
 def spark_submit_command(
     app_name: str,
@@ -45,6 +85,9 @@ def spark_submit_command(
         cleaned_args = extra_args.strip()
         suffix = f" {cleaned_args}" if cleaned_args else ""
         env_prefix = f"KAFKA_STARTING_OFFSETS={starting_offsets} " if starting_offsets else ""
+        env_prefix += _stream_checkpoint_env(job_file, cleaned_args)
+        if "--stop-after-batch" in cleaned_args:
+            env_prefix += "STOP_AFTER_BATCH=true "
         job_type = _k8s_job_type_for_file(job_file, extra_args=cleaned_args, with_cassandra=with_cassandra)
         return (
             "set -euo pipefail\n"
@@ -58,6 +101,9 @@ def spark_submit_command(
     suffix = f" {cleaned_args}" if cleaned_args else ""
 
     env_prefix = f"KAFKA_STARTING_OFFSETS={starting_offsets} " if starting_offsets else ""
+    env_prefix += _stream_checkpoint_env(job_file, cleaned_args)
+    if "--stop-after-batch" in cleaned_args:
+        env_prefix += "STOP_AFTER_BATCH=true "
 
     return (
         "set -euo pipefail\n"

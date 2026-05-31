@@ -14,7 +14,7 @@ from typing import Any
 import cdsapi
 import requests
 
-from kafka_utils import create_kafka_producer, send_event
+from kafka_utils import create_kafka_producer, flush_producer, send_event
 
 try:
     import yaml
@@ -548,7 +548,7 @@ def main() -> None:
         else:
             logger.error(f"Failed to publish Kafka event: {event['event_id']}")
 
-    producer.flush()
+    flush_producer(producer, logger)
     producer.close()
     logger.info("ERA5 ingest complete")
 

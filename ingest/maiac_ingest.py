@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from kafka_utils import create_kafka_producer, send_event
+from kafka_utils import create_kafka_producer, flush_producer, send_event
 from window_utils import (
     build_default_window_config,
     parse_bool,
@@ -271,7 +271,7 @@ def main():
         logger.info(f"Sleep {WINDOW_CONFIG.poll_seconds}s before next realtime pull...")
         time.sleep(WINDOW_CONFIG.poll_seconds)
 
-    producer.flush()
+    flush_producer(producer, logger)
     producer.close()
     logger.info(f"Done. Sent {total_sent} messages.")
 

@@ -15,7 +15,7 @@ except ModuleNotFoundError:
     def load_dotenv(*_args, **_kwargs):
         return False
 
-from kafka_utils import create_kafka_producer as create_shared_kafka_producer, send_events
+from kafka_utils import create_kafka_producer as create_shared_kafka_producer, flush_producer, send_events
 from window_utils import (
     build_default_window_config,
     day_strings_from_window,
@@ -476,7 +476,7 @@ def main():
         logger.info(f"Sleep {WINDOW_CONFIG.poll_seconds}s before next realtime pull...")
         time.sleep(WINDOW_CONFIG.poll_seconds)
 
-    producer.flush()
+    flush_producer(producer, logger)
     producer.close()
 
     logger.info("=" * 60)

@@ -89,3 +89,13 @@ def send_events(
             time.sleep(send_delay_ms / 1000.0)
 
     return success_count
+
+
+def flush_producer(producer: KafkaProducer, logger, timeout_sec: int | None = None) -> None:
+    """Flush Kafka producer without allowing an unbounded hang."""
+    resolved_timeout = int(os.getenv("KAFKA_FLUSH_TIMEOUT_SEC", str(timeout_sec or 60)) or 60)
+    remaining = producer.flush(timeout=resolved_timeout)
+    if remaining:
+        message = f"Kafka producer flush timed out after {resolved_timeout}s with {remaining} message(s) remaining"
+        logger.error(message)
+        raise TimeoutError(message)

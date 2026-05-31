@@ -59,6 +59,78 @@ def write_json(spark, uri: str, payload: dict, dry_run: bool = False) -> tuple[i
     return len(text.encode("utf-8")), payload_checksum(text)
 
 
+
+def empty_feature_payload(layer_name: str, reason: str, generated_at) -> dict:
+    return {
+        "type": "FeatureCollection",
+        "features": [],
+        "available": False,
+        "layer_name": layer_name,
+        "reason": reason,
+        "generated_at": iso_z(generated_at),
+    }
+
+
+def rows_available(layer_name: str, rows: list[dict]) -> tuple[bool, str]:
+    if not rows:
+        return False, f"{layer_name}_empty"
+    if layer_name == "backward_trajectories" and all(str(row.get("traj_id")) == "upstream_trajectory_missing" for row in rows):
+        return False, "upstream_trajectory_missing"
+    return True, ""
+
+
+def export_geojson_or_unavailable(
+    spark,
+    runtime: dict,
+    layer_name: str,
+    rows: list[dict],
+    base_time,
+    generated_at,
+    uri: str,
+    id_field: str,
+    dry_run: bool,
+    reason: str = "",
+):
+    available, inferred_reason = rows_available(layer_name, rows)
+    reason = reason or inferred_reason
+    if available:
+        payload = geojson_payload(rows, id_field)
+        payload.update({"available": True, "layer_name": layer_name, "base_time": iso_z(base_time), "generated_at": iso_z(generated_at)})
+        fmt = "geojson"
+        content_type = "application/geo+json"
+        row_count = len(rows)
+    else:
+        payload = empty_feature_payload(layer_name, reason or f"{layer_name}_unavailable", generated_at)
+        if base_time is not None:
+            payload["base_time"] = iso_z(base_time)
+        fmt = "geojson"
+        content_type = "application/geo+json"
+        row_count = 0
+    size, checksum = write_json(spark, uri, payload, dry_run)
+    manifest = manifest_row(
+        runtime,
+        layer_name,
+        uri,
+        size,
+        checksum,
+        row_count,
+        base_time=base_time or generated_at.replace(tzinfo=None),
+        fmt=fmt,
+        content_type=content_type,
+        available=available,
+        unavailable_reason="" if available else (reason or f"{layer_name}_unavailable"),
+        generated_at=generated_at,
+    )
+    summary = {
+        "layer_name": layer_name,
+        "cache_uri": uri,
+        "available": available,
+        "unavailable_reason": "" if available else (reason or f"{layer_name}_unavailable"),
+        "row_count": row_count,
+        "generated_at": iso_z(generated_at),
+    }
+    return manifest, summary
+
 def latest_value(rows: list[dict], field: str):
     values = [row.get(field) for row in rows if row.get(field) is not None]
     return max(values) if values else None
@@ -176,17 +248,23 @@ def main() -> None:
             ("source_attribution", "visualization_source_attribution_gold", "source_attribution/latest.geojson", "base_time", "attribution_id"),
             ("station_observations", "visualization_station_observations_gold", "stations/latest.geojson", "observation_time", "observation_id"),
         ]:
+            uri = f"{runtime['cache_base_uri']}/{path.replace('/latest', '/' + cache_scope)}"
             df = read_table_if_exists(spark, tables[table_key])
             if df is None:
+                row, summary = export_geojson_or_unavailable(
+                    spark, runtime, layer_name, [], asof_time or generated_at.replace(tzinfo=None), generated_at,
+                    uri, id_field, dry_run, reason=f"table_missing:{tables[table_key]}"
+                )
+                manifest.append(row)
+                manifest_summary.append(summary)
                 continue
             rows, base_time = collect_latest(df, time_col, asof_time=asof_time)
-            if rows:
-                uri = f"{runtime['cache_base_uri']}/{path.replace('/latest', '/' + cache_scope)}"
-                payload = geojson_payload(rows, id_field)
-                payload.update({"layer_name": layer_name, "base_time": iso_z(base_time), "generated_at": iso_z(generated_at)})
-                size, checksum = write_json(spark, uri, payload, dry_run)
-                manifest.append(manifest_row(runtime, layer_name, uri, size, checksum, len(rows), base_time=base_time, generated_at=generated_at))
-                manifest_summary.append({"layer_name": layer_name, "cache_uri": uri, "available": True, "row_count": len(rows), "generated_at": iso_z(generated_at)})
+            row, summary = export_geojson_or_unavailable(
+                spark, runtime, layer_name, rows, base_time or asof_time or generated_at.replace(tzinfo=None), generated_at,
+                uri, id_field, dry_run
+            )
+            manifest.append(row)
+            manifest_summary.append(summary)
 
         dashboard = read_table_if_exists(spark, tables["visualization_forecast_dashboard_gold"])
         if dashboard is not None:

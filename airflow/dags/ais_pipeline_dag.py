@@ -24,6 +24,7 @@ DEFAULT_ARGS = {
     "retries": 1,
     "retry_delay": timedelta(minutes=2),
     "do_xcom_push": False,
+    "execution_timeout": timedelta(hours=3),
 }
 
 with DAG(
@@ -96,6 +97,7 @@ with DAG(
         bash_command=spark_submit_command(
             "WeatherHistory_Bootstrap",
             "/opt/spark-jobs/weather_streaming.py",
+            extra_args="--stop-after-batch 1",
             starting_offsets="earliest",
         ),
     )
@@ -105,6 +107,7 @@ with DAG(
         bash_command=spark_submit_command(
             "OpenAQHourly_Bootstrap",
             "/opt/spark-jobs/openaq_hourly_streaming.py",
+            extra_args="--stop-after-batch 1",
             starting_offsets="earliest",
         ),
     )
@@ -114,6 +117,7 @@ with DAG(
         bash_command=spark_submit_command(
             "Sentinel5PSummary_Bootstrap",
             "/opt/spark-jobs/sentinel5p_summary_streaming.py",
+            extra_args="--stop-after-batch 1",
             starting_offsets="earliest",
         ),
     )
@@ -123,6 +127,7 @@ with DAG(
         bash_command=spark_submit_command(
             "MAIACSummary_Bootstrap",
             "/opt/spark-jobs/maiac_summary_streaming.py",
+            extra_args="--stop-after-batch 1",
             starting_offsets="earliest",
         ),
     )

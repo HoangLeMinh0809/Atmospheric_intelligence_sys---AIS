@@ -16,6 +16,12 @@ from kafka.consumer import KafkaConsumer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+METRICS_CACHE_TTL_SECONDS = int(os.getenv("METRICS_CACHE_TTL_SECONDS", "45") or 45)
+HDFS_WALK_MAX_DEPTH = int(os.getenv("HDFS_WALK_MAX_DEPTH", "5") or 5)
+HDFS_WALK_MAX_FILES = int(os.getenv("HDFS_WALK_MAX_FILES", "2000") or 2000)
+_pipeline_map_cache = {"ts": 0.0, "value": None}
+
+
 app = Flask(__name__)
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
@@ -646,23 +652,26 @@ def _hdfs_list_status(path):
 
 def _walk_hdfs(path):
     files = []
-    stack = [path]
+    stack = [(path, 0)]
 
-    while stack:
-        current = stack.pop()
+    while stack and len(files) < HDFS_WALK_MAX_FILES:
+        current, depth = stack.pop()
         statuses = _hdfs_list_status(current)
         for node in statuses:
             node_type = node.get("type")
             suffix = node.get("pathSuffix", "")
             full_path = current.rstrip("/") + "/" + suffix if suffix else current
             if node_type == "DIRECTORY":
-                stack.append(full_path)
+                if depth < HDFS_WALK_MAX_DEPTH:
+                    stack.append((full_path, depth + 1))
             elif node_type == "FILE":
                 files.append({
                     "path": full_path,
                     "length": int(node.get("length", 0)),
                     "modificationTime": int(node.get("modificationTime", 0)),
                 })
+                if len(files) >= HDFS_WALK_MAX_FILES:
+                    break
     return files
 
 
@@ -690,7 +699,7 @@ def _summarize_hdfs_path(path: str) -> dict:
         }
 
 
-def collect_pipeline_map() -> dict:
+def _collect_pipeline_map_uncached() -> dict:
     topic_counts = {}
     for topic in KAFKA_TOPICS:
         topic_counts[topic] = _get_kafka_message_count(topic)
@@ -716,9 +725,24 @@ def collect_pipeline_map() -> dict:
 
     return {
         "polled_at_utc": datetime.now(timezone.utc).isoformat(),
+        "hdfs_walk_limits": {"max_depth": HDFS_WALK_MAX_DEPTH, "max_files": HDFS_WALK_MAX_FILES},
         "datasets": datasets,
         "gold": gold,
     }
+
+
+def collect_pipeline_map() -> dict:
+    now = time.time()
+    cached = _pipeline_map_cache.get("value")
+    if cached is not None and now - float(_pipeline_map_cache.get("ts", 0.0)) < METRICS_CACHE_TTL_SECONDS:
+        result = dict(cached)
+        result["cache_hit"] = True
+        return result
+    result = _collect_pipeline_map_uncached()
+    result["cache_hit"] = False
+    _pipeline_map_cache["ts"] = now
+    _pipeline_map_cache["value"] = result
+    return result
 
 
 def _collect_kafka_totals(topic: str):

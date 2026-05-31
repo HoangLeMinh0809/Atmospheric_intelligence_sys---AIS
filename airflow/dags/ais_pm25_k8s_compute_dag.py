@@ -16,6 +16,7 @@ DEFAULT_ARGS = {
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
     "do_xcom_push": False,
+    "execution_timeout": timedelta(hours=3),
 }
 
 START_DATE_TEMPLATE = "{{ dag_run.conf.get('start_date', ds) if dag_run and dag_run.conf else ds }}"

@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 
 from pyspark.sql import Row
+from pyspark.sql import functions as F
 
 from visualization_common import (
     add_common_args,
@@ -42,13 +44,28 @@ def main() -> None:
         traj = read_table_if_exists(spark, tables["hysplit_cluster_silver"])
         if traj is None:
             raise RuntimeError(f"Missing trajectory clustered table: {tables['hysplit_cluster_silver']}")
-        points = traj.filter(traj.direction == "backward")
+        max_trajectories = max(1, int(os.getenv("VIS_MAX_TRAJECTORIES", "300") or 300))
+        base_points = (
+            traj.filter(traj.direction == "backward")
+            .filter(F.col("traj_id").isNotNull())
+            .filter(F.col("timestamp").isNotNull())
+        )
+        init_times = (
+            base_points.filter(F.col("age_h") == F.lit(0))
+            .select("traj_id", F.col("timestamp").alias("init_time"))
+            .dropDuplicates(["traj_id", "init_time"])
+        )
         if asof_time is not None:
-            points = points.filter(points.timestamp <= asof_time.replace(tzinfo=None))
+            init_times = init_times.filter(F.col("init_time") <= F.lit(asof_time.replace(tzinfo=None)))
         if args.start_date:
-            points = points.filter(points.timestamp >= args.start_date)
+            init_times = init_times.filter(F.to_date("init_time") >= F.to_date(F.lit(args.start_date)))
         if args.end_date:
-            points = points.filter(points.timestamp <= args.end_date)
+            init_times = init_times.filter(F.to_date("init_time") <= F.to_date(F.lit(args.end_date)))
+
+        selected = init_times.orderBy(F.col("init_time").desc()).limit(max_trajectories)
+        selected_ids = [str(r["traj_id"]) for r in selected.select("traj_id").collect()]
+        selected_init = {str(r["traj_id"]): r["init_time"] for r in selected.collect()}
+        points = base_points.join(selected.select("traj_id"), on="traj_id", how="inner")
         source = points.collect()
         by_traj: dict[str, list[dict]] = {}
         for row in source:
@@ -57,11 +74,11 @@ def main() -> None:
 
         path_features = {}
         path_df = read_table_if_exists(spark, tables["trajectory_path_silver"])
-        if path_df is not None:
-            path_features = {str(r["traj_id"]): r.asDict() for r in path_df.collect()}
+        if path_df is not None and selected_ids:
+            path_features = {str(r["traj_id"]): r.asDict() for r in path_df.filter(F.col("traj_id").isin(selected_ids)).collect()}
 
-        if source:
-            base_time = max(item["timestamp"] for item in source if item["timestamp"] is not None)
+        if selected_init:
+            base_time = max(value for value in selected_init.values() if value is not None)
         else:
             base_time = (asof_time or generated_at).replace(tzinfo=None)
         vis_run_id = run_id("backward_trajectories", base_time, runtime["product_version"])
@@ -88,7 +105,7 @@ def main() -> None:
                 "path_aer_mean": evidence.get("path_aer_mean"),
                 "path_no2_aer_ratio": evidence.get("path_no2_aer_ratio"),
             }
-            init_time = first.get("timestamp") or base_time
+            init_time = selected_init.get(traj_id) or max((item.get("timestamp") for item in ordered if item.get("age_h") == 0 and item.get("timestamp") is not None), default=None) or base_time
             rows.append(
                 Row(
                     visualization_run_id=vis_run_id,
@@ -164,7 +181,7 @@ def main() -> None:
         count = write_product(out, tables["visualization_backward_trajectory_paths_gold"], dry_run)
         print(
             "job=visualization_backward_trajectory_paths "
-            f"input_point_count={len(source)} trajectory_count={len(rows)} invalid_geometry_count={invalid} "
+            f"input_point_count={len(source)} selected_trajectory_count={len(selected_ids)} trajectory_count={len(rows)} invalid_geometry_count={invalid} "
             f"dry_run={int(dry_run)} status={'dry_run_success' if dry_run else 'written'}"
         )
     finally:

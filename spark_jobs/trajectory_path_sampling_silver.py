@@ -136,15 +136,24 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
         )
     )
 
-    # 4) Join by date, then filter by radius; take nearest pixel per traj point per product
-    joined = windowed.join(grid, on="obs_date", how="left")
+    # 4) Join by date with a bounding-box prefilter before the exact radius.
+    # The old date-only join could create a huge Cartesian product per day
+    # (trajectory points x satellite pixels), which makes Spark shuffle/OOM even
+    # after adding executors. Bounding first keeps the join local around the path.
+    radius = float(args.max_distance_deg)
+    joined = (
+        windowed.join(grid, on="obs_date", how="left")
+        .filter(F.col("pix_lat").isNotNull() & F.col("pix_lon").isNotNull())
+        .filter(F.col("pix_lat").between(F.col("traj_lat") - F.lit(radius), F.col("traj_lat") + F.lit(radius)))
+        .filter(F.col("pix_lon").between(F.col("traj_lon") - F.lit(radius), F.col("traj_lon") + F.lit(radius)))
+    )
     joined = joined.withColumn(
         "dist_deg",
         F.sqrt(
             F.pow(F.col("traj_lat") - F.col("pix_lat"), F.lit(2.0))
             + F.pow(F.col("traj_lon") - F.col("pix_lon"), F.lit(2.0))
         ),
-    ).filter(F.col("dist_deg") <= F.lit(args.max_distance_deg))
+    ).filter(F.col("dist_deg") <= F.lit(radius))
 
     nearest_w = Window.partitionBy(
         "traj_id",
