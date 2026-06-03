@@ -62,12 +62,28 @@ def main() -> None:
             ],
         )
         if pred is None:
+            pred = latest_row_asof(
+                predictions,
+                "base_hour",
+                asof_time,
+                filters=[predictions.model_status == "production"],
+            )
+            if pred is not None:
+                print(
+                    "job=visualization_forecast_dashboard "
+                    f"warning=prediction_location_fallback requested_location={args.location_id} "
+                    f"fallback_location={pred.get('location_id')}"
+                )
+        if pred is None:
             print(f"job=visualization_forecast_dashboard warning=no_production_prediction location_id={args.location_id}")
 
         station = read_table_if_exists(spark, tables["openaq_station_silver"])
         latest_obs = None
         if station is not None:
             latest_obs = latest_row_asof(station.filter(station.pm25.isNotNull()), "hour", asof_time)
+            if latest_obs is None:
+                # Fallback to the latest available observation globally when the requested window is empty.
+                latest_obs = latest_row_asof(station.filter(station.pm25.isNotNull()), "hour", None)
         if pred is None and latest_obs is None:
             raise RuntimeError(f"No prediction or station observation found for location_id={args.location_id}")
 

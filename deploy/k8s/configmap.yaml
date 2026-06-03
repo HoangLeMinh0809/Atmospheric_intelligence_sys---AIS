@@ -50,9 +50,9 @@ data:
   VIS_STATION_TABLE: ais.visualization.station_observations_gold
   VIS_CACHE_MANIFEST_TABLE: ais.visualization.visualization_cache_manifest_gold
   VIS_API_PORT: "8080"
-  VIS_REQUIRED_LAYERS: pm25_heatmap,forecast_dashboard,pm25_timeseries,backward_trajectories,source_attribution,station_observations
+  VIS_REQUIRED_LAYERS: pm25_heatmap,forecast_dashboard,pm25_timeseries,source_attribution,station_observations
   VIS_OPTIONAL_LAYERS: forward_plume
-  VIS_FRESHNESS_MAX_MINUTES: "180"
+  VIS_FRESHNESS_MAX_MINUTES: "720"
   VIS_READY_TIMEOUT_SECONDS: "5"
   VIS_ENABLE_TABLE_FALLBACK: "false"
   VIS_API_BASE_URL: http://visualization-api.ais.svc.cluster.local

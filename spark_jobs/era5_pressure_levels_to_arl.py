@@ -29,6 +29,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-base-path", default=os.getenv("ERA5_ARL_OUTPUT_BASE_PATH", ""))
     parser.add_argument("--era5-2arl-bin", default=os.getenv("HYSPLIT_ERA5_2ARL_BIN") or DEFAULT_BINARY)
     parser.add_argument("--command-template", default=os.getenv("HYSPLIT_ERA5_2ARL_TEMPLATE", ""))
+    parser.add_argument(
+        "--allow-missing-converter",
+        default=os.getenv("ERA5_2ARL_OPTIONAL", "1"),
+        help="If true, missing converter will not fail the whole job.",
+    )
     return parser.parse_args()
 
 
@@ -181,6 +186,36 @@ def build_arl_path(output_base_path: str, year: int, month: int, source_nc: str)
     return f"{base}/pressure_levels/year={year}/month={month:02d}/{source_name}.arl"
 
 
+
+
+def _tail(value: str | None, limit: int = 2000) -> str:
+    return (value or "")[-limit:]
+
+
+def run_external_command(command: list[str], env: dict[str, str], timeout_sec: int) -> None:
+    try:
+        proc = subprocess.run(
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=max(1, int(timeout_sec)),
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        raise RuntimeError(
+            f"External command timed out after {timeout_sec}s: {' '.join(command)}\n"
+            f"stdout_tail={_tail(stdout)}\nstderr_tail={_tail(stderr)}"
+        ) from exc
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"External command failed with code {proc.returncode}: {' '.join(command)}\n"
+            f"stdout_tail={_tail(proc.stdout)}\nstderr_tail={_tail(proc.stderr)}"
+        )
+
 def run_converter(
     binary: str,
     command_template: str,
@@ -213,7 +248,7 @@ def run_converter(
             surface=str(surface_grib),
             output=str(output_arl),
         )
-        subprocess.check_call(shlex.split(rendered), env=converter_env)
+        run_external_command(shlex.split(rendered), converter_env, int(os.getenv("ERA5_CONVERT_TIMEOUT_SEC", "900") or 900))
         if not finalize_output():
             raise RuntimeError(f"Converter template completed but no ARL output was produced: {output_arl}")
         return
@@ -226,10 +261,10 @@ def run_converter(
     last_error: Exception | None = None
     for command in candidates:
         try:
-            subprocess.check_call(command, env=converter_env)
+            run_external_command(command, converter_env, int(os.getenv("ERA5_CONVERT_TIMEOUT_SEC", "900") or 900))
             if finalize_output():
                 return
-        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        except (FileNotFoundError, RuntimeError) as exc:
             last_error = exc
 
     raise RuntimeError(
@@ -264,6 +299,7 @@ def main() -> None:
     start_date = parse_date(args.start_date)
     end_date = parse_date(args.end_date)
     full_refresh = as_bool(args.full_refresh)
+    allow_missing_converter = as_bool(args.allow_missing_converter)
 
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")
@@ -276,47 +312,60 @@ def main() -> None:
 
     success_rows: list[dict[str, Any]] = []
     failure_count = 0
+    converter_missing = False
     created_at = datetime.utcnow()
 
-    with tempfile.TemporaryDirectory(prefix="era5_arl_") as tmp:
-        tmp_dir = Path(tmp)
-        for item in candidates:
-            source_nc = item["file_path"]
-            surface_grib = item["surface_file_path"]
-            year = int(item["year"])
-            month = int(item["month"])
-            arl_path = build_arl_path(output_base_path, year, month, source_nc)
-            local_grib = copy_hdfs_to_local(spark, source_nc, tmp_dir)
-            local_surface_grib = copy_hdfs_to_local(spark, surface_grib, tmp_dir)
-            local_arl = tmp_dir / Path(hdfs_remote_path(arl_path)).name
-            try:
-                run_converter(
-                    args.era5_2arl_bin,
-                    args.command_template,
-                    local_grib,
-                    local_surface_grib,
-                    local_arl,
-                )
-                checksum = file_sha256(local_arl)
-                upload_local_to_hdfs(spark, local_arl, arl_path)
-                success_rows.append(
-                    {
-                        "dataset_type": "pressure_levels",
-                        "year": year,
-                        "month": month,
-                        "source_nc": source_nc,
-                        "start_time": item.get("start_time"),
-                        "end_time": item.get("end_time"),
-                        "arl_path": arl_path,
-                        "checksum": checksum,
-                        "created_at": created_at,
-                        "spark_processed_at": datetime.utcnow(),
-                    }
-                )
-                print(f"converted source_nc={source_nc} arl_path={arl_path}")
-            except Exception as exc:
-                failure_count += 1
-                print(f"conversion_failed source_nc={source_nc} error={exc}")
+    if not args.command_template.strip() and not Path(args.era5_2arl_bin).exists():
+        message = (
+            "era5_2arl binary not found. "
+            f"bin={args.era5_2arl_bin} template_set={bool(args.command_template.strip())}"
+        )
+        if allow_missing_converter:
+            print(f"conversion_skipped reason=missing_converter detail={message}")
+            converter_missing = True
+        else:
+            raise RuntimeError(message)
+
+    if not converter_missing:
+        with tempfile.TemporaryDirectory(prefix="era5_arl_") as tmp:
+            tmp_dir = Path(tmp)
+            for item in candidates:
+                source_nc = item["file_path"]
+                surface_grib = item["surface_file_path"]
+                year = int(item["year"])
+                month = int(item["month"])
+                arl_path = build_arl_path(output_base_path, year, month, source_nc)
+                local_grib = copy_hdfs_to_local(spark, source_nc, tmp_dir)
+                local_surface_grib = copy_hdfs_to_local(spark, surface_grib, tmp_dir)
+                local_arl = tmp_dir / Path(hdfs_remote_path(arl_path)).name
+                try:
+                    run_converter(
+                        args.era5_2arl_bin,
+                        args.command_template,
+                        local_grib,
+                        local_surface_grib,
+                        local_arl,
+                    )
+                    checksum = file_sha256(local_arl)
+                    upload_local_to_hdfs(spark, local_arl, arl_path)
+                    success_rows.append(
+                        {
+                            "dataset_type": "pressure_levels",
+                            "year": year,
+                            "month": month,
+                            "source_nc": source_nc,
+                            "start_time": item.get("start_time"),
+                            "end_time": item.get("end_time"),
+                            "arl_path": arl_path,
+                            "checksum": checksum,
+                            "created_at": created_at,
+                            "spark_processed_at": datetime.utcnow(),
+                        }
+                    )
+                    print(f"converted source_nc={source_nc} arl_path={arl_path}")
+                except Exception as exc:
+                    failure_count += 1
+                    print(f"conversion_failed source_nc={source_nc} error={exc}")
 
     write_metadata(spark, success_rows, target_table)
     print(
@@ -329,7 +378,7 @@ def main() -> None:
     print(f"Saved: {target_table}")
     spark.stop()
 
-    if failure_count:
+    if failure_count and not allow_missing_converter:
         raise SystemExit(1)
 
 

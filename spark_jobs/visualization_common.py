@@ -105,6 +105,9 @@ def visualization_runtime(args: argparse.Namespace) -> dict[str, Any]:
         "grid_resolution_deg": float(args.grid_resolution_deg or cfg.get("grid_resolution_deg", 0.1)),
         "horizons": horizons,
         "obs_history_hours": int(cfg.get("observation_history_hours", 48)),
+        "max_trajectories": int(os.getenv("VIS_MAX_TRAJECTORIES", cfg.get("max_trajectories", 150))),
+        "max_points_per_trajectory": int(os.getenv("VIS_MAX_POINTS_PER_TRAJECTORY", cfg.get("max_points_per_trajectory", 100))),
+        "max_geojson_features": int(os.getenv("VIS_MAX_GEOJSON_FEATURES", cfg.get("max_geojson_features", 5000))),
         "product_version": args.product_version or str(cfg.get("product_version", "windy_v1")),
         "schema_version": args.schema_version or str(cfg.get("schema_version", "1")),
     }

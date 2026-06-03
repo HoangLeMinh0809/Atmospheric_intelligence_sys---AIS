@@ -22,7 +22,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
     parser.add_argument("--full-refresh", nargs="?", const="1", default=os.getenv("FULL_REFRESH", "0"))
-    parser.add_argument("--max-distance-deg", type=float, default=float(cfg.get("max_distance_deg", 0.5)))
+    parser.add_argument("--max-distance-deg", type=float, default=float(cfg.get("max_distance_deg", 0.25)))
+    parser.add_argument(
+        "--spatial-bucket-deg",
+        type=float,
+        default=float(os.getenv("TRAJ_SPATIAL_BUCKET_DEG", cfg.get("spatial_bucket_deg", 0.25))),
+        help="Latitude/longitude bucket size used to avoid full obs_date spatial joins.",
+    )
     # Path segment window relative to init hour (default -72..-24)
     parser.add_argument("--path-window-start-h", type=int, default=int(cfg.get("path_window_start_h", -72)))
     parser.add_argument("--path-window-end-h", type=int, default=int(cfg.get("path_window_end_h", -24)))
@@ -136,24 +142,63 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
         )
     )
 
-    # 4) Join by date with a bounding-box prefilter before the exact radius.
-    # The old date-only join could create a huge Cartesian product per day
-    # (trajectory points x satellite pixels), which makes Spark shuffle/OOM even
-    # after adding executors. Bounding first keeps the join local around the path.
-    radius = float(args.max_distance_deg)
-    joined = (
-        windowed.join(grid, on="obs_date", how="left")
-        .filter(F.col("pix_lat").isNotNull() & F.col("pix_lon").isNotNull())
-        .filter(F.col("pix_lat").between(F.col("traj_lat") - F.lit(radius), F.col("traj_lat") + F.lit(radius)))
-        .filter(F.col("pix_lon").between(F.col("traj_lon") - F.lit(radius), F.col("traj_lon") + F.lit(radius)))
+    # 4) Spatial bucket join. Avoid the previous obs_date-only join, which could
+    # create trajectory_points x all_pixels_per_day intermediates. We expand each
+    # trajectory point to the 3x3 neighboring bucket window, join on date+bucket,
+    # then apply the exact radius filter.
+    bucket_deg = max(float(args.spatial_bucket_deg), 1e-6)
+    windowed = (
+        windowed
+        .withColumn("lat_bucket", F.floor(F.col("traj_lat") / F.lit(bucket_deg)).cast("int"))
+        .withColumn("lon_bucket", F.floor(F.col("traj_lon") / F.lit(bucket_deg)).cast("int"))
+        .repartition("obs_date", "lat_bucket", "lon_bucket")
     )
+    grid = (
+        grid
+        .withColumn("lat_bucket", F.floor(F.col("pix_lat") / F.lit(bucket_deg)).cast("int"))
+        .withColumn("lon_bucket", F.floor(F.col("pix_lon") / F.lit(bucket_deg)).cast("int"))
+        .repartition("obs_date", "lat_bucket", "lon_bucket")
+    )
+
+    offsets = spark.createDataFrame(
+        [(i, j) for i in (-1, 0, 1) for j in (-1, 0, 1)],
+        ["dlat_bucket", "dlon_bucket"],
+    )
+    traj_expanded = (
+        windowed
+        .crossJoin(F.broadcast(offsets))
+        .withColumn("join_lat_bucket", F.col("lat_bucket") + F.col("dlat_bucket"))
+        .withColumn("join_lon_bucket", F.col("lon_bucket") + F.col("dlon_bucket"))
+        .drop("dlat_bucket", "dlon_bucket")
+    )
+
+    t = traj_expanded.alias("t")
+    g = grid.alias("g")
+    joined = t.join(
+        g,
+        (F.col("t.obs_date") == F.col("g.obs_date"))
+        & (F.col("t.join_lat_bucket") == F.col("g.lat_bucket"))
+        & (F.col("t.join_lon_bucket") == F.col("g.lon_bucket")),
+        "left",
+    ).select(
+        F.col("t.traj_id").alias("traj_id"),
+        F.col("t.init_time").alias("init_time"),
+        F.col("t.obs_date").alias("obs_date"),
+        F.col("t.traj_lat").alias("traj_lat"),
+        F.col("t.traj_lon").alias("traj_lon"),
+        F.col("g.product").alias("product"),
+        F.col("g.pix_lat").alias("pix_lat"),
+        F.col("g.pix_lon").alias("pix_lon"),
+        F.col("g.value").alias("value"),
+    )
+
     joined = joined.withColumn(
         "dist_deg",
         F.sqrt(
             F.pow(F.col("traj_lat") - F.col("pix_lat"), F.lit(2.0))
             + F.pow(F.col("traj_lon") - F.col("pix_lon"), F.lit(2.0))
         ),
-    ).filter(F.col("dist_deg") <= F.lit(radius))
+    ).filter(F.col("dist_deg") <= F.lit(args.max_distance_deg))
 
     nearest_w = Window.partitionBy(
         "traj_id",
@@ -220,6 +265,11 @@ def main() -> None:
     grid_table = args.grid_table or tables["s5p_grid_silver"]
     target_table = args.target_table or tables["trajectory_path_silver"]
     full_refresh = as_bool(args.full_refresh)
+    print(
+        "trajectory_path_sampling_runtime="
+        f"{{'max_distance_deg': {args.max_distance_deg}, 'spatial_bucket_deg': {args.spatial_bucket_deg}, "
+        f"'start_date': '{args.start_date}', 'end_date': '{args.end_date}'}}"
+    )
 
     ensure_table(spark, target_table)
 

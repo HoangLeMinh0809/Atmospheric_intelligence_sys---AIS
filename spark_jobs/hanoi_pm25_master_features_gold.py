@@ -425,8 +425,9 @@ def build_master(spark: SparkSession, tables: dict[str, str], target_table: str,
 
     weather = apply_date_range(spark.table(tables["weather_proxy_silver"]), "hour", start_date, end_date)
     era5 = apply_date_range(spark.table(tables["era5_surface_silver"]), "hour", start_date, end_date)
-    s5p = spark.table(tables["sentinel5p_silver"])
-    maiac = spark.table(tables["maiac_silver"])
+    # Keep satellite scans bounded to the requested window to reduce join cost.
+    s5p = apply_date_range(spark.table(tables["sentinel5p_silver"]), "date", start_date, end_date)
+    maiac = apply_date_range(spark.table(tables["maiac_silver"]), "date", start_date, end_date)
 
     s5p_features = build_s5p_asof_features(hours, s5p)
     maiac_features = build_maiac_asof_features(hours, maiac)
@@ -469,14 +470,22 @@ def build_master(spark: SparkSession, tables: dict[str, str], target_table: str,
         "total_precipitation_mm",
     ]
 
+    hours = hours.repartition("hour")
+    aq_hourly = aq.select("hour", "pm25_median", "pm25_mean", "station_count", "coverage_avg").repartition("hour")
+    weather_hourly = weather.select(*weather_cols).repartition("hour")
+    era5_hourly = era5.select(*era5_cols).repartition("hour")
+    gradient_hourly = gradient.repartition("hour")
+    traj_hourly = traj_hourly.repartition("hour")
+
+    # Broadcast daily as-of features; they are small and avoid wide shuffles.
     base = (
         hours
-        .join(aq.select("hour", "pm25_median", "pm25_mean", "station_count", "coverage_avg"), "hour", "left")
-        .join(weather.select(*weather_cols), "hour", "left")
-        .join(era5.select(*era5_cols), "hour", "left")
-        .join(s5p_features, "hour", "left")
-        .join(maiac_features, "hour", "left")
-        .join(gradient, "hour", "left")
+        .join(aq_hourly, "hour", "left")
+        .join(weather_hourly, "hour", "left")
+        .join(era5_hourly, "hour", "left")
+        .join(F.broadcast(s5p_features), "hour", "left")
+        .join(F.broadcast(maiac_features), "hour", "left")
+        .join(gradient_hourly, "hour", "left")
         .join(traj_hourly, "hour", "left")
     )
     return add_time_lag_target_features(base).select(*OUTPUT_COLUMNS)

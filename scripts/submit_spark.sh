@@ -29,6 +29,22 @@ PRESET_CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 PRESET_START_DATE="${START_DATE:-}"
 PRESET_END_DATE="${END_DATE:-}"
 PRESET_FULL_REFRESH="${FULL_REFRESH:-}"
+PRESET_HYSPLIT_MAX_RUNS="${HYSPLIT_MAX_RUNS:-}"
+PRESET_HYSPLIT_PARALLELISM="${HYSPLIT_PARALLELISM:-}"
+PRESET_HYSPLIT_TIMEOUT_SEC="${HYSPLIT_TIMEOUT_SEC:-}"
+PRESET_HYSPLIT_SHARD_ID="${HYSPLIT_SHARD_ID:-}"
+PRESET_HYSPLIT_SHARD_COUNT="${HYSPLIT_SHARD_COUNT:-}"
+PRESET_TRAJ_SPATIAL_BUCKET_DEG="${TRAJ_SPATIAL_BUCKET_DEG:-}"
+PRESET_MAX_DISTANCE_DEG="${MAX_DISTANCE_DEG:-}"
+PRESET_VIS_MAX_TRAJECTORIES="${VIS_MAX_TRAJECTORIES:-}"
+PRESET_VIS_MAX_POINTS_PER_TRAJECTORY="${VIS_MAX_POINTS_PER_TRAJECTORY:-}"
+PRESET_VIS_MAX_GEOJSON_FEATURES="${VIS_MAX_GEOJSON_FEATURES:-}"
+PRESET_PIPELINE_SOURCES="${PIPELINE_SOURCES:-}"
+PRESET_PIPELINE_CONTINUE_ON_ERROR="${PIPELINE_CONTINUE_ON_ERROR:-}"
+PRESET_PIPELINE_STEPS="${PIPELINE_STEPS:-}"
+PRESET_PIPELINE_LAYERS="${PIPELINE_LAYERS:-}"
+PRESET_EXPORT_CACHE="${EXPORT_CACHE:-}"
+PRESET_BASE_TIME="${BASE_TIME:-}"
 
 # Load .env file to get credentials and configuration
 if [ -f ".env" ]; then
@@ -48,6 +64,22 @@ fi
 [ -n "$PRESET_START_DATE" ] && START_DATE="$PRESET_START_DATE"
 [ -n "$PRESET_END_DATE" ] && END_DATE="$PRESET_END_DATE"
 [ -n "$PRESET_FULL_REFRESH" ] && FULL_REFRESH="$PRESET_FULL_REFRESH"
+[ -n "$PRESET_HYSPLIT_MAX_RUNS" ] && HYSPLIT_MAX_RUNS="$PRESET_HYSPLIT_MAX_RUNS"
+[ -n "$PRESET_HYSPLIT_PARALLELISM" ] && HYSPLIT_PARALLELISM="$PRESET_HYSPLIT_PARALLELISM"
+[ -n "$PRESET_HYSPLIT_TIMEOUT_SEC" ] && HYSPLIT_TIMEOUT_SEC="$PRESET_HYSPLIT_TIMEOUT_SEC"
+[ -n "$PRESET_HYSPLIT_SHARD_ID" ] && HYSPLIT_SHARD_ID="$PRESET_HYSPLIT_SHARD_ID"
+[ -n "$PRESET_HYSPLIT_SHARD_COUNT" ] && HYSPLIT_SHARD_COUNT="$PRESET_HYSPLIT_SHARD_COUNT"
+[ -n "$PRESET_TRAJ_SPATIAL_BUCKET_DEG" ] && TRAJ_SPATIAL_BUCKET_DEG="$PRESET_TRAJ_SPATIAL_BUCKET_DEG"
+[ -n "$PRESET_MAX_DISTANCE_DEG" ] && MAX_DISTANCE_DEG="$PRESET_MAX_DISTANCE_DEG"
+[ -n "$PRESET_VIS_MAX_TRAJECTORIES" ] && VIS_MAX_TRAJECTORIES="$PRESET_VIS_MAX_TRAJECTORIES"
+[ -n "$PRESET_VIS_MAX_POINTS_PER_TRAJECTORY" ] && VIS_MAX_POINTS_PER_TRAJECTORY="$PRESET_VIS_MAX_POINTS_PER_TRAJECTORY"
+[ -n "$PRESET_VIS_MAX_GEOJSON_FEATURES" ] && VIS_MAX_GEOJSON_FEATURES="$PRESET_VIS_MAX_GEOJSON_FEATURES"
+[ -n "$PRESET_PIPELINE_SOURCES" ] && PIPELINE_SOURCES="$PRESET_PIPELINE_SOURCES"
+[ -n "$PRESET_PIPELINE_CONTINUE_ON_ERROR" ] && PIPELINE_CONTINUE_ON_ERROR="$PRESET_PIPELINE_CONTINUE_ON_ERROR"
+[ -n "$PRESET_PIPELINE_STEPS" ] && PIPELINE_STEPS="$PRESET_PIPELINE_STEPS"
+[ -n "$PRESET_PIPELINE_LAYERS" ] && PIPELINE_LAYERS="$PRESET_PIPELINE_LAYERS"
+[ -n "$PRESET_EXPORT_CACHE" ] && EXPORT_CACHE="$PRESET_EXPORT_CACHE"
+[ -n "$PRESET_BASE_TIME" ] && BASE_TIME="$PRESET_BASE_TIME"
 
 JOB_TYPE="${1:-weather}"
 DETACH="${DETACH:-false}"
@@ -64,6 +96,24 @@ MAIAC_LOCAL_FALLBACK_PATH="${MAIAC_LOCAL_FALLBACK_PATH:-/opt/maiac_data}"
 MAIAC_RELAXED_QA="${MAIAC_RELAXED_QA:-0}"
 SPARK_JARS_IVY="${SPARK_JARS_IVY:-/root/.ivy2}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-atmospheric_intelligence_sys---ais}"
+HYSPLIT_MAX_RUNS="${HYSPLIT_MAX_RUNS:-}"
+HYSPLIT_PARALLELISM="${HYSPLIT_PARALLELISM:-}"
+HYSPLIT_TIMEOUT_SEC="${HYSPLIT_TIMEOUT_SEC:-}"
+HYSPLIT_SHARD_ID="${HYSPLIT_SHARD_ID:-}"
+HYSPLIT_SHARD_COUNT="${HYSPLIT_SHARD_COUNT:-}"
+TRAJ_SPATIAL_BUCKET_DEG="${TRAJ_SPATIAL_BUCKET_DEG:-}"
+MAX_DISTANCE_DEG="${MAX_DISTANCE_DEG:-}"
+VIS_MAX_TRAJECTORIES="${VIS_MAX_TRAJECTORIES:-}"
+VIS_MAX_POINTS_PER_TRAJECTORY="${VIS_MAX_POINTS_PER_TRAJECTORY:-}"
+VIS_MAX_GEOJSON_FEATURES="${VIS_MAX_GEOJSON_FEATURES:-}"
+PIPELINE_SOURCES="${PIPELINE_SOURCES:-}"
+PIPELINE_CONTINUE_ON_ERROR="${PIPELINE_CONTINUE_ON_ERROR:-}"
+PIPELINE_STEPS="${PIPELINE_STEPS:-}"
+PIPELINE_LAYERS="${PIPELINE_LAYERS:-}"
+EXPORT_CACHE="${EXPORT_CACHE:-}"
+BASE_TIME="${BASE_TIME:-}"
+ERA5_CONVERT_TIMEOUT_SEC="${ERA5_CONVERT_TIMEOUT_SEC:-}"
+HDFS_CMD_TIMEOUT_SEC="${HDFS_CMD_TIMEOUT_SEC:-}"
 
 KAFKA_HADOOP_PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-client:3.3.4"
 ICEBERG_PACKAGES="${KAFKA_HADOOP_PACKAGES},org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1"
@@ -470,8 +520,48 @@ case "$JOB_TYPE" in
     CHECKPOINT_PATH="hdfs://namenode:9000/checkpoints/reconcile_serving/"
     PACKAGES="${CASSANDRA_PACKAGES}"
     ;;
+  bronze-pipeline)
+    JOB_TYPE_KIND="spark"
+    APP_NAME="AISBronzeIngestToIcebergPipeline"
+    JOB_FILE="/opt/spark-jobs/pipelines/bronze_ingest_to_iceberg_pipeline.py"
+    JOB_ARGS=("--sources" "${PIPELINE_SOURCES:-openaq,weather,sentinel5p,maiac,era5-files}" "--continue-on-error" "${PIPELINE_CONTINUE_ON_ERROR:-false}")
+    HDFS_DATA_DIR="/warehouse/iceberg"
+    HDFS_CHECKPOINT_DIR="/checkpoints"
+    CHECKPOINT_PATH="hdfs://namenode:9000/checkpoints/bronze_pipeline/"
+    PACKAGES="${ICEBERG_PACKAGES}"
+    ;;
+  pm25-feature-pipeline)
+    JOB_TYPE_KIND="spark"
+    APP_NAME="AISPM25FeaturePipeline"
+    JOB_FILE="/opt/spark-jobs/pipelines/pm25_feature_pipeline.py"
+    JOB_ARGS=("--start-date" "$START_DATE" "--end-date" "$END_DATE" "--full-refresh" "$FULL_REFRESH" "--steps" "${PIPELINE_STEPS:-}")
+    HDFS_DATA_DIR="/warehouse/iceberg/features"
+    HDFS_CHECKPOINT_DIR="/checkpoints/pm25_feature_pipeline"
+    CHECKPOINT_PATH="hdfs://namenode:9000/checkpoints/pm25_feature_pipeline/"
+    PACKAGES="${ICEBERG_PACKAGES}"
+    ;;
+  trajectory-post-pipeline)
+    JOB_TYPE_KIND="spark"
+    APP_NAME="AISTrajectoryPostPipeline"
+    JOB_FILE="/opt/spark-jobs/pipelines/trajectory_post_pipeline.py"
+    JOB_ARGS=("--start-date" "$START_DATE" "--end-date" "$END_DATE" "--direction" "${DIRECTION:-both}" "--full-refresh" "$FULL_REFRESH" "--spatial-bucket-deg" "${TRAJ_SPATIAL_BUCKET_DEG:-0.25}" "--max-distance-deg" "${MAX_DISTANCE_DEG:-0.25}")
+    HDFS_DATA_DIR="/warehouse/iceberg/trajectory"
+    HDFS_CHECKPOINT_DIR="/checkpoints/trajectory_post_pipeline"
+    CHECKPOINT_PATH="hdfs://namenode:9000/checkpoints/trajectory_post_pipeline/"
+    PACKAGES="${ICEBERG_PACKAGES}"
+    ;;
+  visualization-pipeline)
+    JOB_TYPE_KIND="spark"
+    APP_NAME="AISVisualizationPipeline"
+    JOB_FILE="/opt/spark-jobs/pipelines/visualization_pipeline.py"
+    JOB_ARGS=("--start-date" "$START_DATE" "--end-date" "$END_DATE" "--asof-time" "$BASE_TIME" "--layers" "${PIPELINE_LAYERS:-heatmap,backward_trajectories,forward_plume,source_attribution,stations,forecast,timeseries}" "--export-cache" "${EXPORT_CACHE:-true}" "--full-refresh" "$FULL_REFRESH")
+    HDFS_DATA_DIR="/warehouse/iceberg/visualization"
+    HDFS_CHECKPOINT_DIR="/checkpoints/visualization_pipeline"
+    CHECKPOINT_PATH="hdfs://namenode:9000/checkpoints/visualization_pipeline/"
+    PACKAGES="${ICEBERG_PACKAGES}"
+    ;;
   *)
-    echo "Usage: $0 [weather|openaq|sentinel5p|maiac|era5-files|weather-ingest|openaq-ingest|sentinel5p-ingest|maiac-ingest|era5-ingest|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-train-baseline|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving]"
+    echo "Usage: $0 [weather|openaq|sentinel5p|maiac|era5-files|weather-ingest|openaq-ingest|sentinel5p-ingest|maiac-ingest|era5-ingest|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-train-baseline|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|bronze-pipeline|pm25-feature-pipeline|trajectory-post-pipeline|visualization-pipeline]"
     exit 1
     ;;
 esac
@@ -487,6 +577,34 @@ case "$JOB_TYPE" in
     fi
     if [ -n "$END_DATE" ]; then
       JOB_ARGS+=("--end-date" "$END_DATE")
+    fi
+    ;;
+esac
+
+case "$JOB_TYPE" in
+  hysplit-run)
+    if [ -n "${DIRECTION:-}" ]; then
+      JOB_ARGS+=("--direction" "$DIRECTION")
+    fi
+    if [ -n "$HYSPLIT_TIMEOUT_SEC" ]; then
+      JOB_ARGS+=("--timeout-sec" "$HYSPLIT_TIMEOUT_SEC")
+    fi
+    if [ -n "$HYSPLIT_MAX_RUNS" ]; then
+      JOB_ARGS+=("--max-runs" "$HYSPLIT_MAX_RUNS")
+    fi
+    if [ -n "$HYSPLIT_PARALLELISM" ]; then
+      JOB_ARGS+=("--parallelism" "$HYSPLIT_PARALLELISM")
+    fi
+    if [ -n "$HYSPLIT_SHARD_ID" ]; then
+      JOB_ARGS+=("--shard-id" "$HYSPLIT_SHARD_ID")
+    fi
+    if [ -n "$HYSPLIT_SHARD_COUNT" ]; then
+      JOB_ARGS+=("--shard-count" "$HYSPLIT_SHARD_COUNT")
+    fi
+    ;;
+  traj-path-sampling)
+    if [ -n "$TRAJ_SPATIAL_BUCKET_DEG" ]; then
+      JOB_ARGS+=("--spatial-bucket-deg" "$TRAJ_SPATIAL_BUCKET_DEG")
     fi
     ;;
 esac
@@ -572,6 +690,24 @@ DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_BIN=${HYSPLIT_BIN:-}")
 DOCKER_EXEC_ARGS+=("-e" "PM25_TRIGGER_THRESHOLD=${PM25_TRIGGER_THRESHOLD:-}")
 DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_BIN=${HYSPLIT_BIN:-/opt/hysplit/exec/hyts_std}")
 DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_OUTPUT_BASE_PATH=${HYSPLIT_OUTPUT_BASE_PATH:-hdfs://namenode:9000/raw/hysplit/trajectories}")
+DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_MAX_RUNS=${HYSPLIT_MAX_RUNS}")
+DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_PARALLELISM=${HYSPLIT_PARALLELISM}")
+DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_TIMEOUT_SEC=${HYSPLIT_TIMEOUT_SEC}")
+DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_SHARD_ID=${HYSPLIT_SHARD_ID}")
+DOCKER_EXEC_ARGS+=("-e" "HYSPLIT_SHARD_COUNT=${HYSPLIT_SHARD_COUNT}")
+DOCKER_EXEC_ARGS+=("-e" "TRAJ_SPATIAL_BUCKET_DEG=${TRAJ_SPATIAL_BUCKET_DEG}")
+DOCKER_EXEC_ARGS+=("-e" "MAX_DISTANCE_DEG=${MAX_DISTANCE_DEG}")
+DOCKER_EXEC_ARGS+=("-e" "VIS_MAX_TRAJECTORIES=${VIS_MAX_TRAJECTORIES}")
+DOCKER_EXEC_ARGS+=("-e" "VIS_MAX_POINTS_PER_TRAJECTORY=${VIS_MAX_POINTS_PER_TRAJECTORY}")
+DOCKER_EXEC_ARGS+=("-e" "VIS_MAX_GEOJSON_FEATURES=${VIS_MAX_GEOJSON_FEATURES}")
+DOCKER_EXEC_ARGS+=("-e" "PIPELINE_SOURCES=${PIPELINE_SOURCES}")
+DOCKER_EXEC_ARGS+=("-e" "PIPELINE_CONTINUE_ON_ERROR=${PIPELINE_CONTINUE_ON_ERROR}")
+DOCKER_EXEC_ARGS+=("-e" "PIPELINE_STEPS=${PIPELINE_STEPS}")
+DOCKER_EXEC_ARGS+=("-e" "PIPELINE_LAYERS=${PIPELINE_LAYERS}")
+DOCKER_EXEC_ARGS+=("-e" "EXPORT_CACHE=${EXPORT_CACHE}")
+DOCKER_EXEC_ARGS+=("-e" "BASE_TIME=${BASE_TIME}")
+DOCKER_EXEC_ARGS+=("-e" "ERA5_CONVERT_TIMEOUT_SEC=${ERA5_CONVERT_TIMEOUT_SEC}")
+DOCKER_EXEC_ARGS+=("-e" "HDFS_CMD_TIMEOUT_SEC=${HDFS_CMD_TIMEOUT_SEC}")
 if [ -n "${DIRECTION:-}" ]; then
   DOCKER_EXEC_ARGS+=("-e" "DIRECTION=${DIRECTION}")
 fi
@@ -586,6 +722,8 @@ fi
 if [ -n "$SPARK_EXECUTOR_CORES" ]; then
   SPARK_EXTRA_CONF+=(--conf "spark.executor.cores=${SPARK_EXECUTOR_CORES}")
 fi
+SPARK_EXTRA_CONF+=(--conf "spark.sql.shuffle.partitions=${SPARK_SQL_SHUFFLE_PARTITIONS:-16}")
+SPARK_EXTRA_CONF+=(--conf "spark.default.parallelism=${SPARK_DEFAULT_PARALLELISM:-16}")
 
 docker exec "${DOCKER_EXEC_ARGS[@]}" spark-master /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \
@@ -597,6 +735,7 @@ docker exec "${DOCKER_EXEC_ARGS[@]}" spark-master /opt/spark/bin/spark-submit \
   --conf "spark.sql.streaming.checkpointLocation=${CHECKPOINT_PATH}" \
   --conf "spark.hadoop.fs.defaultFS=hdfs://namenode:9000" \
   --conf "spark.yarn.maxAppAttempts=1" \
+  "${SPARK_EXTRA_CONF[@]}" \
   "$JOB_FILE" \
   "${JOB_ARGS[@]}" \
   "${STREAM_ARGS[@]}"

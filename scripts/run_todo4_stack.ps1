@@ -1,5 +1,5 @@
 param(
-    [int]$LookbackDays = 7,
+    [int]$LookbackDays = 2,
     [string]$StartDate = "",
     [string]$EndDate = "",
     [switch]$SkipBuildImages,
@@ -7,9 +7,19 @@ param(
     [switch]$SkipTodo2,
     [switch]$SkipTraining,
     [switch]$SkipVisualization,
+    [switch]$UseCombinedPipelines,
+    [switch]$UseLegacyPerJobSpark,
     [switch]$UseComposeSparkForTodo1,
     [string]$K8sKafkaBootstrapServers = "host.docker.internal:29092",
     [int]$HealthWaitTimeoutSeconds = 300,
+    [int]$HysplitMaxRuns = 50,
+    [int]$HysplitParallelism = 2,
+    [int]$HysplitTimeoutSec = 300,
+    [ValidateRange(1, 64)][int]$HysplitShardCount = 1,
+    [int]$TrajectoryMaxPaths = 150,
+    [int]$TrajectoryMaxPoints = 100,
+    [int]$VisMaxGeoJsonFeatures = 5000,
+    [switch]$AllowTrajectoryDegraded = $true,
     [ValidateRange(1, 15)][int]$ResumeFromStep = 1
 )
 
@@ -41,7 +51,8 @@ function Require-Command {
 
 function Resolve-DateRange {
     if ([string]::IsNullOrWhiteSpace($StartDate) -or [string]::IsNullOrWhiteSpace($EndDate)) {
-        $resolvedEnd = (Get-Date).Date
+        # Use yesterday as the default end date to avoid ingesting partially available "today" data.
+        $resolvedEnd = (Get-Date).Date.AddDays(-1)
         $resolvedStart = $resolvedEnd.AddDays(-$LookbackDays)
         return @{
             Start = $resolvedStart.ToString("yyyy-MM-dd")
@@ -98,28 +109,73 @@ function Should-RunStep {
     param([int]$StepNumber)
     return $StepNumber -ge $ResumeFromStep
 }
-
 function Assert-KafkaTopicHasMessages {
     param(
-        [Parameter(Mandatory = $true)][string]$Topic,
+        [Parameter(Mandatory = $true)]
+        [string]$Topic,
+
         [string]$Label = "",
+
         [int64]$MinMessages = 1
     )
 
-    $offsetScript = @"
-set -euo pipefail
-kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --topic "$Topic" --time -1 2>/dev/null \
-| awk -F: '{sum += $3} END {print sum+0}'
-"@
-    $countRaw = bash -lc "docker exec kafka bash -lc '$offsetScript'"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Kafka offset query failed for topic: $Topic"
-    }
-    $count = [int64](($countRaw | Select-Object -Last 1).Trim())
     $display = if ($Label) { $Label } else { $Topic }
+
+    Write-Host "=== Check Kafka topic has messages: $Topic ==="
+
+    # Use the Docker Compose internal broker address. This is the same address
+    # used by ingest containers, and avoids localhost/advertised-listener mismatch.
+    $bootstrap = "kafka:9092"
+
+    $output = @()
+    $exitCode = 0
+
+    # Prefer kafka-run-class if available in the Confluent image.
+    $output = & docker exec kafka kafka-run-class kafka.tools.GetOffsetShell `
+        --broker-list $bootstrap `
+        --topic $Topic `
+        --time -1 2>&1
+    $exitCode = $LASTEXITCODE
+
+    # Some images expose kafka-run-class.sh instead.
+    if ($exitCode -ne 0) {
+        $output = & docker exec kafka kafka-run-class.sh kafka.tools.GetOffsetShell `
+            --broker-list $bootstrap `
+            --topic $Topic `
+            --time -1 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+
+    if ($exitCode -ne 0) {
+        $raw = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+        throw "Kafka offset query failed for topic '$Topic'. Raw output:`n$raw"
+    }
+
+    $count = [int64]0
+    $matched = $false
+
+    foreach ($line in $output) {
+        $s = $line.ToString().Trim()
+
+        # Expected format:
+        # topic-name:partition:latestOffset
+        # Example:
+        # openaq-hourly:0:3371
+        if ($s -match '^[^:]+:\d+:(\d+)$') {
+            $count += [int64]$Matches[1]
+            $matched = $true
+        }
+    }
+
+    if (-not $matched) {
+        $raw = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+        throw "Could not parse Kafka offsets for topic '$Topic'. Raw output:`n$raw"
+    }
+
     Write-Host ("[CHECK] {0}: {1} messages" -f $display, $count) -ForegroundColor Yellow
+
     if ($count -lt $MinMessages) {
-        throw "Validation failed: topic $display has $count messages (< $MinMessages)."
+        throw "Kafka topic '$Topic' has only $count messages, expected at least $MinMessages"
     }
 }
 
@@ -140,6 +196,59 @@ function Submit-SparkK8s {
 
     # Large jobs can take time while Spark driver/executors are scheduled.
     Invoke-Bash "${kafkaEnv}${dateEnv}${ExtraEnv}FULL_REFRESH=1 KUBECTL_TIMEOUT=3600s SPARK_SUBMIT_IMAGE_PULL_POLICY=IfNotPresent bash scripts/submit_spark_k8s.sh $Job"
+}
+
+function Submit-SparkK8sBestEffort {
+    param(
+        [Parameter(Mandatory = $true)][string]$Job,
+        [string]$ExtraEnv = "",
+        [switch]$NoDateRange
+    )
+    try {
+        Submit-SparkK8s -Job $Job -ExtraEnv $ExtraEnv -NoDateRange:$NoDateRange
+        return $true
+    }
+    catch {
+        Write-Host "[WARN] Best-effort job failed: $Job -- $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function Start-SparkK8sAsync {
+    param(
+        [Parameter(Mandatory = $true)][string]$Job,
+        [Parameter(Mandatory = $true)][string]$SubmitJobName,
+        [string]$ExtraEnv = "",
+        [switch]$NoDateRange
+    )
+
+    $dateEnv = ""
+    if (-not $NoDateRange) {
+        $dateEnv = "START_DATE='$resolvedStartDate' END_DATE='$resolvedEndDate' "
+    }
+
+    $kafkaEnv = "KAFKA_BOOTSTRAP_SERVERS='$K8sKafkaBootstrapServers' "
+    Invoke-Bash "${kafkaEnv}${dateEnv}${ExtraEnv}FULL_REFRESH=1 WAIT_FOR_COMPLETION=false FOLLOW_LOGS=false SPARK_SUBMIT_JOB_NAME='$SubmitJobName' KUBECTL_TIMEOUT=3600s SPARK_SUBMIT_IMAGE_PULL_POLICY=IfNotPresent bash scripts/submit_spark_k8s.sh $Job"
+    return $SubmitJobName
+}
+
+function Wait-K8sSubmitJobs {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$JobNames,
+        [int]$TimeoutSeconds = 3600
+    )
+
+    foreach ($jobName in $JobNames) {
+        Write-Host "[INFO] Waiting for K8s submit job: $jobName" -ForegroundColor Yellow
+        kubectl -n ais wait --for=condition=complete --timeout="${TimeoutSeconds}s" "job/$jobName" | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERROR] K8s submit job failed: $jobName" -ForegroundColor Red
+            kubectl -n ais describe job $jobName | Out-Host
+            kubectl -n ais logs "job/$jobName" --all-containers=true --tail=300 | Out-Host
+            throw "K8s submit job failed: $jobName"
+        }
+        kubectl -n ais logs "job/$jobName" --all-containers=true --tail=300 | Out-Host
+    }
 }
 
 function Submit-SparkCompose {
@@ -213,10 +322,18 @@ Require-Command -CommandName "bash"
 $range = Resolve-DateRange
 $resolvedStartDate = $range.Start
 $resolvedEndDate = $range.End
+$combinedMode = $true
+if ($UseLegacyPerJobSpark) {
+    $combinedMode = $false
+}
+elseif ($UseCombinedPipelines) {
+    $combinedMode = $true
+}
 
 Write-Host "TODO4 stack run window: $resolvedStartDate -> $resolvedEndDate"
-Write-Host "LookbackDays default: 7 days from local today when StartDate/EndDate are omitted"
+Write-Host "LookbackDays default: 2 days (end at yesterday) when StartDate/EndDate are omitted"
 Write-Host "Resume from step: $ResumeFromStep"
+Write-Host ("Spark execution mode: {0}" -f $(if ($combinedMode) { "combined pipeline mode" } else { "legacy per-job mode" })) -ForegroundColor Yellow
 
 if (Should-RunStep 1) {
     Step "1) Start core infra" {
@@ -282,11 +399,16 @@ if (-not $SkipBackfill) {
 
     if (Should-RunStep 6) {
         Step "6) Catch Kafka bronze topics into Iceberg" {
-            Submit-SparkK8s "openaq" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
-            Submit-SparkK8s "weather" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
-            Submit-SparkK8s "sentinel5p" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
-            Submit-SparkK8s "maiac" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
-            Submit-SparkK8s "era5-files" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
+            if ($combinedMode) {
+                Submit-SparkK8s "bronze-pipeline" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true PIPELINE_SOURCES='openaq,weather,sentinel5p,maiac,era5-files' PIPELINE_CONTINUE_ON_ERROR=false " -NoDateRange
+            }
+            else {
+                Submit-SparkK8s "openaq" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
+                Submit-SparkK8s "weather" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
+                Submit-SparkK8s "sentinel5p" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
+                Submit-SparkK8s "maiac" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
+                Submit-SparkK8s "era5-files" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
+            }
         }
     }
     else { Write-Host "[SKIP] Step 6 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
@@ -297,13 +419,18 @@ else {
 
 if (Should-RunStep 7) {
     Step "7) TODO1 silver/gold tables" {
-        Submit-Todo1Job "hanoi-openaq-silver"
-        Submit-Todo1Job "hanoi-weather-silver"
-        Submit-Todo1Job "era5-surface-hanoi-silver"
-        Submit-Todo1Job "sentinel5p-hanoi-silver"
-        Submit-Todo1Job "maiac-hanoi-silver"
-        Submit-Todo1Job "hanoi-master-features-gold"
-        Submit-Todo1Job "hanoi-training-dataset-gold"
+        if ($combinedMode) {
+            Submit-SparkK8s "pm25-feature-pipeline" "PIPELINE_STEPS='openaq-station,weather-proxy,era5-surface,sentinel5p-silver,maiac-silver' "
+        }
+        else {
+            Submit-Todo1Job "hanoi-openaq-silver"
+            Submit-Todo1Job "hanoi-weather-silver"
+            Submit-Todo1Job "era5-surface-hanoi-silver"
+            Submit-Todo1Job "sentinel5p-hanoi-silver"
+            Submit-Todo1Job "maiac-hanoi-silver"
+            Submit-Todo1Job "hanoi-master-features-gold"
+            Submit-Todo1Job "hanoi-training-dataset-gold"
+        }
     }
 }
 else { Write-Host "[SKIP] Step 7 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
@@ -311,26 +438,65 @@ else { Write-Host "[SKIP] Step 7 due to -ResumeFromStep $ResumeFromStep" -Foregr
 if (-not $SkipTodo2) {
     if (Should-RunStep 8) {
         Step "8) TODO2 trajectory and source feature tables" {
-            Submit-SparkK8s "era5-pressure-arl"
-            Submit-SparkK8s "hysplit-run" "DIRECTION=backward "
-            Submit-SparkK8s "hysplit-parse"
-            Submit-SparkK8s "hysplit-run" "DIRECTION=forward "
-            Submit-SparkK8s "hysplit-parse" "DIRECTION=forward "
-            Submit-SparkK8s "hysplit-cluster"
-            Submit-SparkK8s "openaq-gradient"
-            Submit-SparkK8s "s5p-grid-silver"
-            Submit-SparkK8s "traj-path-sampling"
-            Submit-SparkK8s "traj-hourly-features"
+            $hysplitEnv = "HYSPLIT_MAX_RUNS=$HysplitMaxRuns HYSPLIT_PARALLELISM=$HysplitParallelism HYSPLIT_TIMEOUT_SEC=$HysplitTimeoutSec "
+            Write-Host ("[INFO] HYSPLIT window={0}->{1} max_runs={2} parallelism={3} timeout_sec={4} shard_count={5}" -f $resolvedStartDate, $resolvedEndDate, $HysplitMaxRuns, $HysplitParallelism, $HysplitTimeoutSec, $HysplitShardCount) -ForegroundColor Yellow
+            if ($combinedMode) {
+                if ($AllowTrajectoryDegraded) {
+                    Submit-SparkK8sBestEffort "era5-pressure-arl" | Out-Null
+                }
+                else {
+                    Submit-SparkK8s "era5-pressure-arl"
+                }
+
+                $submittedJobs = @()
+                $stamp = Get-Date -Format "yyyyMMddHHmmss"
+                foreach ($direction in @("backward", "forward")) {
+                    foreach ($shardId in 0..($HysplitShardCount - 1)) {
+                        $jobName = "todo4-hysplit-$direction-s$shardId-$stamp"
+                        $extraEnv = $hysplitEnv + "DIRECTION=$direction HYSPLIT_SHARD_ID=$shardId HYSPLIT_SHARD_COUNT=$HysplitShardCount "
+                        $submittedJobs += Start-SparkK8sAsync "hysplit-run" -SubmitJobName $jobName -ExtraEnv $extraEnv
+                    }
+                }
+                Wait-K8sSubmitJobs -JobNames $submittedJobs -TimeoutSeconds 3600
+                Submit-SparkK8s "trajectory-post-pipeline" "DIRECTION=both TRAJ_SPATIAL_BUCKET_DEG=0.25 MAX_DISTANCE_DEG=0.25 "
+            }
+            else {
+                if ($AllowTrajectoryDegraded) {
+                    Submit-SparkK8sBestEffort "era5-pressure-arl" | Out-Null
+                    Submit-SparkK8sBestEffort "hysplit-run" ($hysplitEnv + "DIRECTION=backward ") | Out-Null
+                    Submit-SparkK8sBestEffort "hysplit-parse" "DIRECTION=backward " | Out-Null
+                    Submit-SparkK8sBestEffort "hysplit-run" ($hysplitEnv + "DIRECTION=forward ") | Out-Null
+                    Submit-SparkK8sBestEffort "hysplit-parse" "DIRECTION=forward " | Out-Null
+                    Submit-SparkK8sBestEffort "hysplit-cluster" | Out-Null
+                }
+                else {
+                    Submit-SparkK8s "era5-pressure-arl"
+                    Submit-SparkK8s "hysplit-run" ($hysplitEnv + "DIRECTION=backward ")
+                    Submit-SparkK8s "hysplit-parse" "DIRECTION=backward "
+                    Submit-SparkK8s "hysplit-run" ($hysplitEnv + "DIRECTION=forward ")
+                    Submit-SparkK8s "hysplit-parse" "DIRECTION=forward "
+                    Submit-SparkK8s "hysplit-cluster"
+                }
+                Submit-SparkK8s "openaq-gradient"
+                Submit-SparkK8s "s5p-grid-silver"
+                Submit-SparkK8s "traj-path-sampling" "TRAJ_SPATIAL_BUCKET_DEG=0.25 MAX_DISTANCE_DEG=0.25 "
+                Submit-SparkK8s "traj-hourly-features"
+            }
         }
     }
     else { Write-Host "[SKIP] Step 8 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 
-    if (Should-RunStep 9) {
-        Step "9) Rebuild PM2.5 gold after TODO2 features" {
-            Submit-SparkK8s "hanoi-master-features-gold"
-            Submit-SparkK8s "hanoi-training-dataset-gold"
-        }
+if (Should-RunStep 9) {
+    Step "9) Rebuild PM2.5 gold after TODO2 features" {
+            if ($combinedMode) {
+                Submit-SparkK8s "pm25-feature-pipeline" "PIPELINE_STEPS='openaq-gradient,s5p-grid,master-features,training-dataset' "
+            }
+            else {
+                Submit-SparkK8s "hanoi-master-features-gold"
+                Submit-SparkK8s "hanoi-training-dataset-gold"
+            }
     }
+}
     else { Write-Host "[SKIP] Step 9 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 }
 else {
@@ -371,21 +537,32 @@ else { Write-Host "[SKIP] Step 12 due to -ResumeFromStep $ResumeFromStep" -Foreg
 if (-not $SkipVisualization) {
     if (Should-RunStep 13) {
         Step "13) TODO4 visualization gold tables" {
-            Submit-SparkK8s "visualization-forecast-dashboard"
-            Submit-SparkK8s "visualization-pm25-timeseries"
-            Submit-SparkK8s "visualization-station-observations"
-            Submit-SparkK8s "visualization-backward-trajectories"
-            Submit-SparkK8s "visualization-source-attribution"
-            Submit-SparkK8s "visualization-forward-plume"
-            Submit-SparkK8s "visualization-heatmap-grid"
+            $visEnv = "VIS_MAX_TRAJECTORIES=$TrajectoryMaxPaths VIS_MAX_POINTS_PER_TRAJECTORY=$TrajectoryMaxPoints VIS_MAX_GEOJSON_FEATURES=$VisMaxGeoJsonFeatures "
+            Write-Host ("[INFO] Visualization limits max_paths={0} max_points={1} max_geojson_features={2}" -f $TrajectoryMaxPaths, $TrajectoryMaxPoints, $VisMaxGeoJsonFeatures) -ForegroundColor Yellow
+            if ($combinedMode) {
+                $baseTime = "${resolvedEndDate}T23:00:00Z"
+                Submit-SparkK8s "visualization-pipeline" ($visEnv + "BASE_TIME='$baseTime' PIPELINE_LAYERS='heatmap,backward_trajectories,forward_plume,source_attribution,stations,forecast,timeseries' EXPORT_CACHE=true ")
+            }
+            else {
+                Submit-SparkK8s "visualization-forecast-dashboard" $visEnv
+                Submit-SparkK8s "visualization-pm25-timeseries" $visEnv
+                Submit-SparkK8s "visualization-station-observations" $visEnv
+                Submit-SparkK8s "visualization-backward-trajectories" $visEnv
+                Submit-SparkK8s "visualization-source-attribution" $visEnv
+                Submit-SparkK8s "visualization-forward-plume" $visEnv
+                Submit-SparkK8s "visualization-heatmap-grid" $visEnv
+            }
         }
     }
     else { Write-Host "[SKIP] Step 13 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 
     if (Should-RunStep 14) {
         Step "14) Export visualization cache and run quality checks" {
-            Submit-SparkK8s "visualization-export-cache" -NoDateRange
-            Submit-SparkK8s "visualization-quality-checks" -NoDateRange
+            $visEnv = "VIS_MAX_TRAJECTORIES=$TrajectoryMaxPaths VIS_MAX_POINTS_PER_TRAJECTORY=$TrajectoryMaxPoints VIS_MAX_GEOJSON_FEATURES=$VisMaxGeoJsonFeatures "
+            if (-not $combinedMode) {
+                Submit-SparkK8s "visualization-export-cache" $visEnv -NoDateRange
+            }
+            Submit-SparkK8s "visualization-quality-checks" $visEnv -NoDateRange
         }
     }
     else { Write-Host "[SKIP] Step 14 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }

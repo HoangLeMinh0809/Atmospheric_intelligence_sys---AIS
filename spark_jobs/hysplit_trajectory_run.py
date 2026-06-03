@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -95,7 +95,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hysplit-bin", default=os.getenv("HYSPLIT_BIN", DEFAULT_HYSPLIT_BIN))
     parser.add_argument("--timeout-sec", type=int, default=int(os.getenv("HYSPLIT_TIMEOUT_SEC", "300") or 300))
     parser.add_argument("--max-runs", type=int, default=int(os.getenv("HYSPLIT_MAX_RUNS", "0") or 0))
-    parser.add_argument("--parallelism", type=int, default=int(os.getenv("HYSPLIT_PARALLELISM", "1") or 1))
+    parser.add_argument("--parallelism", type=int, default=max(1, int(os.getenv("HYSPLIT_PARALLELISM", "1") or 1)))
+    parser.add_argument("--shard-id", type=int, default=int(os.getenv("HYSPLIT_SHARD_ID", "0") or 0))
+    parser.add_argument("--shard-count", type=int, default=max(1, int(os.getenv("HYSPLIT_SHARD_COUNT", "1") or 1)))
     return parser.parse_args()
 
 
@@ -513,25 +515,24 @@ def compact_hysplit_message(stdout: str, stderr: str, message: str) -> str:
     return "\n".join(parts)[:4000]
 
 
-def run_hysplit_local(
+def run_hysplit(
+    spark: SparkSession,
     run: PlannedRun,
     hysplit_bin: str,
     cache_dir: Path,
-    completed_dir: Path,
     timeout_sec: int,
-) -> tuple[str, str | None, Path | None]:
-    """Run HYSPLIT locally and persist tdump under completed_dir.
-
-    This function intentionally does not call Spark/HDFS so it can be used from a
-    bounded thread pool. Upload to HDFS remains sequential in the driver after
-    each local subprocess finishes.
-    """
+    fs_lock: threading.Lock,
+) -> tuple[str, str | None]:
     if not os.path.exists(hysplit_bin):
-        return "failed", f"HYSPLIT binary not found: {hysplit_bin}", None
+        return "failed", f"HYSPLIT binary not found: {hysplit_bin}"
 
     local_arl = cache_dir / Path(hdfs_remote_path(run.arl_path)).name
     if not local_arl.exists():
-        return "failed", f"ARL file not cached before run: {local_arl}", None
+        # Hadoop FileSystem/Spark JVM calls are not guaranteed to be thread-safe here.
+        # Keep HDFS copy serialized while allowing HYSPLIT subprocesses to run concurrently.
+        with fs_lock:
+            if not local_arl.exists():
+                copy_hdfs_to_local(spark, run.arl_path, cache_dir)
 
     temp_parent = hysplit_temp_parent(hysplit_bin)
     with tempfile.TemporaryDirectory(prefix=f"{run.run_id}_", dir=temp_parent) as tmp:
@@ -551,47 +552,29 @@ def run_hysplit_local(
                 timeout=max(1, int(timeout_sec)),
             )
         except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-            stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+            stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
+            stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
             message_file = read_text(work_dir / "MESSAGE")
             detail = compact_hysplit_message(stdout, stderr, message_file)
-            return "failed", (f"HYSPLIT timeout after {timeout_sec}s\n{detail}")[:4000], None
-
+            return "failed", (f"HYSPLIT timeout after {timeout_sec}s. {detail}" if detail else f"HYSPLIT timeout after {timeout_sec}s")[:4000]
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""
         message_file = read_text(work_dir / "MESSAGE")
         if proc.returncode != 0:
             message = compact_hysplit_message(stdout, stderr, message_file)
-            return "failed", message or f"HYSPLIT exited with code {proc.returncode}", None
+            return "failed", message or f"HYSPLIT exited with code {proc.returncode}"
         if not local_output.exists() or local_output.stat().st_size == 0:
             message = compact_hysplit_message(stdout, stderr, message_file)
-            return "failed", (message[:3800] + " no tdump output") if message else "HYSPLIT produced no tdump output", None
+            return "failed", (message[:3800] + " no tdump output") if message else "HYSPLIT produced no tdump output"
         point_count = tdump_point_count(local_output)
         if point_count == 0:
             message = compact_hysplit_message(stdout, stderr, message_file)
             detail = "HYSPLIT produced tdump header only; no trajectory points"
-            return "failed", f"{detail}\n{message}"[:4000] if message else detail, None
+            return "failed", f"{detail}\n{message}"[:4000] if message else detail
 
-        completed_dir.mkdir(parents=True, exist_ok=True)
-        persisted = completed_dir / output_name
-        shutil.copy2(local_output, persisted)
-        return "success", None, persisted
-
-
-def run_hysplit(spark: SparkSession, run: PlannedRun, hysplit_bin: str, cache_dir: Path) -> tuple[str, str | None]:
-    """Backward-compatible single-run API used by older scripts/tests."""
-    local_arl = cache_dir / Path(hdfs_remote_path(run.arl_path)).name
-    if not local_arl.exists():
-        copy_hdfs_to_local(spark, run.arl_path, cache_dir)
-    completed_dir = cache_dir / "completed"
-    timeout_sec = int(os.getenv("HYSPLIT_TIMEOUT_SEC", "300") or 300)
-    status, error, local_path = run_hysplit_local(run, hysplit_bin, cache_dir, completed_dir, timeout_sec)
-    if status == "success" and local_path is not None:
-        try:
-            upload_local_to_hdfs(spark, local_path, run.output_path)
-        except Exception as exc:  # pragma: no cover - requires HDFS runtime
-            return "failed", f"HYSPLIT succeeded but HDFS upload failed: {exc}"
-    return status, error
+        with fs_lock:
+            upload_local_to_hdfs(spark, local_output, run.output_path)
+        return "success", None
 
 
 def write_metadata(spark: SparkSession, rows: list[dict[str, Any]], table_name: str) -> None:
@@ -630,6 +613,26 @@ def clear_refresh_window(
           AND init_time <= TIMESTAMP '{end_ts}'
         """
     )
+
+
+def apply_shard_and_limit(planned: list[PlannedRun], shard_id: int, shard_count: int, max_runs: int) -> list[PlannedRun]:
+    total_before = len(planned)
+    if shard_count < 1:
+        shard_count = 1
+    if shard_id < 0 or shard_id >= shard_count:
+        raise ValueError(f"Invalid HYSPLIT shard: shard_id={shard_id}, shard_count={shard_count}")
+    if shard_count > 1:
+        planned = [run for idx, run in enumerate(planned) if idx % shard_count == shard_id]
+    after_shard = len(planned)
+    if max_runs > 0 and len(planned) > max_runs:
+        planned = planned[:max_runs]
+    print(
+        "hysplit_plan_limits="
+        f"{{'total_before_shard': {total_before}, 'shard_id': {shard_id}, "
+        f"'shard_count': {shard_count}, 'after_shard': {after_shard}, "
+        f"'max_runs': {max_runs}, 'after_limit': {len(planned)}}}"
+    )
+    return planned
 
 
 def main() -> None:
@@ -681,6 +684,13 @@ def main() -> None:
         output_base_path=args.output_base_path,
     )
 
+    planned = apply_shard_and_limit(planned, args.shard_id, args.shard_count, args.max_runs)
+    print(
+        "hysplit_runtime="
+        f"{{'start_date': '{start_date}', 'end_date': '{end_date}', 'directions': {directions}, "
+        f"'timeout_sec': {args.timeout_sec}, 'parallelism': {args.parallelism}}}"
+    )
+
     duplicate_count = 0
     if full_refresh:
         clear_refresh_window(spark, target_table, start_date, end_date, directions)
@@ -689,67 +699,54 @@ def main() -> None:
         duplicate_count = len(existing)
         planned = [run for run in planned if run.run_id not in existing]
 
-    if args.max_runs > 0 and len(planned) > args.max_runs:
-        print(f"[WARN] HYSPLIT_MAX_RUNS limiting planned runs from {len(planned)} to {args.max_runs}")
-        planned = planned[: args.max_runs]
-
     min_time = min((run.init_time for run in planned), default=None)
     max_time = max((run.init_time for run in planned), default=None)
     rows: list[dict[str, Any]] = []
     success_count = 0
     failure_count = 0
-    parallelism = max(1, int(args.parallelism or 1))
+
+    def _row_for_run(run: PlannedRun, status: str, error: str | None) -> dict[str, Any]:
+        return {
+            "run_id": run.run_id,
+            "direction": run.direction,
+            "init_time": run.init_time,
+            "duration_hours": int(run.duration_hours),
+            "init_lat": float(run.init_lat),
+            "init_lon": float(run.init_lon),
+            "init_alt_m": float(run.init_alt_m),
+            "arl_path": run.arl_path,
+            "output_path": run.output_path if status == "success" else None,
+            "status": status,
+            "error_message": error,
+            "spark_processed_at": datetime.utcnow(),
+        }
 
     with tempfile.TemporaryDirectory(prefix="hysplit_arl_cache_") as cache:
         cache_dir = Path(cache)
-        completed_dir = cache_dir / "completed"
-        # Cache each ARL file once before running local subprocesses. This avoids
-        # concurrent FileSystem access from worker threads.
-        for arl_path in sorted({run.arl_path for run in planned}):
-            local_arl = cache_dir / Path(hdfs_remote_path(arl_path)).name
-            if not local_arl.exists():
-                copy_hdfs_to_local(spark, arl_path, cache_dir)
+        fs_lock = threading.Lock()
 
-        def execute_local(run: PlannedRun):
-            status, error, local_path = run_hysplit_local(
-                run, args.hysplit_bin, cache_dir, completed_dir, args.timeout_sec
-            )
-            return run, status, error, local_path
+        def _execute(run: PlannedRun) -> tuple[PlannedRun, str, str | None]:
+            try:
+                status, error = run_hysplit(spark, run, args.hysplit_bin, cache_dir, args.timeout_sec, fs_lock)
+                return run, status, error
+            except Exception as exc:
+                return run, "failed", f"{type(exc).__name__}: {str(exc)[:3900]}"
 
-        if parallelism == 1 or len(planned) <= 1:
-            completed = [execute_local(run) for run in planned]
+        worker_count = max(1, min(int(args.parallelism), len(planned) or 1))
+        if worker_count == 1:
+            completed = [_execute(run) for run in planned]
         else:
             completed = []
-            with ThreadPoolExecutor(max_workers=parallelism) as pool:
-                future_map = {pool.submit(execute_local, run): run for run in planned}
-                for future in as_completed(future_map):
+            print(f"[INFO] Running HYSPLIT subprocesses with parallelism={worker_count}; HDFS copy/upload remains serialized")
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [executor.submit(_execute, run) for run in planned]
+                for future in as_completed(futures):
                     completed.append(future.result())
 
-        for run, status, error, local_path in completed:
-            if status == "success" and local_path is not None:
-                try:
-                    upload_local_to_hdfs(spark, local_path, run.output_path)
-                except Exception as exc:
-                    status = "failed"
-                    error = f"HYSPLIT succeeded but HDFS upload failed: {exc}"
+        for run, status, error in completed:
             success_count += int(status == "success")
             failure_count += int(status != "success")
-            rows.append(
-                {
-                    "run_id": run.run_id,
-                    "direction": run.direction,
-                    "init_time": run.init_time,
-                    "duration_hours": int(run.duration_hours),
-                    "init_lat": float(run.init_lat),
-                    "init_lon": float(run.init_lon),
-                    "init_alt_m": float(run.init_alt_m),
-                    "arl_path": run.arl_path,
-                    "output_path": run.output_path if status == "success" else None,
-                    "status": status,
-                    "error_message": error,
-                    "spark_processed_at": datetime.utcnow(),
-                }
-            )
+            rows.append(_row_for_run(run, status, error))
             print(f"hysplit_run run_id={run.run_id} status={status} output_path={run.output_path if status == 'success' else None}")
 
     write_metadata(spark, rows, target_table)

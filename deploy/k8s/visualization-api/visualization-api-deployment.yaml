@@ -36,12 +36,14 @@ spec:
               path: /healthz
               port: http
             initialDelaySeconds: 10
+            timeoutSeconds: 5
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
             initialDelaySeconds: 10
+            timeoutSeconds: 5
             periodSeconds: 20
             failureThreshold: 3
           resources:

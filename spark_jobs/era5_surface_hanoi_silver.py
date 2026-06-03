@@ -111,6 +111,35 @@ def parse_date(raw: str) -> date | None:
     return datetime.strptime(raw, "%Y-%m-%d").date() if raw else None
 
 
+
+
+def _tail(value: str | None, limit: int = 2000) -> str:
+    return (value or "")[-limit:]
+
+
+def run_external_command(command: list[str], timeout_sec: int) -> None:
+    try:
+        proc = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=max(1, int(timeout_sec)),
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        raise RuntimeError(
+            f"External command timed out after {timeout_sec}s: {' '.join(command)}\n"
+            f"stdout_tail={_tail(stdout)}\nstderr_tail={_tail(stderr)}"
+        ) from exc
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"External command failed with code {proc.returncode}: {' '.join(command)}\n"
+            f"stdout_tail={_tail(proc.stdout)}\nstderr_tail={_tail(proc.stderr)}"
+        )
+
 def require_netcdf() -> None:
     if nc is None or np is None:
         raise RuntimeError("ERA5 surface silver requires netCDF4 and numpy in the Spark Python environment") from NETCDF_IMPORT_ERROR
@@ -188,9 +217,9 @@ def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
     ]
     for command in commands:
         try:
-            subprocess.check_call(command)
+            run_external_command(command, int(os.getenv("HDFS_CMD_TIMEOUT_SEC", "300") or 300))
             return local_path
-        except (FileNotFoundError, subprocess.CalledProcessError):
+        except (FileNotFoundError, RuntimeError):
             continue
 
     if spark is not None:

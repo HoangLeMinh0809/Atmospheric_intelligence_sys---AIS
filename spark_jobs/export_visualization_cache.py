@@ -32,7 +32,12 @@ def parse_geometry(value: str | None) -> dict | None:
     return json.loads(value)
 
 
-def geojson_payload(rows: list[dict], id_field: str | None = None) -> dict:
+def geojson_payload(rows: list[dict], id_field: str | None = None, max_features: int = 0) -> dict:
+    original_count = len(rows)
+    truncated = False
+    if max_features and max_features > 0 and len(rows) > max_features:
+        rows = rows[:max_features]
+        truncated = True
     features = []
     for row in rows:
         geometry = parse_geometry(row.get("geometry_geojson"))
@@ -43,7 +48,12 @@ def geojson_payload(rows: list[dict], id_field: str | None = None) -> dict:
         if id_field and row.get(id_field) is not None:
             feature["id"] = str(row[id_field])
         features.append(feature)
-    return feature_collection(features)
+    payload = feature_collection(features)
+    if truncated:
+        payload["truncated"] = True
+        payload["max_features"] = max_features
+        payload["original_count"] = original_count
+    return payload
 
 
 def json_safe(value):
@@ -58,78 +68,6 @@ def write_json(spark, uri: str, payload: dict, dry_run: bool = False) -> tuple[i
         hdfs_write_text(spark, uri, text)
     return len(text.encode("utf-8")), payload_checksum(text)
 
-
-
-def empty_feature_payload(layer_name: str, reason: str, generated_at) -> dict:
-    return {
-        "type": "FeatureCollection",
-        "features": [],
-        "available": False,
-        "layer_name": layer_name,
-        "reason": reason,
-        "generated_at": iso_z(generated_at),
-    }
-
-
-def rows_available(layer_name: str, rows: list[dict]) -> tuple[bool, str]:
-    if not rows:
-        return False, f"{layer_name}_empty"
-    if layer_name == "backward_trajectories" and all(str(row.get("traj_id")) == "upstream_trajectory_missing" for row in rows):
-        return False, "upstream_trajectory_missing"
-    return True, ""
-
-
-def export_geojson_or_unavailable(
-    spark,
-    runtime: dict,
-    layer_name: str,
-    rows: list[dict],
-    base_time,
-    generated_at,
-    uri: str,
-    id_field: str,
-    dry_run: bool,
-    reason: str = "",
-):
-    available, inferred_reason = rows_available(layer_name, rows)
-    reason = reason or inferred_reason
-    if available:
-        payload = geojson_payload(rows, id_field)
-        payload.update({"available": True, "layer_name": layer_name, "base_time": iso_z(base_time), "generated_at": iso_z(generated_at)})
-        fmt = "geojson"
-        content_type = "application/geo+json"
-        row_count = len(rows)
-    else:
-        payload = empty_feature_payload(layer_name, reason or f"{layer_name}_unavailable", generated_at)
-        if base_time is not None:
-            payload["base_time"] = iso_z(base_time)
-        fmt = "geojson"
-        content_type = "application/geo+json"
-        row_count = 0
-    size, checksum = write_json(spark, uri, payload, dry_run)
-    manifest = manifest_row(
-        runtime,
-        layer_name,
-        uri,
-        size,
-        checksum,
-        row_count,
-        base_time=base_time or generated_at.replace(tzinfo=None),
-        fmt=fmt,
-        content_type=content_type,
-        available=available,
-        unavailable_reason="" if available else (reason or f"{layer_name}_unavailable"),
-        generated_at=generated_at,
-    )
-    summary = {
-        "layer_name": layer_name,
-        "cache_uri": uri,
-        "available": available,
-        "unavailable_reason": "" if available else (reason or f"{layer_name}_unavailable"),
-        "row_count": row_count,
-        "generated_at": iso_z(generated_at),
-    }
-    return manifest, summary
 
 def latest_value(rows: list[dict], field: str):
     values = [row.get(field) for row in rows if row.get(field) is not None]
@@ -174,7 +112,7 @@ def manifest_row(runtime, layer_name: str, uri: str, payload_bytes: int, checksu
     )
 
 
-def collect_latest(df, time_col: str, filters=None, asof_time=None) -> tuple[list[dict], object]:
+def collect_latest(df, time_col: str, filters=None, asof_time=None, limit: int | None = None) -> tuple[list[dict], object]:
     if filters:
         for condition in filters:
             df = df.filter(condition)
@@ -183,7 +121,10 @@ def collect_latest(df, time_col: str, filters=None, asof_time=None) -> tuple[lis
     latest = df.agg({time_col: "max"}).first()[0]
     if latest is None:
         return [], None
-    return [r.asDict(recursive=True) for r in df.filter(getattr(df, time_col) == latest).collect()], latest
+    scoped = df.filter(getattr(df, time_col) == latest)
+    if limit and limit > 0:
+        scoped = scoped.limit(int(limit))
+    return [r.asDict(recursive=True) for r in scoped.collect()], latest
 
 
 def main() -> None:
@@ -203,15 +144,54 @@ def main() -> None:
     cache_scope = f"date={date_key}" if asof_time is not None else "latest"
     manifest = []
     manifest_summary = []
+    max_features = max(1, int(runtime.get("max_geojson_features", 5000)))
+    max_trajectories = max(1, int(runtime.get("max_trajectories", 150)))
+
+    def add_unavailable_layer(layer_name: str, path: str, reason: str, *, horizon_h: int | None = None, location_id: str | None = None):
+        unavailable_time = (asof_time or generated_at).replace(tzinfo=None)
+        uri = f"{runtime['cache_base_uri']}/{path.replace('/latest', '/' + cache_scope)}"
+        payload = {
+            "available": False,
+            "layer_name": layer_name,
+            "reason": reason,
+            "generated_at": iso_z(generated_at),
+        }
+        size, checksum = write_json(spark, uri, payload, dry_run)
+        manifest.append(
+            manifest_row(
+                runtime,
+                layer_name,
+                uri,
+                size,
+                checksum,
+                0,
+                base_time=unavailable_time,
+                horizon_h=horizon_h,
+                location_id=location_id,
+                fmt="json",
+                content_type="application/json",
+                available=False,
+                unavailable_reason=reason,
+                generated_at=generated_at,
+            )
+        )
+        manifest_summary.append({
+            "layer_name": layer_name,
+            "cache_uri": uri,
+            "available": False,
+            "unavailable_reason": reason,
+            "row_count": 0,
+            "generated_at": iso_z(generated_at),
+        })
 
     try:
         heatmap = read_table_if_exists(spark, tables["visualization_heatmap_grid_gold"])
         if heatmap is not None:
             for horizon in [0, 6, 12, 24]:
-                rows, base_time = collect_latest(heatmap, "base_time", filters=[heatmap.horizon_h == horizon], asof_time=asof_time)
+                rows, base_time = collect_latest(heatmap, "base_time", filters=[heatmap.horizon_h == horizon], asof_time=asof_time, limit=max_features)
                 if rows:
                     uri = f"{runtime['cache_base_uri']}/pm25_heatmap/{cache_scope}/horizon={horizon}/grid.geojson"
-                    payload = geojson_payload(rows, "cell_id")
+                    payload = geojson_payload(rows, "cell_id", max_features=max_features)
                     payload.update({"layer_name": "pm25_heatmap", "horizon_h": horizon, "base_time": iso_z(base_time), "generated_at": iso_z(generated_at)})
                     size, checksum = write_json(spark, uri, payload, dry_run)
                     manifest.append(manifest_row(runtime, "pm25_heatmap", uri, size, checksum, len(rows), base_time=base_time, valid_time=latest_value(rows, "valid_time"), horizon_h=horizon, generated_at=generated_at))
@@ -220,12 +200,12 @@ def main() -> None:
         plume = read_table_if_exists(spark, tables["visualization_forward_plume_probability_gold"])
         if plume is not None:
             for horizon in [6, 12, 24]:
-                rows, base_time = collect_latest(plume, "base_time", filters=[plume.horizon_h == horizon], asof_time=asof_time)
+                rows, base_time = collect_latest(plume, "base_time", filters=[plume.horizon_h == horizon], asof_time=asof_time, limit=max_features)
                 if rows:
                     available = any(bool(row.get("available")) for row in rows)
                     uri = f"{runtime['cache_base_uri']}/plume/forward/{cache_scope}/horizon={horizon}/grid.geojson"
                     if available:
-                        payload = geojson_payload(rows, "cell_id")
+                        payload = geojson_payload(rows, "cell_id", max_features=max_features)
                         content_type = "application/geo+json"
                         fmt = "geojson"
                     else:
@@ -248,23 +228,30 @@ def main() -> None:
             ("source_attribution", "visualization_source_attribution_gold", "source_attribution/latest.geojson", "base_time", "attribution_id"),
             ("station_observations", "visualization_station_observations_gold", "stations/latest.geojson", "observation_time", "observation_id"),
         ]:
-            uri = f"{runtime['cache_base_uri']}/{path.replace('/latest', '/' + cache_scope)}"
             df = read_table_if_exists(spark, tables[table_key])
             if df is None:
-                row, summary = export_geojson_or_unavailable(
-                    spark, runtime, layer_name, [], asof_time or generated_at.replace(tzinfo=None), generated_at,
-                    uri, id_field, dry_run, reason=f"table_missing:{tables[table_key]}"
-                )
-                manifest.append(row)
-                manifest_summary.append(summary)
+                add_unavailable_layer(layer_name, path, f"missing_or_unreadable_{table_key}")
                 continue
-            rows, base_time = collect_latest(df, time_col, asof_time=asof_time)
-            row, summary = export_geojson_or_unavailable(
-                spark, runtime, layer_name, rows, base_time or asof_time or generated_at.replace(tzinfo=None), generated_at,
-                uri, id_field, dry_run
-            )
-            manifest.append(row)
-            manifest_summary.append(summary)
+            limit = max_trajectories if layer_name == "backward_trajectories" else max_features
+            rows, base_time = collect_latest(df, time_col, asof_time=asof_time, limit=limit)
+            if rows:
+                uri = f"{runtime['cache_base_uri']}/{path.replace('/latest', '/' + cache_scope)}"
+                payload = geojson_payload(rows, id_field, max_features=limit)
+                payload.update({"layer_name": layer_name, "base_time": iso_z(base_time), "generated_at": iso_z(generated_at)})
+                size, checksum = write_json(spark, uri, payload, dry_run)
+                available = not any(str(row.get("traj_id", "")) == "upstream_trajectory_missing" for row in rows)
+                reason = "" if available else "upstream_trajectory_missing"
+                manifest.append(manifest_row(runtime, layer_name, uri, size, checksum, len(rows), base_time=base_time, generated_at=generated_at, available=available, unavailable_reason=reason))
+                summary = {"layer_name": layer_name, "cache_uri": uri, "available": available, "row_count": len(rows), "generated_at": iso_z(generated_at)}
+                if reason:
+                    summary["unavailable_reason"] = reason
+                if payload.get("truncated"):
+                    summary["truncated"] = True
+                    summary["max_features"] = payload.get("max_features")
+                    summary["original_count"] = payload.get("original_count")
+                manifest_summary.append(summary)
+            else:
+                add_unavailable_layer(layer_name, path, f"no_{layer_name}_rows_for_selected_time")
 
         dashboard = read_table_if_exists(spark, tables["visualization_forecast_dashboard_gold"])
         if dashboard is not None:

@@ -16,12 +16,6 @@ from kafka.consumer import KafkaConsumer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-METRICS_CACHE_TTL_SECONDS = int(os.getenv("METRICS_CACHE_TTL_SECONDS", "45") or 45)
-HDFS_WALK_MAX_DEPTH = int(os.getenv("HDFS_WALK_MAX_DEPTH", "5") or 5)
-HDFS_WALK_MAX_FILES = int(os.getenv("HDFS_WALK_MAX_FILES", "2000") or 2000)
-_pipeline_map_cache = {"ts": 0.0, "value": None}
-
-
 app = Flask(__name__)
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
@@ -40,6 +34,11 @@ NAMENODE_JMX_URL = os.getenv(
     "NAMENODE_JMX_URL", "http://namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystem"
 )
 METRICS_SAMPLE_SECONDS = float(os.getenv("METRICS_SAMPLE_SECONDS", "5"))
+METRICS_CACHE_TTL_SEC = float(os.getenv("METRICS_CACHE_TTL_SEC", "60"))
+HDFS_WALK_MAX_DEPTH = int(os.getenv("HDFS_WALK_MAX_DEPTH", "3"))
+HDFS_WALK_MAX_FILES = int(os.getenv("HDFS_WALK_MAX_FILES", "500"))
+_metrics_cache_lock = threading.Lock()
+_metrics_cache = {"timestamp": 0.0, "payload": None}
 AIRFLOW_API_BASE = os.getenv("AIRFLOW_API_BASE", "http://airflow-webserver:8080/api/v1").rstrip("/")
 AIRFLOW_DAG_ID = os.getenv("AIRFLOW_DAG_ID", "ais_batch_orchestration")
 AIRFLOW_USERNAME = os.getenv("AIRFLOW_USERNAME", "admin")
@@ -650,19 +649,23 @@ def _hdfs_list_status(path):
     return payload.get("FileStatuses", {}).get("FileStatus", [])
 
 
-def _walk_hdfs(path):
+def _walk_hdfs(path, max_depth: int | None = None, max_files: int | None = None):
+    max_depth = HDFS_WALK_MAX_DEPTH if max_depth is None else max_depth
+    max_files = HDFS_WALK_MAX_FILES if max_files is None else max_files
     files = []
     stack = [(path, 0)]
 
-    while stack and len(files) < HDFS_WALK_MAX_FILES:
+    while stack and len(files) < max_files:
         current, depth = stack.pop()
         statuses = _hdfs_list_status(current)
         for node in statuses:
+            if len(files) >= max_files:
+                break
             node_type = node.get("type")
             suffix = node.get("pathSuffix", "")
             full_path = current.rstrip("/") + "/" + suffix if suffix else current
             if node_type == "DIRECTORY":
-                if depth < HDFS_WALK_MAX_DEPTH:
+                if depth < max_depth:
                     stack.append((full_path, depth + 1))
             elif node_type == "FILE":
                 files.append({
@@ -670,8 +673,6 @@ def _walk_hdfs(path):
                     "length": int(node.get("length", 0)),
                     "modificationTime": int(node.get("modificationTime", 0)),
                 })
-                if len(files) >= HDFS_WALK_MAX_FILES:
-                    break
     return files
 
 
@@ -699,7 +700,7 @@ def _summarize_hdfs_path(path: str) -> dict:
         }
 
 
-def _collect_pipeline_map_uncached() -> dict:
+def collect_pipeline_map() -> dict:
     topic_counts = {}
     for topic in KAFKA_TOPICS:
         topic_counts[topic] = _get_kafka_message_count(topic)
@@ -725,24 +726,9 @@ def _collect_pipeline_map_uncached() -> dict:
 
     return {
         "polled_at_utc": datetime.now(timezone.utc).isoformat(),
-        "hdfs_walk_limits": {"max_depth": HDFS_WALK_MAX_DEPTH, "max_files": HDFS_WALK_MAX_FILES},
         "datasets": datasets,
         "gold": gold,
     }
-
-
-def collect_pipeline_map() -> dict:
-    now = time.time()
-    cached = _pipeline_map_cache.get("value")
-    if cached is not None and now - float(_pipeline_map_cache.get("ts", 0.0)) < METRICS_CACHE_TTL_SECONDS:
-        result = dict(cached)
-        result["cache_hit"] = True
-        return result
-    result = _collect_pipeline_map_uncached()
-    result["cache_hit"] = False
-    _pipeline_map_cache["ts"] = now
-    _pipeline_map_cache["value"] = result
-    return result
 
 
 def _collect_kafka_totals(topic: str):
@@ -1139,7 +1125,18 @@ def api_ingest_status():
 
 @app.route("/api/metrics")
 def api_metrics():
-    return jsonify(collect_metrics())
+    now = time.time()
+    with _metrics_cache_lock:
+        cached = _metrics_cache.get("payload")
+        cached_ts = float(_metrics_cache.get("timestamp") or 0.0)
+        if cached is not None and now - cached_ts < METRICS_CACHE_TTL_SEC:
+            return jsonify(cached)
+
+    payload = collect_metrics()
+    with _metrics_cache_lock:
+        _metrics_cache["timestamp"] = time.time()
+        _metrics_cache["payload"] = payload
+    return jsonify(payload)
 
 
 @app.route("/api/pipeline")

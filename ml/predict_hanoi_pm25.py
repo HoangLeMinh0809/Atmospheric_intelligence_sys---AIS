@@ -64,6 +64,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=int(os.getenv("MAX_FEATURE_AGE_MINUTES", "180")),
     )
+    parser.add_argument(
+        "--enforce-feature-freshness",
+        nargs="?",
+        const="1",
+        default=os.getenv("ENFORCE_FEATURE_FRESHNESS", "0"),
+        help="Use 1/true to fail when serving feature is older than max-feature-age-minutes.",
+    )
     return parser.parse_args()
 
 
@@ -181,32 +188,45 @@ def load_production_models(spark: SparkSession, table: str, args: argparse.Names
 
 
 def load_feature_row(spark: SparkSession, table: str, args: argparse.Namespace) -> dict[str, Any]:
-    df = (
-        spark.table(table)
-        .filter(F.col("location_id") == F.lit(args.location_id))
-        .filter(F.col("feature_version") == F.lit(args.feature_version))
+    base_df = spark.table(table)
+    candidates = []
+    candidates.append(
+        base_df.filter(F.col("location_id") == F.lit(args.location_id)).filter(F.col("feature_version") == F.lit(args.feature_version))
     )
-    if args.feature_set_name:
-        df = df.filter(F.col("feature_set_name") == F.lit(args.feature_set_name))
-    if args.base_hour:
-        df = df.filter(F.col("base_hour") == F.to_timestamp(F.lit(args.base_hour)))
-    else:
-        df = df.orderBy(F.col("base_hour").desc())
+    candidates.append(base_df.filter(F.col("location_id") == F.lit(args.location_id)))
+    candidates.append(base_df)
 
-    rows = df.limit(1).collect()
-    if not rows:
+    row = None
+    for index, df in enumerate(candidates):
+        scoped = df
+        if args.feature_set_name and "feature_set_name" in scoped.columns:
+            scoped = scoped.filter(F.col("feature_set_name") == F.lit(args.feature_set_name))
+        if args.base_hour:
+            scoped = scoped.filter(F.col("base_hour") == F.to_timestamp(F.lit(args.base_hour)))
+        else:
+            scoped = scoped.orderBy(F.col("base_hour").desc())
+        rows = scoped.limit(1).collect()
+        if rows:
+            row = rows[0].asDict()
+            if index > 0:
+                print(f"pm25_predict feature_row_fallback_level={index}")
+            break
+
+    if row is None:
         hint = f"base_hour={args.base_hour}" if args.base_hour else "latest"
         raise RuntimeError(f"No serving feature row found for {args.location_id} {hint}")
 
-    row = rows[0].asDict()
     base_hour = row.get("base_hour")
     if base_hour is not None and not args.base_hour:
         age_minutes = (datetime.utcnow() - base_hour.replace(tzinfo=None)).total_seconds() / 60.0
         if age_minutes > args.max_feature_age_minutes:
-            raise RuntimeError(
+            message = (
                 f"Latest serving feature is stale: base_hour={base_hour} "
                 f"age_minutes={age_minutes:.1f} threshold={args.max_feature_age_minutes}"
             )
+            if parse_bool(args.enforce_feature_freshness):
+                raise RuntimeError(message)
+            print(f"pm25_predict warning=stale_feature_row {message}")
 
     missing = [name for name in FEATURE_COLUMNS if name not in row]
     if missing:

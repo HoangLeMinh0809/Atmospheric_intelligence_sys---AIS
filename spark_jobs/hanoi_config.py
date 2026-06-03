@@ -70,13 +70,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "hysplit": {
         "backward_hours": 72,
         "forward_hours": 24,
-        "backward_altitudes_m": [100, 500, 1000],
-        "forward_altitudes_m": [50, 200, 500],
+        # Runtime-safe defaults for local/full-stack runs. Use config/env overrides for larger studies.
+        "backward_altitudes_m": [500],
+        "forward_altitudes_m": [500],
         "init_offsets_deg": {
-            "lat": [-0.2, 0.0, 0.2],
-            "lon": [-0.2, 0.0, 0.2],
+            "lat": [0.0],
+            "lon": [0.0],
         },
-        "run_hours_utc": [0, 6, 12, 18],
+        "run_hours_utc": [0, 12],
         "meteo_interval_hours": 6,
         "pm25_trigger_threshold": 75,
     },
@@ -89,7 +90,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sampling": {
         "path_window_start_h": -72,
         "path_window_end_h": -24,
-        "max_distance_deg": 0.5,
+        "max_distance_deg": 0.25,
+        "spatial_bucket_deg": 0.25,
     },
     "visualization": {
         "product_version": "windy_v1",
@@ -97,10 +99,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "region_bbox": {"west": 100.0, "east": 108.8, "south": 18.0, "north": 24.5},
         "region_center": {"lat": 21.0285, "lon": 105.8542},
         "default_zoom": 7,
-        "grid_resolution_deg": 0.1,
+        "grid_resolution_deg": 0.15,
         "horizons_hours": [0, 6, 12, 24],
         "observation_history_hours": 48,
-        "freshness_max_minutes": 180,
+        "freshness_max_minutes": 360,
+        "max_trajectories": 150,
+        "max_points_per_trajectory": 100,
+        "max_geojson_features": 5000,
         "forward_plume_required": False,
         "cache": {
             "base_uri": "hdfs://namenode:9000/visualization_cache",
@@ -226,9 +231,16 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     horizons = os.getenv("VIS_HORIZONS", "")
     if horizons:
         vis["horizons_hours"] = [int(v.strip()) for v in horizons.split(",") if v.strip()]
+    vis["max_trajectories"] = _env_int("VIS_MAX_TRAJECTORIES", vis.get("max_trajectories", 150))
+    vis["max_points_per_trajectory"] = _env_int("VIS_MAX_POINTS_PER_TRAJECTORY", vis.get("max_points_per_trajectory", 100))
+    vis["max_geojson_features"] = _env_int("VIS_MAX_GEOJSON_FEATURES", vis.get("max_geojson_features", 5000))
     cache = vis.setdefault("cache", {})
     cache["base_uri"] = _env_str("VIS_CACHE_BASE_URI", str(cache.get("base_uri", "hdfs://namenode:9000/visualization_cache")))
     cache["format"] = _env_str("VIS_CACHE_FORMAT", str(cache.get("format", "geojson")))
+
+    sampling = cfg.setdefault("sampling", {})
+    sampling["max_distance_deg"] = _env_float("MAX_DISTANCE_DEG", sampling.get("max_distance_deg", 0.25))
+    sampling["spatial_bucket_deg"] = _env_float("TRAJ_SPATIAL_BUCKET_DEG", sampling.get("spatial_bucket_deg", 0.25))
     return cfg
 
 
