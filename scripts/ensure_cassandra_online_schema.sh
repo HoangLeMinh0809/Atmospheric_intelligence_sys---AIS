@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CASSANDRA_CONTAINER="${CASSANDRA_CONTAINER:-cassandra}"
+CASSANDRA_KEYSPACE="${CASSANDRA_KEYSPACE:-ais_serving}"
+
+docker exec -i "$CASSANDRA_CONTAINER" cqlsh <<CQL
+CREATE KEYSPACE IF NOT EXISTS ${CASSANDRA_KEYSPACE}
+WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+
+CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_feature_state_by_location_hour (
+  location_id text,
+  feature_version text,
+  base_hour timestamp,
+  location_name text,
+  feature_set_name text,
+  dataset_version text,
+  schema_hash text,
+  created_at timestamp,
+  loaded_at timestamp,
+  pm25_median double,
+  pm25_mean double,
+  station_count int,
+  coverage_avg double,
+  vis_km double,
+  uv double,
+  condition_code int,
+  is_day int,
+  will_it_rain int,
+  chance_of_rain int,
+  wind_u10 double,
+  wind_v10 double,
+  wind_speed double,
+  wind_dir double,
+  pbl_height_m double,
+  low_pbl boolean,
+  surface_pressure double,
+  temperature_2m_c double,
+  dewpoint_2m_c double,
+  total_precipitation_mm double,
+  s5p_no2_mean double,
+  s5p_co_mean double,
+  s5p_so2_mean double,
+  s5p_o3_mean double,
+  s5p_aer_ai_mean double,
+  s5p_no2_valid_pct double,
+  s5p_aer_ai_valid_pct double,
+  aod_047_mean double,
+  aod_055_mean double,
+  aod_mean double,
+  aod_max double,
+  aod_valid_pct double,
+  pm25_grad_n double,
+  pm25_grad_s double,
+  pm25_grad_e double,
+  pm25_grad_w double,
+  pm25_spatial_std double,
+  pm25_grad_mag double,
+  dominant_cluster int,
+  n_traj int,
+  traj_source_lat double,
+  traj_source_lon double,
+  traj_path_no2_mean double,
+  traj_path_aer_mean double,
+  traj_path_no2_aer_ratio double,
+  hour_of_day int,
+  day_of_week int,
+  month int,
+  season text,
+  is_weekend boolean,
+  hour_sin double,
+  hour_cos double,
+  dow_sin double,
+  dow_cos double,
+  month_sin double,
+  month_cos double,
+  is_rush_hour boolean,
+  pm25_lag_1h double,
+  pm25_lag_3h double,
+  pm25_lag_6h double,
+  pm25_lag_12h double,
+  pm25_lag_24h double,
+  pm25_roll_mean_3h double,
+  pm25_roll_mean_6h double,
+  pm25_roll_mean_24h double,
+  pm25_roll_max_24h double,
+  pm25_roll_std_24h double,
+  PRIMARY KEY ((location_id, feature_version), base_hour)
+) WITH CLUSTERING ORDER BY (base_hour DESC);
+
+CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_forecast_latest_by_location (
+  location_id text PRIMARY KEY,
+  base_hour timestamp,
+  prediction_id text,
+  location_name text,
+  pm25_now double,
+  pm25_6h double,
+  risk_6h text,
+  pm25_12h double,
+  risk_12h text,
+  pm25_24h double,
+  risk_24h text,
+  dominant_cluster int,
+  source_lat double,
+  source_lon double,
+  path_no2_mean double,
+  path_aer_mean double,
+  pm25_grad_mag double,
+  model_version text,
+  model_version_6h text,
+  model_version_12h text,
+  model_version_24h text,
+  model_status text,
+  feature_version text,
+  feature_source text,
+  feature_schema_hash text,
+  inference_run_id text,
+  created_at timestamp
+);
+CQL
+
+if ! docker exec "$CASSANDRA_CONTAINER" cqlsh -e "SELECT column_name FROM system_schema.columns WHERE keyspace_name='${CASSANDRA_KEYSPACE}' AND table_name='pm25_forecast_latest_by_location' AND column_name='feature_source';" | grep -q "feature_source"; then
+  docker exec "$CASSANDRA_CONTAINER" cqlsh -e "ALTER TABLE ${CASSANDRA_KEYSPACE}.pm25_forecast_latest_by_location ADD feature_source text;"
+fi
+
+echo "Ensured Cassandra online serving schema in keyspace ${CASSANDRA_KEYSPACE}"

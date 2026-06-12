@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import os
 import sys
 from typing import Iterable
 
@@ -7,11 +8,17 @@ from pyspark.sql import SparkSession
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, to_date, to_timestamp, date_format, coalesce
 
-KAFKA_BOOTSTRAP_SERVERS = "kafka:9092"
-ICEBERG_CATALOG = "ais"
-ICEBERG_WAREHOUSE = "hdfs://namenode:9000/warehouse/iceberg"
-CASSANDRA_HOST = "cassandra"
-CASSANDRA_KEYSPACE = "ais_serving"
+HDFS_NAMENODE = (
+    os.getenv("HDFS_NAMENODE")
+    or os.getenv("HDFS_DEFAULT_FS")
+    or os.getenv("HADOOP_DEFAULT_FS")
+    or "hdfs://namenode:9000"
+).rstrip("/")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
+ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", f"{HDFS_NAMENODE}/warehouse/iceberg")
+CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "cassandra")
+CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "ais_serving")
 
 SOURCE_TABLES = {
     "weather": {
@@ -33,6 +40,7 @@ def build_spark_session() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
+        .config("spark.hadoop.fs.defaultFS", HDFS_NAMENODE)
         .config("spark.cassandra.connection.host", CASSANDRA_HOST)
         .config("spark.cassandra.connection.port", "9042")
         .getOrCreate()

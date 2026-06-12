@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 from pyspark.sql import functions as F
 
@@ -43,7 +44,14 @@ def main() -> None:
             raise RuntimeError(f"heatmap_missing_horizons missing={missing_horizons}")
 
         manifest = spark.read.table(tables["visualization_cache_manifest_gold"])
-        required_layers = {"pm25_heatmap", "forecast_dashboard", "pm25_timeseries", "backward_trajectories", "source_attribution", "station_observations"}
+        required_layers = {
+            item.strip()
+            for item in os.getenv(
+                "VIS_REQUIRED_LAYERS",
+                "pm25_heatmap,forecast_dashboard,pm25_timeseries,source_attribution,station_observations",
+            ).split(",")
+            if item.strip()
+        }
         layers = {r["layer_name"] for r in manifest.filter(manifest.available == True).select("layer_name").distinct().collect()}
         missing_layers = sorted(required_layers - layers)
         if missing_layers:

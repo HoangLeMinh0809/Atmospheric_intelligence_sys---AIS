@@ -141,15 +141,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_spark() -> SparkSession:
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
-    )
+    packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
-    return (
+    builder = (
         SparkSession.builder
         .appName("TrainHanoiPM25Baseline")
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
@@ -160,8 +156,10 @@ def build_spark() -> SparkSession:
             "spark.hadoop.dfs.client.use.datanode.hostname",
             os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
         )
-        .getOrCreate()
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
+    return builder.getOrCreate()
 
 
 def ensure_model_runs_table(spark: SparkSession, table_name: str) -> None:

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import os
@@ -9,9 +9,11 @@ from pyspark.sql import functions as F
 from hanoi_config import (
     ICEBERG_CATALOG,
     ICEBERG_WAREHOUSE,
+    apply_asof_time,
     filter_hanoi_bbox,
     get_pm25_qc,
     get_table_names,
+    parse_asof_time,
 )
 
 
@@ -56,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi OpenAQ PM2.5 silver tables")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--asof-time", default=os.getenv("ASOF_TIME", os.getenv("SIMULATED_NOW", os.getenv("BASE_TIME", ""))))
     parser.add_argument("--full-refresh", default=os.getenv("FULL_REFRESH", "0"))
     return parser.parse_args()
 
@@ -72,7 +75,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -137,10 +140,11 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
-def build_station_silver(spark: SparkSession, source_table: str, start_date: str, end_date: str):
+def build_station_silver(spark: SparkSession, source_table: str, start_date: str, end_date: str, asof_time: str = ""):
     qc = get_pm25_qc()
     raw = spark.table(source_table).filter(F.col("event_time").isNotNull())
     raw = apply_date_range(raw, start_date, end_date)
+    raw = apply_asof_time(raw, "event_time", parse_asof_time(asof_time))
 
     pm25 = (
         raw
@@ -234,9 +238,31 @@ def log_metrics(raw, pm25, hanoi, station, hourly, duplicate_count: int, outside
     station.groupBy(F.to_date("hour").alias("date")).agg(F.countDistinct("location_id").alias("station_count")).show(50, False)
 
 
-def merge_iceberg(spark: SparkSession, df, table_name: str, view_name: str, key_expr: str, columns: list[str], full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def merge_iceberg(
+    spark: SparkSession,
+    df,
+    table_name: str,
+    view_name: str,
+    key_expr: str,
+    columns: list[str],
+    full_refresh: bool,
+    start_date: str,
+    end_date: str,
+) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "hour", start_date, end_date)
 
     df.createOrReplaceTempView(view_name)
     assignments = ", ".join([f"t.{c} = s.{c}" for c in columns])
@@ -270,6 +296,7 @@ def main() -> None:
         source_table=source_table,
         start_date=args.start_date,
         end_date=args.end_date,
+        asof_time=args.asof_time,
     )
     hourly = build_hourly_silver(station)
     log_metrics(raw, pm25, hanoi, station, hourly, duplicate_count, outside_bbox_count)
@@ -282,6 +309,8 @@ def main() -> None:
         "t.location_id <=> s.location_id AND t.sensor_id <=> s.sensor_id AND t.parameter = s.parameter AND t.hour = s.hour",
         STATION_COLUMNS,
         full_refresh=full_refresh,
+        start_date=args.start_date,
+        end_date=args.end_date,
     )
     merge_iceberg(
         spark,
@@ -291,6 +320,8 @@ def main() -> None:
         "t.hour = s.hour",
         HOURLY_COLUMNS,
         full_refresh=full_refresh,
+        start_date=args.start_date,
+        end_date=args.end_date,
     )
     print(f"Saved station silver: {station_table}")
     print(f"Saved hourly silver: {hourly_table}")

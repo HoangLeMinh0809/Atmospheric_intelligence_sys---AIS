@@ -1,215 +1,774 @@
-import { geoMercator, geoPath } from "d3";
+import { useEffect, useMemo, useState } from "react";
+import { geoCentroid } from "d3";
+import hanoiBoundariesRaw from "../../assets/maps/hanoi_boundaries.geojson?raw";
+import hanoiLabels from "../../assets/maps/hanoi_labels.json";
+import hanoiRoadsRaw from "../../assets/maps/hanoi_roads.geojson?raw";
+import hanoiWaterRaw from "../../assets/maps/hanoi_water.geojson?raw";
 
-const VIETNAM = {
+const INNER_BBOX = [105.738, 20.941, 105.96, 21.115];
+const HANOI_CENTER = [105.8542, 21.0285];
+const MAP_WIDTH = 1280;
+const MAP_HEIGHT = 820;
+const BASE_GRID_COLS = 42;
+const BASE_GRID_ROWS = 32;
+const MAX_IDW_SAMPLES = 420;
+const MAX_BASEMAP_ROADS = 700;
+
+function parseGeoJson(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { type: "FeatureCollection", features: [] };
+  }
+}
+
+const hanoiBoundaries = parseGeoJson(hanoiBoundariesRaw);
+const hanoiRoads = parseGeoJson(hanoiRoadsRaw);
+const hanoiWater = parseGeoJson(hanoiWaterRaw);
+
+const HANOI_BBOX = {
   type: "Feature",
   geometry: {
     type: "Polygon",
     coordinates: [
       [
-        [102.15, 22.42],
-        [103.1, 22.85],
-        [104.55, 23.35],
-        [105.85, 22.92],
-        [106.85, 22.75],
-        [107.35, 21.7],
-        [108.05, 21.1],
-        [107.55, 20.35],
-        [106.72, 20.05],
-        [106.75, 19.1],
-        [105.92, 18.35],
-        [105.7, 17.35],
-        [106.45, 16.2],
-        [107.25, 15.4],
-        [108.05, 14.45],
-        [109.1, 13.2],
-        [109.32, 12.05],
-        [108.95, 11.1],
-        [107.55, 10.35],
-        [106.82, 9.45],
-        [105.55, 8.55],
-        [104.85, 8.62],
-        [104.98, 9.85],
-        [105.55, 10.72],
-        [105.2, 11.75],
-        [106.05, 12.55],
-        [107.25, 13.65],
-        [107.55, 14.72],
-        [107.0, 15.55],
-        [106.25, 16.25],
-        [105.05, 17.2],
-        [104.65, 18.35],
-        [104.2, 19.15],
-        [103.55, 19.85],
-        [103.85, 20.65],
-        [103.35, 21.35],
-        [102.15, 22.42],
+        [INNER_BBOX[0], INNER_BBOX[1]],
+        [INNER_BBOX[2], INNER_BBOX[1]],
+        [INNER_BBOX[2], INNER_BBOX[3]],
+        [INNER_BBOX[0], INNER_BBOX[3]],
+        [INNER_BBOX[0], INNER_BBOX[1]],
       ],
     ],
   },
-  properties: { name: "Vietnam" },
+  properties: { name: "Hà Nội urban bbox" },
 };
 
-const NEIGHBORS = [
-  { name: "Laos", coordinates: [[101.0, 22.5], [103.2, 22.2], [104.0, 19.3], [105.0, 17.7], [104.0, 15.3], [105.2, 13.8], [103.1, 13.7], [101.2, 17.0], [100.5, 20.0], [101.0, 22.5]] },
-  { name: "China", coordinates: [[102.1, 24.4], [108.5, 24.4], [107.4, 22.7], [105.8, 22.9], [104.5, 23.3], [103.1, 22.8], [102.1, 24.4]] },
-  { name: "Cambodia", coordinates: [[103.0, 13.8], [105.2, 13.8], [106.0, 12.6], [105.2, 11.8], [105.5, 10.7], [104.9, 9.8], [102.8, 10.5], [102.5, 12.5], [103.0, 13.8]] },
-].map((item) => ({
-  type: "Feature",
-  geometry: { type: "Polygon", coordinates: [item.coordinates] },
-  properties: { name: item.name },
-}));
-
-function projection(width, height) {
-  return geoMercator().fitExtent(
-    [
-      [42, 28],
-      [width - 42, height - 32],
-    ],
-    { type: "FeatureCollection", features: [VIETNAM] },
-  );
-}
+const DISTRICTS = hanoiLabels.map((item) => [item.name, item.lon, item.lat]);
+const DEFAULT_RECEPTOR = hanoiLabels.find((item) => item.name === "Hoàn Kiếm") || { name: "Hoàn Kiếm", lon: 105.8542, lat: 21.0285 };
 
 function project(lon, lat, width, height) {
-  return projection(width, height)([lon, lat]);
+  const [west, south, east, north] = INNER_BBOX;
+  const pad = { left: 38, top: 30, right: 38, bottom: 36 };
+  const usableWidth = width - pad.left - pad.right;
+  const usableHeight = height - pad.top - pad.bottom;
+  const x = pad.left + ((Number(lon) - west) / (east - west)) * usableWidth;
+  const y = pad.top + ((north - Number(lat)) / (north - south)) * usableHeight;
+  return [x, y];
 }
 
-function pm25Color(value) {
-  if (value == null) return "rgba(148,163,184,0.18)";
-  if (value < 35) return "rgba(34,197,94,0.58)";
-  if (value < 75) return "rgba(245,158,11,0.62)";
-  if (value < 150) return "rgba(239,68,68,0.62)";
-  return "rgba(127,29,29,0.72)";
+function valueOf(feature) {
+  const props = feature?.properties || feature || {};
+  const candidates = [props.pm25_value, props.pm25, props.value, props.forecast_pm25, props.pm25_mean, props.pm25_ugm3];
+  const value = candidates.find((item) => item !== undefined && item !== null && item !== "");
+  return value == null ? null : Number(value);
+}
+
+function pointFromGeometry(geometry, width, height) {
+  if (!geometry) return project(HANOI_CENTER[0], HANOI_CENTER[1], width, height);
+  if (geometry.type === "Point") return project(geometry.coordinates[0], geometry.coordinates[1], width, height);
+  const center = geoCentroid({ type: "Feature", geometry });
+  return project(center[0], center[1], width, height);
+}
+
+function lonLatFromFeature(feature) {
+  const props = feature?.properties || {};
+  if (Number.isFinite(Number(props.lon)) && Number.isFinite(Number(props.lat))) {
+    return [Number(props.lon), Number(props.lat)];
+  }
+  const geometry = feature?.geometry;
+  if (!geometry) return null;
+  if (geometry.type === "Point") return [Number(geometry.coordinates[0]), Number(geometry.coordinates[1])];
+  const center = geoCentroid({ type: "Feature", geometry });
+  return [Number(center[0]), Number(center[1])];
+}
+
+function featureDistanceTo(feature, lon, lat) {
+  const lonLat = lonLatFromFeature(feature);
+  if (!lonLat) return Number.POSITIVE_INFINITY;
+  const dx = (lonLat[0] - lon) * Math.cos((lat * Math.PI) / 180);
+  const dy = lonLat[1] - lat;
+  return Math.hypot(dx, dy);
+}
+
+function nearestPm25(heatmap, lon, lat) {
+  const features = heatmap?.features || [];
+  let best = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const feature of features) {
+    const value = valueOf(feature);
+    if (!Number.isFinite(value)) continue;
+    const distance = featureDistanceTo(feature, lon, lat);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = value;
+    }
+  }
+  return best;
+}
+
+function forecastRisk(value) {
+  if (value == null || Number.isNaN(value)) return "unknown";
+  if (value < 25) return "low";
+  if (value < 35) return "moderate";
+  if (value < 55) return "sensitive";
+  if (value < 80) return "high";
+  return "very_high";
+}
+
+function fallbackForecastValue(current, horizon) {
+  if (!Number.isFinite(current)) return null;
+  const drift = { 0: 0, 6: 4.5, 12: -1.5, 24: -6 }[horizon] ?? 0;
+  return Math.max(5, current + drift);
+}
+
+function inUrbanBbox(lon, lat, pad = 0.025) {
+  return lon >= INNER_BBOX[0] - pad && lon <= INNER_BBOX[2] + pad && lat >= INNER_BBOX[1] - pad && lat <= INNER_BBOX[3] + pad;
+}
+
+function samplesFromFeatures(features) {
+  const samples = (features || [])
+    .map((feature) => {
+      const value = valueOf(feature);
+      const lonLat = lonLatFromFeature(feature);
+      if (!lonLat || !Number.isFinite(value)) return null;
+      const [lon, lat] = lonLat;
+      if (!inUrbanBbox(lon, lat)) return null;
+      return { lon, lat, pm25: value, feature };
+    })
+    .filter(Boolean);
+  if (samples.length <= MAX_IDW_SAMPLES) return samples;
+  const stride = Math.ceil(samples.length / MAX_IDW_SAMPLES);
+  return samples.filter((_, index) => index % stride === 0).slice(0, MAX_IDW_SAMPLES);
+}
+
+function idwPm25(lon, lat, samples) {
+  if (!samples.length) return null;
+  let weightSum = 0;
+  let valueSum = 0;
+  for (const sample of samples) {
+    const dx = (lon - sample.lon) * Math.cos((lat * Math.PI) / 180);
+    const dy = lat - sample.lat;
+    const distance = Math.max(0.0012, Math.hypot(dx, dy));
+    const weight = 1 / distance ** 2.15;
+    weightSum += weight;
+    valueSum += sample.pm25 * weight;
+  }
+  const interpolated = valueSum / weightSum;
+  return Math.max(0, interpolated);
+}
+
+function percentile(values, p) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, (sorted.length - 1) * p));
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  const frac = idx - lo;
+  return sorted[lo] * (1 - frac) + sorted[hi] * frac;
+}
+
+function colorScale(values) {
+  const p5 = percentile(values, 0.05);
+  const p50 = percentile(values, 0.5);
+  const p8 = percentile(values, 0.8);
+  const p95 = percentile(values, 0.95);
+  const min = Math.max(0, p5 - 2);
+  const max = Math.max(p95, min + 28);
+  return {
+    min,
+    p50: Math.max(p50, min + 10),
+    p80: Math.max(p8, min + 18),
+    max,
+  };
+}
+
+function mix(a, b, t) {
+  return Math.round(a + (b - a) * t);
+}
+
+function rgbaBetween(left, right, t, alpha) {
+  return `rgba(${mix(left[0], right[0], t)},${mix(left[1], right[1], t)},${mix(left[2], right[2], t)},${alpha})`;
+}
+
+function pm25Color(value, scale, alpha = 0.9) {
+  if (value == null || Number.isNaN(value)) return `rgba(148,163,184,${alpha * 0.25})`;
+  const stops = [
+    [scale.min, [45, 212, 191]],
+    [Math.min(25, scale.p50), [34, 197, 94]],
+    [scale.p50, [250, 204, 21]],
+    [scale.p80, [249, 115, 22]],
+    [scale.max, [239, 68, 68]],
+    [scale.max + 18, [126, 34, 206]],
+  ];
+  for (let i = 1; i < stops.length; i += 1) {
+    if (value <= stops[i][0]) {
+      const [v0, c0] = stops[i - 1];
+      const [v1, c1] = stops[i];
+      const t = Math.max(0, Math.min(1, (value - v0) / Math.max(0.001, v1 - v0)));
+      return rgbaBetween(c0, c1, t, alpha);
+    }
+  }
+  return `rgba(126,34,206,${alpha})`;
+}
+
+function riskLabel(value) {
+  if (value == null || Number.isNaN(value)) return "Unknown";
+  if (value < 25) return "Low";
+  if (value < 35) return "Moderate";
+  if (value < 55) return "Elevated";
+  if (value < 80) return "High";
+  return "Very high";
+}
+
+function buildPixelGrid(heatmapFeatures, stationFeatures, cols = BASE_GRID_COLS, rows = BASE_GRID_ROWS) {
+  const apiSamples = samplesFromFeatures(heatmapFeatures);
+  const stationSamples = samplesFromFeatures(stationFeatures);
+  const samples = [...apiSamples, ...stationSamples];
+  const cells = [];
+  const values = [];
+  const [west, south, east, north] = INNER_BBOX;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const lon0 = west + ((east - west) * col) / cols;
+      const lon1 = west + ((east - west) * (col + 1)) / cols;
+      const lat0 = south + ((north - south) * row) / rows;
+      const lat1 = south + ((north - south) * (row + 1)) / rows;
+      const lon = (lon0 + lon1) / 2;
+      const lat = (lat0 + lat1) / 2;
+      const pm25 = idwPm25(lon, lat, samples);
+      if (pm25 == null) continue;
+      values.push(pm25);
+      cells.push({ row, col, lon0, lon1, lat0, lat1, lon, lat, pm25 });
+    }
+  }
+  const scale = colorScale(values);
+  return {
+    cells: cells.map((cell) => ({
+      ...cell,
+      normalizedValue: Math.max(0, Math.min(1, (cell.pm25 - scale.min) / Math.max(1, scale.max - scale.min))),
+      color: pm25Color(cell.pm25, scale, 0.82),
+    })),
+    scale,
+    usingFallback: false,
+  };
+}
+
+function rectPath(cell, width, height) {
+  const p1 = project(cell.lon0, cell.lat0, width, height);
+  const p2 = project(cell.lon1, cell.lat0, width, height);
+  const p3 = project(cell.lon1, cell.lat1, width, height);
+  const p4 = project(cell.lon0, cell.lat1, width, height);
+  return `M ${p1[0].toFixed(1)} ${p1[1].toFixed(1)} L ${p2[0].toFixed(1)} ${p2[1].toFixed(1)} L ${p3[0].toFixed(1)} ${p3[1].toFixed(1)} L ${p4[0].toFixed(1)} ${p4[1].toFixed(1)} Z`;
+}
+
+function rectBox(width, height) {
+  const [x0, y0] = project(INNER_BBOX[0], INNER_BBOX[3], width, height);
+  const [x1, y1] = project(INNER_BBOX[2], INNER_BBOX[1], width, height);
+  return {
+    x: Math.min(x0, x1),
+    y: Math.min(y0, y1),
+    width: Math.abs(x1 - x0),
+    height: Math.abs(y1 - y0),
+  };
 }
 
 function polygonPath(geometry, width, height) {
-  const path = geoPath(projection(width, height));
-  const projected = path({ type: "Feature", geometry });
-  if (projected) return projected;
   const ring = geometry?.coordinates?.[0] || [];
   return ring
     .map(([lon, lat], idx) => {
       const [x, y] = project(lon, lat, width, height);
-      return `${idx === 0 ? "M" : "L"} ${x} ${y}`;
+      return `${idx === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(" ");
+}
+
+function ringPath(ring, width, height) {
+  if (!ring?.length) return "";
+  const path = ring
+    .map(([lon, lat], idx) => {
+      const [x, y] = project(lon, lat, width, height);
+      return `${idx === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return `${path} Z`;
+}
+
+function lineCoordsPath(coords, width, height) {
+  return (coords || [])
+    .filter(([lon, lat]) => Number.isFinite(Number(lon)) && Number.isFinite(Number(lat)))
+    .map(([lon, lat], idx) => {
+      const [x, y] = project(lon, lat, width, height);
+      return `${idx === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function geometryPaths(geometry, width, height) {
+  if (!geometry) return [];
+  if (geometry.type === "LineString") return [lineCoordsPath(geometry.coordinates, width, height)].filter(Boolean);
+  if (geometry.type === "MultiLineString") return geometry.coordinates.map((coords) => lineCoordsPath(coords, width, height)).filter(Boolean);
+  if (geometry.type === "Polygon") return [geometry.coordinates.map((ring) => ringPath(ring, width, height)).join(" ")].filter(Boolean);
+  if (geometry.type === "MultiPolygon") {
+    return geometry.coordinates
+      .map((polygon) => polygon.map((ring) => ringPath(ring, width, height)).join(" "))
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function linePath(geometry, width, height) {
-  const path = geoPath(projection(width, height));
-  const projected = path({ type: "Feature", geometry });
-  if (projected) return projected;
   const coords = geometry?.coordinates || [];
   return coords
+    .filter(([lon, lat]) => Number.isFinite(Number(lon)) && Number.isFinite(Number(lat)))
     .map(([lon, lat], idx) => {
       const [x, y] = project(lon, lat, width, height);
-      return `${idx === 0 ? "M" : "L"} ${x} ${y}`;
+      return `${idx === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(" ");
 }
 
-function point(geometry, width, height) {
-  const coords = geometry?.coordinates || [];
-  return project(Number(coords[0]), Number(coords[1]), width, height);
+function featureList(collection) {
+  return Array.isArray(collection?.features) ? collection.features : [];
 }
 
-export default function MapCanvas({ layers, enabled, onSelect }) {
-  const width = 1000;
-  const height = 720;
-  const path = geoPath(projection(width, height));
-  const heatmap = layers.heatmap?.features || [];
+function roadClass(feature) {
+  const highway = feature.properties?.highway || "tertiary";
+  if (["motorway", "trunk"].includes(highway)) return "road-major";
+  if (highway === "primary" || highway === "primary_link") return "road-primary";
+  if (highway === "secondary" || highway === "secondary_link") return "road-secondary";
+  return "road-tertiary";
+}
+
+function roadPriority(feature) {
+  const highway = feature.properties?.highway || "tertiary";
+  if (["motorway", "trunk"].includes(highway)) return 0;
+  if (highway === "primary" || highway === "primary_link") return 1;
+  if (highway === "secondary" || highway === "secondary_link") return 2;
+  if (highway === "tertiary") return 3;
+  return 4;
+}
+
+const BASEMAP_WATER = featureList(hanoiWater);
+const BASEMAP_BOUNDARIES = featureList(hanoiBoundaries);
+const BASEMAP_ROADS = featureList(hanoiRoads)
+  .filter((feature) => roadPriority(feature) <= 3)
+  .sort((left, right) => roadPriority(left) - roadPriority(right))
+  .slice(0, MAX_BASEMAP_ROADS);
+const BASEMAP_WATER_PATHS = BASEMAP_WATER.flatMap((feature, index) =>
+  geometryPaths(feature.geometry, MAP_WIDTH, MAP_HEIGHT).map((d, partIndex) => ({
+    key: `water-${index}-${partIndex}`,
+    d,
+    className: feature.geometry?.type?.includes("Polygon") ? "water-polygon" : "water-line",
+  })),
+);
+const BASEMAP_ROAD_PATHS = BASEMAP_ROADS.flatMap((feature, index) =>
+  geometryPaths(feature.geometry, MAP_WIDTH, MAP_HEIGHT).map((d, partIndex) => ({
+    key: `road-${index}-${partIndex}`,
+    d,
+    className: roadClass(feature),
+  })),
+);
+const BASEMAP_BOUNDARY_PATHS = BASEMAP_BOUNDARIES.flatMap((feature, index) =>
+  geometryPaths(feature.geometry, MAP_WIDTH, MAP_HEIGHT).map((d, partIndex) => ({
+    key: `boundary-${index}-${partIndex}`,
+    d,
+  })),
+);
+
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+}
+
+function featureMatchesReceptor(feature, receptor) {
+  const props = feature.properties || {};
+  const haystack = [
+    props.endpoint,
+    props.receptor_name,
+    props.receptor_id,
+    props.location_name,
+    props.location_id,
+    props.station_name,
+    props.target_name,
+  ].map(normalizeText).join(" ");
+  return haystack.includes(normalizeText(receptor.name));
+}
+
+function latestTrajectoryGroup(features, receptor = DEFAULT_RECEPTOR) {
+  if (!features.length) return features;
+  const baseTimes = features
+    .map((feature) => feature.properties?.base_time || feature.properties?.base_hour || feature.properties?.timestamp)
+    .filter(Boolean)
+    .sort();
+  const selectedBaseTime = baseTimes[baseTimes.length - 1];
+  const sameBaseTime = selectedBaseTime
+    ? features.filter((feature) => {
+        const props = feature.properties || {};
+        return (props.base_time || props.base_hour || props.timestamp) === selectedBaseTime;
+      })
+    : features;
+  const receptorMatches = sameBaseTime.filter((feature) => featureMatchesReceptor(feature, receptor));
+  const candidates = receptorMatches.length ? receptorMatches : normalizeText(receptor.name).includes("hoan kiem") ? sameBaseTime : [];
+  const endpointGroups = new Map();
+  for (const feature of candidates) {
+    const props = feature.properties || {};
+    const key = props.endpoint || props.receptor_id || props.location_id || "default";
+    if (!endpointGroups.has(key)) endpointGroups.set(key, []);
+    endpointGroups.get(key).push(feature);
+  }
+  if (!endpointGroups.size) return [];
+  return [...endpointGroups.values()].sort((a, b) => b.length - a.length)[0].slice(0, 8);
+}
+
+function trajectoriesForReceptor(features, receptor = DEFAULT_RECEPTOR) {
+  const matched = latestTrajectoryGroup(features, receptor);
+  if (matched.length) return matched.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
+  return [];
+}
+
+function densifyTrajectory(feature) {
+  const coords = feature?.geometry?.coordinates || [];
+  if (coords.length < 2) return feature;
+  const dense = [];
+  for (let i = 0; i < coords.length - 1; i += 1) {
+    const [x0, y0] = coords[i];
+    const [x1, y1] = coords[i + 1];
+    for (let step = 0; step < 8; step += 1) {
+      const t = step / 8;
+      const wave = Math.sin((i + t) * Math.PI) * 0.0035;
+      dense.push([x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + wave]);
+    }
+  }
+  dense.push(coords[coords.length - 1]);
+  return { ...feature, geometry: { ...feature.geometry, coordinates: dense } };
+}
+
+function latestHeatmapStats(cells) {
+  const values = cells.map((cell) => cell.pm25).filter((v) => v != null && !Number.isNaN(v));
+  if (!values.length) return { avg: null, max: null };
+  return {
+    avg: values.reduce((sum, value) => sum + value, 0) / values.length,
+    max: Math.max(...values),
+  };
+}
+
+function stationRadius(feature) {
+  const value = valueOf(feature);
+  if (value == null || Number.isNaN(value)) return 7;
+  return Math.max(7, Math.min(18, 5 + value / 7));
+}
+
+function pointForecastFor(layers, lon, lat, currentValue = null) {
+  const heatmaps = layers.heatmapsByHorizon || {};
+  const values = {};
+  for (const horizon of [0, 6, 12, 24]) {
+    const fromHeatmap = nearestPm25(heatmaps[horizon], lon, lat);
+    const value = fromHeatmap ?? fallbackForecastValue(currentValue, horizon);
+    values[horizon === 0 ? "now" : `${horizon}h`] = value == null
+      ? null
+      : { pm25: Number(value.toFixed(1)), risk: forecastRisk(value) };
+  }
+  return values;
+}
+
+function clampZoom(value) {
+  return Math.max(0.8, Math.min(5, Number(value)));
+}
+
+export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => {}, onStats = () => {} }) {
+  const width = MAP_WIDTH;
+  const height = MAP_HEIGHT;
+  const [zoom, setZoom] = useState(1);
+  const [selectedReceptor, setSelectedReceptor] = useState(null);
+  const rawHeatmap = layers.heatmap?.features || [];
+  const rawStations = layers.stations?.features || [];
   const plume = layers.plume?.features || [];
-  const trajectories = layers.trajectories?.features || [];
+  const rawTrajectories = layers.trajectories?.features || [];
+  const trajectories = useMemo(
+    () => (selectedReceptor ? trajectoriesForReceptor(rawTrajectories, selectedReceptor).map(densifyTrajectory) : []),
+    [rawTrajectories, selectedReceptor],
+  );
   const sources = layers.sources?.features || [];
-  const stations = layers.stations?.features || [];
+  const stations = useMemo(
+    () =>
+      rawStations.filter((feature) => {
+        const lonLat = lonLatFromFeature(feature);
+        return lonLat && inUrbanBbox(lonLat[0], lonLat[1], 0.02);
+      }),
+    [rawStations],
+  );
+  const { cells, scale, usingFallback } = useMemo(
+    () => buildPixelGrid(rawHeatmap, stations, BASE_GRID_COLS, BASE_GRID_ROWS),
+    [rawHeatmap, stations],
+  );
+  const stats = latestHeatmapStats(cells);
+  useEffect(() => {
+    onStats({
+      avg: stats.avg == null ? "-" : stats.avg.toFixed(1),
+      max: stats.max == null ? "-" : stats.max.toFixed(1),
+      count: cells.length,
+      source: usingFallback ? "fallback" : "rendered_grid",
+    });
+  }, [cells.length, onStats, stats.avg, stats.max, usingFallback]);
+  const bbox = rectBox(width, height);
+  const viewWidth = width / zoom;
+  const viewHeight = height / zoom;
+  const viewX = (width - viewWidth) / 2;
+  const viewY = (height - viewHeight) / 2;
+
+  function changeZoom(delta) {
+    setZoom((current) => clampZoom(current + delta));
+  }
+
+  function handleWheel(event) {
+    event.preventDefault();
+    const direction = event.deltaY > 0 ? -0.16 : 0.16;
+    setZoom((current) => clampZoom(current + direction));
+  }
 
   return (
-    <div className="map-canvas">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Northern Vietnam air quality map">
+    <div className="windy-map-canvas">
+      <svg
+        viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`}
+        role="img"
+        aria-label="Hanoi PM2.5 pixel heatmap and wind-like backward trajectories"
+        onWheel={handleWheel}
+      >
         <defs>
-          <linearGradient id="water" x1="0" x2="1">
-            <stop offset="0%" stopColor="#dbeafe" />
-            <stop offset="100%" stopColor="#bfdbfe" />
+          <radialGradient id="cityGlow" cx="50%" cy="50%" r="65%">
+            <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.18" />
+            <stop offset="52%" stopColor="#0f172a" stopOpacity="0.05" />
+            <stop offset="100%" stopColor="#020617" stopOpacity="0" />
+          </radialGradient>
+          <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="2.4" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <marker id="trajArrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L7,3 z" fill="#e0f2fe" opacity="0.92" />
+          </marker>
+          <linearGradient id="panelFade" x1="0" x2="1">
+            <stop offset="0%" stopColor="#020617" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="#020617" stopOpacity="0" />
           </linearGradient>
         </defs>
-        <rect width={width} height={height} fill="#d7eef8" />
-        <path d="M 650 0 C 760 125 710 245 790 360 C 860 460 930 535 1000 720 L 1000 0 Z" fill="url(#water)" opacity="0.9" />
-        <g className="neighbor-layer">
-          {NEIGHBORS.map((feature) => (
-            <path key={feature.properties.name} d={path(feature)} />
-          ))}
-        </g>
-        <path d={path(VIETNAM)} className="vietnam-outline" />
-        <g className="map-grid">
-          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-            <line key={`h-${i}`} x1="0" x2={width} y1={(height / 6) * i} y2={(height / 6) * i} />
-          ))}
-          {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-            <line key={`v-${i}`} y1="0" y2={height} x1={(width / 8) * i} x2={(width / 8) * i} />
-          ))}
-        </g>
 
-        {enabled.heatmap &&
-          heatmap.map((feature, idx) => (
-            <path
-              key={`heat-${idx}`}
-              d={polygonPath(feature.geometry, width, height)}
-              fill={pm25Color(feature.properties?.pm25_value)}
-              stroke="rgba(255,255,255,0.08)"
-              onClick={() => onSelect(feature)}
-            />
-          ))}
+        <rect width={width} height={height} className="hanoi-map-bg" />
+        <rect width={width} height={height} fill="url(#cityGlow)" />
+        <rect width="330" height={height} fill="url(#panelFade)" />
 
-        {enabled.plume &&
-          plume.map((feature, idx) => (
-            <path
-              key={`plume-${idx}`}
-              d={polygonPath(feature.geometry, width, height)}
-              fill="rgba(14,165,233,0.26)"
-              stroke="rgba(14,165,233,0.25)"
-              onClick={() => onSelect(feature)}
-            />
-          ))}
-
-        {enabled.trajectories &&
-          trajectories.map((feature, idx) => (
-            <path
-              key={`traj-${idx}`}
-              d={linePath(feature.geometry, width, height)}
-              fill="none"
-              stroke={feature.properties?.style_color || "#2563eb"}
-              strokeWidth="3"
-              strokeOpacity="0.72"
-              onClick={() => onSelect(feature)}
-            />
-          ))}
-
-        {enabled.sources &&
-          sources.map((feature, idx) => {
-            const [x, y] = point(feature.geometry, width, height);
-            return <circle key={`source-${idx}`} cx={x} cy={y} r="11" className="source-dot" onClick={() => onSelect(feature)} />;
+        <g className="hanoi-grid">
+          {Array.from({ length: 9 }).map((_, index) => {
+            const lon = INNER_BBOX[0] + ((INNER_BBOX[2] - INNER_BBOX[0]) / 8) * index;
+            const [x1, y1] = project(lon, INNER_BBOX[1], width, height);
+            const [x2, y2] = project(lon, INNER_BBOX[3], width, height);
+            return <line key={`lon-${index}`} x1={x1} y1={y1} x2={x2} y2={y2} />;
           })}
-
-        {enabled.stations &&
-          stations.map((feature, idx) => {
-            const [x, y] = point(feature.geometry, width, height);
-            return <circle key={`station-${idx}`} cx={x} cy={y} r="7" className="station-dot" onClick={() => onSelect(feature)} />;
+          {Array.from({ length: 7 }).map((_, index) => {
+            const lat = INNER_BBOX[1] + ((INNER_BBOX[3] - INNER_BBOX[1]) / 6) * index;
+            const [x1, y1] = project(INNER_BBOX[0], lat, width, height);
+            const [x2, y2] = project(INNER_BBOX[2], lat, width, height);
+            return <line key={`lat-${index}`} x1={x1} y1={y1} x2={x2} y2={y2} />;
           })}
+        </g>
 
-        {[
-          ["Ha Noi", 105.8542, 21.0285],
-          ["Hai Phong", 106.6881, 20.8449],
-          ["Da Nang", 108.2022, 16.0544],
-          ["Ho Chi Minh City", 106.6297, 10.8231],
-          ["Can Tho", 105.7469, 10.0452],
-        ].map(([label, lon, lat]) => {
-          const [x, y] = project(lon, lat, width, height);
-          return (
-            <text x={x + 8} y={y - 8} className="city-label" key={label}>
-              {label}
-            </text>
-          );
-        })}
+        <rect className="hanoi-bbox-fill" x={bbox.x} y={bbox.y} width={bbox.width} height={bbox.height} />
+        <clipPath id="hanoiClip">
+          <rect x={bbox.x} y={bbox.y} width={bbox.width} height={bbox.height} />
+        </clipPath>
+
+        <g clipPath="url(#hanoiClip)">
+          <g className="basemap-water">
+            {BASEMAP_WATER_PATHS.map((item) => (
+              <path key={item.key} d={item.d} className={item.className} />
+            ))}
+          </g>
+
+          <g className="basemap-roads">
+            {BASEMAP_ROAD_PATHS.map((item) => (
+              <path key={item.key} d={item.d} className={item.className} />
+            ))}
+          </g>
+
+          <g className="basemap-boundaries">
+            {BASEMAP_BOUNDARY_PATHS.map((item) => (
+              <path key={item.key} d={item.d} />
+            ))}
+          </g>
+
+          {enabled.heatmap && (
+            <g className="heatmap-pixels">
+              {cells.map((cell) => (
+                <path
+                  key={`pixel-${cell.row}-${cell.col}`}
+                  d={rectPath(cell, width, height)}
+                  fill={cell.color}
+                  className="heatmap-pixel"
+                  style={{ opacity: 0.42 + cell.normalizedValue * 0.48 }}
+                  onClick={() =>
+                    onSelect({
+                      type: "Feature",
+                      geometry: { type: "Point", coordinates: [cell.lon, cell.lat] },
+                      properties: {
+                        layer_name: "PM2.5 pixel",
+                        pm25_value: Number(cell.pm25.toFixed(1)),
+                        normalized_value: Number(cell.normalizedValue.toFixed(3)),
+                        description: `${cell.pm25.toFixed(1)} µg/m³ · ${riskLabel(cell.pm25)}`,
+                        point_forecast: pointForecastFor(layers, cell.lon, cell.lat, cell.pm25),
+                      },
+                    })
+                  }
+                />
+              ))}
+            </g>
+          )}
+
+          {enabled.plume && (
+            <g className="plume-layer">
+              {plume.map((feature, index) => (
+                <path key={`plume-${index}`} d={polygonPath(feature.geometry, width, height) || linePath(feature.geometry, width, height)} />
+              ))}
+            </g>
+          )}
+
+          {enabled.trajectories && (
+            <g className="trajectory-layer">
+              {trajectories.map((feature, index) => {
+                const d = linePath(feature.geometry, width, height);
+                if (!d) return null;
+                const color = feature.properties?.style_color || feature.properties?.color || "#e0f2fe";
+                return (
+                  <g key={`traj-${index}`} onClick={() => onSelect({ ...feature, properties: { ...(feature.properties || {}), layer_name: "Backward trajectory" } })}>
+                    <path className="trajectory-line" d={d} style={{ stroke: color }} markerEnd="url(#trajArrow)" />
+                  </g>
+                );
+              })}
+            </g>
+          )}
+        </g>
+
+        <rect className="hanoi-bbox-outline" x={bbox.x} y={bbox.y} width={bbox.width} height={bbox.height} />
+
+        <g className="receptor-layer">
+          {DISTRICTS.map(([name, lon, lat]) => {
+            const [x, y] = project(lon, lat, width, height);
+            const active = selectedReceptor?.name === name;
+            return (
+              <g
+                key={name}
+                className={active ? "receptor-point active" : "receptor-point"}
+                transform={`translate(${x} ${y})`}
+                onClick={() => {
+                  const receptor = { name, lon, lat };
+                  const currentValue = nearestPm25(layers.heatmap, lon, lat);
+                  setSelectedReceptor(receptor);
+                  onSelect({
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [lon, lat] },
+                    properties: {
+                      layer_name: "Backward receptor",
+                      location_name: name,
+                      pm25_value: currentValue == null ? null : Number(currentValue.toFixed(1)),
+                      point_forecast: pointForecastFor(layers, lon, lat, currentValue),
+                      description: `Showing backward trajectory ensemble for ${name}`,
+                    },
+                  });
+                }}
+              >
+                <circle r={active ? 8 : 6} />
+                <text x="12" y="5">{name}</text>
+              </g>
+            );
+          })}
+        </g>
+
+        {enabled.sources && (
+          <g className="source-layer">
+            {sources.map((feature, index) => {
+              const [x, y] = pointFromGeometry(feature.geometry, width, height);
+              const [lon, lat] = lonLatFromFeature(feature) || [null, null];
+              const score = Number(feature.properties?.contribution_score || feature.properties?.score || 0.5);
+              const currentValue = lon == null ? null : nearestPm25(layers.heatmap, lon, lat);
+              return (
+                <g
+                  key={`source-${index}`}
+                  transform={`translate(${x} ${y})`}
+                  onClick={() =>
+                    onSelect({
+                      ...feature,
+                      properties: {
+                        ...(feature.properties || {}),
+                        layer_name: "Source attribution",
+                        pm25_value: currentValue == null ? null : Number(currentValue.toFixed(1)),
+                        point_forecast: lon == null ? null : pointForecastFor(layers, lon, lat, currentValue),
+                      },
+                    })
+                  }
+                >
+                  <circle r={12 + score * 10} className="source-ring" />
+                  <circle r="7" className="source-core" />
+                </g>
+              );
+            })}
+          </g>
+        )}
+
+        {enabled.stations && (
+          <g className="station-layer">
+            {stations.map((feature, index) => {
+              const [x, y] = pointFromGeometry(feature.geometry, width, height);
+              const [lon, lat] = lonLatFromFeature(feature) || [null, null];
+              const value = valueOf(feature);
+              return (
+                <g
+                  key={`station-${index}`}
+                  transform={`translate(${x} ${y})`}
+                  onClick={() =>
+                    onSelect({
+                      ...feature,
+                      properties: {
+                        ...(feature.properties || {}),
+                        layer_name: "Monitoring station",
+                        point_forecast: lon == null ? null : pointForecastFor(layers, lon, lat, value),
+                      },
+                    })
+                  }
+                >
+                  <circle r={stationRadius(feature) + 8} className="station-heat-ring" fill={pm25Color(value, scale, 0.24)} />
+                  <circle r={stationRadius(feature)} fill={pm25Color(value, scale, 0.98)} />
+                  <circle r={stationRadius(feature) + 3} className="station-ring" />
+                </g>
+              );
+            })}
+          </g>
+        )}
+
+        {!cells.length && (
+          <g className="fallback-warning">
+            <text x="54" y="664">No PM2.5 heatmap data available for this view</text>
+          </g>
+        )}
+
+        <g className="hanoi-map-title">
+          <text x="54" y="716">Hà Nội PM2.5</text>
+          <text x="54" y="744">Urban pixel grid · Avg {stats.avg == null ? "-" : stats.avg.toFixed(1)} µg/m³ · Max {stats.max == null ? "-" : stats.max.toFixed(1)} µg/m³</text>
+          <text x="54" y="770">
+            {selectedReceptor ? `Backward receptor: ${selectedReceptor.name}` : "Click a location dot to show its backward trajectory"}
+          </text>
+        </g>
       </svg>
+      <div className="map-zoom-control" aria-label="Map zoom controls">
+        <button type="button" onClick={() => changeZoom(0.25)} aria-label="Zoom in">+</button>
+        <button type="button" onClick={() => changeZoom(-0.25)} aria-label="Zoom out">-</button>
+        <button type="button" onClick={() => setZoom(1)} aria-label="Reset zoom">{Math.round(zoom * 100)}%</button>
+      </div>
+      <div className="map-attribution">© OpenStreetMap contributors</div>
     </div>
   );
 }

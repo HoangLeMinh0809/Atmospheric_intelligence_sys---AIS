@@ -1,0 +1,10 @@
+[
+  { "name": "Tây Hồ", "lon": 105.817, "lat": 21.068 },
+  { "name": "Cầu Giấy", "lon": 105.79, "lat": 21.036 },
+  { "name": "Ba Đình", "lon": 105.828, "lat": 21.035 },
+  { "name": "Hoàn Kiếm", "lon": 105.852, "lat": 21.029 },
+  { "name": "Đống Đa", "lon": 105.832, "lat": 21.014 },
+  { "name": "Hai Bà Trưng", "lon": 105.859, "lat": 21.0 },
+  { "name": "Long Biên", "lon": 105.886, "lat": 21.038 },
+  { "name": "Thanh Xuân", "lon": 105.805, "lat": 20.996 }
+]

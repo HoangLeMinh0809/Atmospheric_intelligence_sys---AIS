@@ -6,8 +6,9 @@ import math
 import os
 import subprocess
 import tempfile
+import traceback
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
@@ -26,7 +27,7 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_hanoi_bbox, get_hanoi_center, get_table_names
+from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_hanoi_bbox, get_hanoi_center, get_table_names, parse_asof_time
 
 try:
     import netCDF4 as nc  # type: ignore
@@ -99,6 +100,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi ERA5 surface hourly silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--asof-time", default=os.getenv("ASOF_TIME", os.getenv("SIMULATED_NOW", os.getenv("BASE_TIME", ""))))
+    parser.add_argument("--asof-lookback-days", default=os.getenv("ERA5_ASOF_LOOKBACK_DAYS", "14"))
     parser.add_argument("--full-refresh", default=os.getenv("FULL_REFRESH", "0"))
     return parser.parse_args()
 
@@ -146,6 +149,7 @@ def require_netcdf() -> None:
 
 
 def build_spark() -> SparkSession:
+    default_fs = hdfs_default_fs()
     return (
         SparkSession.builder
         .appName("ERA5SurfaceHanoiSilver")
@@ -153,7 +157,11 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", default_fs)
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
         .getOrCreate()
     )
 
@@ -203,65 +211,154 @@ def collect_candidate_files(spark: SparkSession, source_table: str, start_date: 
     return [row.asDict(recursive=True) for row in rows if row["file_path"]]
 
 
-def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
-    if not path.startswith("hdfs://"):
-        return Path(path)
+def hdfs_default_fs() -> str:
+    return (
+        os.getenv("HDFS_NAMENODE")
+        or os.getenv("HDFS_DEFAULT_FS")
+        or os.getenv("HADOOP_DEFAULT_FS")
+        or HDFS_NAMENODE
+        or "hdfs://namenode:9000"
+    ).rstrip("/")
 
-    remote = "/" + path.split("/", 3)[3]
-    local_dir = Path(tempfile.mkdtemp(prefix="era5_"))
-    local_path = local_dir / Path(remote).name
-    commands = [
-        ["hdfs", "dfs", "-copyToLocal", "-f", remote, str(local_path)],
-        ["/opt/hadoop/bin/hdfs", "dfs", "-copyToLocal", "-f", remote, str(local_path)],
-        ["/opt/hadoop-3.2.1/bin/hdfs", "dfs", "-copyToLocal", "-f", remote, str(local_path)],
+
+def normalize_hdfs_path(path: str, spark: SparkSession | None = None) -> str:
+    raw = str(path or "").strip()
+    if not raw:
+        raise ValueError("Empty HDFS path")
+    if not raw.startswith("hdfs://"):
+        remote = raw if raw.startswith("/") else f"/{raw}"
+        return f"{hdfs_default_fs()}{remote}"
+
+    parsed = urlparse.urlparse(raw)
+    configured = hdfs_default_fs()
+    configured_parsed = urlparse.urlparse(configured)
+    if parsed.netloc == "namenode:9000" and configured_parsed.scheme == "hdfs" and configured_parsed.netloc:
+        return urlparse.urlunparse((parsed.scheme, configured_parsed.netloc, parsed.path, "", "", ""))
+    return raw
+
+
+def _hdfs_remote_path(path: str) -> str:
+    parsed = urlparse.urlparse(path)
+    return parsed.path if parsed.scheme == "hdfs" else path
+
+
+def _local_file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return -1
+
+
+def _ensure_valid_local_copy(local_path: Path, source: str, diagnostics: list[str]) -> Path:
+    if not local_path.exists():
+        raise RuntimeError(f"copy completed but local file is missing: {local_path}")
+    size = local_path.stat().st_size
+    if size <= 0:
+        raise RuntimeError(f"copy completed but local file is empty: {local_path}")
+    diagnostics.append(f"local_exists=true local_size={size}")
+    print(f"copied_hdfs_to_local source={source} target={local_path} size={size}")
+    return local_path
+
+
+def _hadoop_diagnostics(spark: SparkSession | None, source: str, local_path: Path) -> list[str]:
+    diagnostics = [
+        f"source={source}",
+        f"target={local_path}",
+        f"env.HDFS_NAMENODE={os.getenv('HDFS_NAMENODE', '')}",
+        f"env.HDFS_DEFAULT_FS={os.getenv('HDFS_DEFAULT_FS', '')}",
+        f"env.HADOOP_DEFAULT_FS={os.getenv('HADOOP_DEFAULT_FS', '')}",
     ]
-    for command in commands:
-        try:
-            run_external_command(command, int(os.getenv("HDFS_CMD_TIMEOUT_SEC", "300") or 300))
-            return local_path
-        except (FileNotFoundError, RuntimeError):
-            continue
+    if spark is None:
+        diagnostics.append("spark_available=false")
+        return diagnostics
+
+    try:
+        conf = spark.sparkContext._jsc.hadoopConfiguration()
+        diagnostics.append(f"fs.defaultFS={conf.get('fs.defaultFS')}")
+        diagnostics.append(f"dfs.client.use.datanode.hostname={conf.get('dfs.client.use.datanode.hostname')}")
+        jvm = spark._jvm
+        uri = jvm.java.net.URI.create(source)
+        fs = jvm.org.apache.hadoop.fs.FileSystem.get(uri, conf)
+        src = jvm.org.apache.hadoop.fs.Path(source)
+        exists = bool(fs.exists(src))
+        diagnostics.append(f"exists={str(exists).lower()}")
+        if exists:
+            diagnostics.append(f"size={int(fs.getFileStatus(src).getLen())}")
+    except Exception:
+        diagnostics.append(f"diagnostic_exception={traceback.format_exc()}")
+    return diagnostics
+
+
+def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
+    original = str(path or "").strip()
+    source = normalize_hdfs_path(path, spark=spark)
+    print(f"hdfs_copy_prepare original={original} normalized={source}")
+    if not source.startswith("hdfs://"):
+        local = Path(source)
+        if local.exists() and local.stat().st_size > 0:
+            return local
+        raise RuntimeError(f"Local ERA5 file does not exist or is empty: {local}")
+
+    base_tmp = Path(os.getenv("ERA5_LOCAL_TMP_DIR", "/tmp/ais_era5"))
+    base_tmp.mkdir(parents=True, exist_ok=True)
+    local_dir = Path(tempfile.mkdtemp(prefix="surface_", dir=str(base_tmp)))
+    local_path = local_dir / Path(_hdfs_remote_path(source)).name
+    if local_path.exists():
+        local_path.unlink()
+
+    diagnostics = _hadoop_diagnostics(spark, source, local_path)
+    diagnostics.insert(0, f"original={original}")
+    errors: list[str] = []
 
     if spark is not None:
         try:
             jvm = spark._jvm
-            jsc = spark.sparkContext._jsc
-            hadoop_conf = jsc.hadoopConfiguration()
-            fs = jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
-            src = jvm.org.apache.hadoop.fs.Path(path)
-            dst = jvm.org.apache.hadoop.fs.Path(f"file://{local_path}")
+            conf = spark.sparkContext._jsc.hadoopConfiguration()
+            fs = jvm.org.apache.hadoop.fs.FileSystem.get(jvm.java.net.URI.create(source), conf)
+            src = jvm.org.apache.hadoop.fs.Path(source)
+            dst = jvm.org.apache.hadoop.fs.Path(str(local_path))
+            if not fs.exists(src):
+                raise FileNotFoundError(f"HDFS source does not exist: {source}")
             fs.copyToLocalFile(False, src, dst, True)
-            if local_path.exists() and local_path.stat().st_size > 0:
-                return local_path
+            return _ensure_valid_local_copy(local_path, source, diagnostics)
         except Exception:
-            pass
+            errors.append(f"hadoop_api_exception={traceback.format_exc()}")
+
+    timeout = int(os.getenv("HDFS_CMD_TIMEOUT_SEC", "300") or 300)
+    commands = [
+        ["hdfs", "dfs", "-copyToLocal", "-f", source, str(local_path)],
+        ["/opt/hadoop/bin/hdfs", "dfs", "-copyToLocal", "-f", source, str(local_path)],
+        ["/opt/hadoop-3.2.1/bin/hdfs", "dfs", "-copyToLocal", "-f", source, str(local_path)],
+    ]
+    for command in commands:
+        try:
+            if local_path.exists():
+                local_path.unlink()
+            run_external_command(command, timeout)
+            return _ensure_valid_local_copy(local_path, source, diagnostics)
+        except Exception:
+            errors.append(f"command_exception command={' '.join(command)}\n{traceback.format_exc()}")
 
     webhdfs_base = os.getenv("HDFS_WEBHDFS_BASE", "").rstrip("/")
     if webhdfs_base:
-        def _looks_like_netcdf(local_file: Path) -> bool:
-            try:
-                header = local_file.read_bytes()[:8]
-            except OSError:
-                return False
-            # netCDF classic starts with CDF, netCDF4/HDF5 starts with HDF signature.
-            return header.startswith(b"CDF") or header.startswith(b"\x89HDF\r\n\x1a\n")
-
-        quoted_remote = urlparse.quote(remote, safe="/")
-        metadata_url = f"{webhdfs_base}{quoted_remote}?op=OPEN&noredirect=true"
         try:
+            if local_path.exists():
+                local_path.unlink()
+            quoted_remote = urlparse.quote(_hdfs_remote_path(source), safe="/")
+            metadata_url = f"{webhdfs_base}{quoted_remote}?op=OPEN&noredirect=true"
             with urlrequest.urlopen(metadata_url, timeout=120) as response:  # nosec B310
                 payload = json.loads(response.read().decode("utf-8"))
             data_url = payload.get("Location", "")
             if not data_url:
-                raise RuntimeError(f"WebHDFS OPEN did not return Location for {remote}")
+                raise RuntimeError(f"WebHDFS OPEN did not return Location for {source}")
             with urlrequest.urlopen(data_url, timeout=300) as file_response:  # nosec B310
                 local_path.write_bytes(file_response.read())
-            if _looks_like_netcdf(local_path):
-                return local_path
-        except (urlerror.URLError, TimeoutError, OSError, ValueError, RuntimeError):
-            pass
+            return _ensure_valid_local_copy(local_path, source, diagnostics)
+        except Exception:
+            errors.append(f"webhdfs_exception={traceback.format_exc()}")
 
-    raise RuntimeError(f"Unable to copy HDFS file to local path: {path}")
+    details = "\n".join([*diagnostics, *errors, f"local_exists={local_path.exists()} local_size={_local_file_size(local_path)}"])
+    raise RuntimeError(f"Unable to copy HDFS file to local path\n{details}")
 
 
 def resolve_netcdf_path(path: Path) -> Path:
@@ -377,7 +474,13 @@ def _mean_at_time(cube, time_index: int, mask):
     return float(np.nanmean(selected))
 
 
-def read_era5_file(path: Path, source_file: str, start_date: date | None, end_date: date | None) -> list[dict[str, Any]]:
+def read_era5_file(
+    path: Path,
+    source_file: str,
+    start_date: date | None,
+    end_date: date | None,
+    asof_time: datetime | None = None,
+) -> list[dict[str, Any]]:
     require_netcdf()
     bbox = get_hanoi_bbox()
     center = get_hanoi_center()
@@ -404,6 +507,8 @@ def read_era5_file(path: Path, source_file: str, start_date: date | None, end_da
             if start_date and hour.date() < start_date:
                 continue
             if end_date and hour.date() > end_date:
+                continue
+            if asof_time and hour > asof_time:
                 continue
 
             wind_u10 = _mean_at_time(cubes["wind_u10"], idx, mask)
@@ -481,9 +586,21 @@ def log_metrics(file_count: int, rows: list[dict[str, Any]], df) -> None:
     print(f"era5_checks={checks}")
 
 
-def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: date | None, end_date: date | None) -> None:
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date.isoformat()}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date.isoformat()}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: date | None, end_date: date | None) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "hour", start_date, end_date)
     df.createOrReplaceTempView("era5_surface_hanoi_silver_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
     insert_cols = ", ".join(OUTPUT_COLUMNS)
@@ -504,6 +621,12 @@ def main() -> None:
     tables = get_table_names()
     start_date = parse_date(args.start_date)
     end_date = parse_date(args.end_date)
+    asof_time = parse_asof_time(args.asof_time)
+    if asof_time is not None:
+        lookback_days = max(0, int(args.asof_lookback_days or 0))
+        lookback_start = (asof_time - timedelta(days=lookback_days)).date()
+        if start_date is None or lookback_start < start_date:
+            start_date = lookback_start
 
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")
@@ -516,11 +639,11 @@ def main() -> None:
     for item in files:
         source_file = item["file_path"]
         local_path = copy_hdfs_to_local(source_file, spark=spark)
-        rows.extend(read_era5_file(local_path, source_file, start_date, end_date))
+        rows.extend(read_era5_file(local_path, source_file, start_date, end_date, asof_time))
 
     df = build_output_df(spark, rows)
     log_metrics(len(files), rows, df)
-    write_iceberg(spark, df, target_table, full_refresh=as_bool(args.full_refresh))
+    write_iceberg(spark, df, target_table, full_refresh=as_bool(args.full_refresh), start_date=start_date, end_date=end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
-import tempfile
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -30,6 +29,7 @@ from hanoi_config import (
     get_sentinel5p_products,
     get_sentinel5p_raw_base_path,
 )
+from hdfs_utils import copy_hdfs_to_local, hdfs_default_fs, list_hdfs_files, normalize_hdfs_path
 
 
 PRODUCTS = {
@@ -89,7 +89,11 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", hdfs_default_fs())
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
         .getOrCreate()
     )
 
@@ -198,23 +202,8 @@ def _group_metadata_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, date], l
 
 def _list_hdfs_files(root_path: str) -> dict[str, str]:
     spark = SparkSession.builder.getOrCreate()
-    jconf = spark._jsc.hadoopConfiguration()
-    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(jconf)
-    path = spark._jvm.org.apache.hadoop.fs.Path(root_path)
-
-    try:
-        if not fs.exists(path):
-            return {}
-    except Exception:
-        return {}
-
-    index: dict[str, str] = {}
-    iterator = fs.listFiles(path, True)
-    while iterator.hasNext():
-        status = iterator.next()
-        path_text = status.getPath().toString()
-        basename = status.getPath().getName()
-        index.setdefault(basename, path_text)
+    index = list_hdfs_files(root_path, spark)
+    for basename, path_text in list(index.items()):
         index.setdefault(_sanitize_fragment(basename), path_text)
     return index
 
@@ -223,7 +212,12 @@ def _resolve_source_file(metadata: dict[str, Any], raw_base_path: str) -> tuple[
     raw_file_path = str(metadata.get("raw_file_path") or "").strip()
     raw_downloaded = metadata.get("raw_downloaded")
     if raw_file_path and raw_downloaded is not False:
-        return raw_file_path, raw_file_path
+        resolved = (
+            normalize_hdfs_path(raw_file_path)
+            if raw_file_path.startswith("hdfs://") or (raw_file_path.startswith("/") and not Path(raw_file_path).exists())
+            else raw_file_path
+        )
+        return resolved, resolved
 
     candidates = _candidate_file_names(metadata)
     if not candidates:
@@ -256,13 +250,8 @@ def _resolve_source_file(metadata: dict[str, Any], raw_base_path: str) -> tuple[
 
 def _copy_hdfs_file_to_local(remote_path: str) -> tuple[Path, Path]:
     spark = SparkSession.builder.getOrCreate()
-    jconf = spark._jsc.hadoopConfiguration()
-    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(jconf)
-    temp_dir = Path(tempfile.mkdtemp(prefix="sentinel5p_grid_"))
-    local_dst = spark._jvm.org.apache.hadoop.fs.Path(str(temp_dir.resolve()))
-    src = spark._jvm.org.apache.hadoop.fs.Path(remote_path)
-    fs.copyToLocalFile(False, src, local_dst, True)
-    return temp_dir / Path(remote_path).name, temp_dir
+    local_path = copy_hdfs_to_local(remote_path, spark, prefix="sentinel5p_grid_", temp_base="/tmp/ais_sentinel5p")
+    return local_path, local_path.parent
 
 
 def _find_product_group(dataset: Any, variable_name: str) -> Any | None:
@@ -495,9 +484,24 @@ def build_output_rows(
     return output_rows, failure_count, metrics_by_group, min_time, max_time, input_count, duplicate_count
 
 
-def write_output(spark: SparkSession, rows: list[dict[str, Any]], target_table: str, full_refresh: bool) -> None:
+def write_output(
+    spark: SparkSession,
+    rows: list[dict[str, Any]],
+    target_table: str,
+    full_refresh: bool,
+    start_date: date | None,
+    end_date: date | None,
+) -> None:
     if full_refresh:
-        spark.sql(f"DELETE FROM {target_table}")
+        predicates = []
+        if start_date:
+            predicates.append(f"date >= DATE '{start_date.isoformat()}'")
+        if end_date:
+            predicates.append(f"date <= DATE '{end_date.isoformat()}'")
+        if predicates:
+            spark.sql(f"DELETE FROM {target_table} WHERE {' AND '.join(predicates)}")
+        else:
+            spark.sql(f"DELETE FROM {target_table}")
     if not rows:
         return
 
@@ -549,7 +553,7 @@ def main() -> None:
     print(f"min_time={min_time}")
     print(f"max_time={max_time}")
 
-    write_output(spark, rows, target_table, full_refresh=full_refresh)
+    write_output(spark, rows, target_table, full_refresh=full_refresh, start_date=start_date, end_date=end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

@@ -1,4 +1,4 @@
-"""Run HYSPLIT trajectories from ERA5 ARL metadata and write run metadata.
+﻿"""Run HYSPLIT trajectories from ERA5 ARL metadata and write run metadata.
 
 The job reads monthly ARL files from Iceberg, creates HYSPLIT CONTROL files
 for configured Hanoi start points, runs ``hyts_std`` locally in the Spark
@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -133,7 +134,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -356,6 +357,7 @@ def build_planned_runs(
     fwd_alts = [float(v) for v in cfg.get("forward_altitudes_m", [50, 200, 500])]
     back_duration = int(cfg.get("backward_hours", 72))
     fwd_duration = int(cfg.get("forward_hours", 24))
+    fallback_backward = as_bool(str(cfg.get("backward_fallback_to_run_hours", True)))
 
     runs: list[PlannedRun] = []
 
@@ -384,6 +386,15 @@ def build_planned_runs(
         )
 
     if "backward" in directions:
+        if fallback_backward:
+            scheduled_backward_hours = [utc_dt(d, hour) for d in date_range(start_date, end_date) for hour in run_hours]
+            original_count = len(backward_hours)
+            backward_hours = sorted({*backward_hours, *scheduled_backward_hours})
+            print(
+                "hysplit_backward_schedule="
+                f"{{'pm25_trigger_hours': {original_count}, 'scheduled_hours': {len(scheduled_backward_hours)}, "
+                f"'combined_hours': {len(backward_hours)}, 'run_hours_utc': {run_hours}}}"
+            )
         for init_time in backward_hours:
             for lat_off in lat_offsets:
                 for lon_off in lon_offsets:
@@ -464,10 +475,13 @@ def hysplit_temp_parent(hysplit_bin: str) -> str | None:
             candidate.mkdir(parents=True, exist_ok=True)
             bdyfiles = candidate / "bdyfiles"
             if not (bdyfiles / "ASCDATA.CFG").exists() and source_bdyfiles and source_bdyfiles.exists():
-                try:
-                    bdyfiles.symlink_to(source_bdyfiles, target_is_directory=True)
-                except FileExistsError:
-                    pass
+                if bdyfiles.exists():
+                    shutil.copytree(source_bdyfiles, bdyfiles, dirs_exist_ok=True)
+                else:
+                    try:
+                        bdyfiles.symlink_to(source_bdyfiles, target_is_directory=True)
+                    except OSError:
+                        shutil.copytree(source_bdyfiles, bdyfiles, dirs_exist_ok=True)
             if (bdyfiles / "ASCDATA.CFG").exists() and os.access(candidate, os.W_OK):
                 return str(candidate)
         except OSError:
@@ -482,6 +496,41 @@ def read_text(path: Path, max_chars: int = 2000) -> str:
         return path.read_text(encoding="utf-8", errors="replace")[:max_chars]
     except OSError:
         return ""
+
+
+def ensure_hysplit_bdyfiles(work_dir: Path, hysplit_bin: str) -> None:
+    if len(Path(hysplit_bin).parents) < 2:
+        return
+    source_bdyfiles = Path(hysplit_bin).parents[1] / "bdyfiles"
+    if not (source_bdyfiles / "ASCDATA.CFG").exists():
+        return
+    target_bdyfiles = work_dir.parent / "bdyfiles"
+    try:
+        if target_bdyfiles.exists() and target_bdyfiles.resolve() == source_bdyfiles.resolve():
+            return
+    except OSError:
+        pass
+    if (target_bdyfiles / "ASCDATA.CFG").exists():
+        return
+    if target_bdyfiles.exists():
+        try:
+            shutil.copytree(source_bdyfiles, target_bdyfiles, dirs_exist_ok=True)
+        except shutil.Error as exc:
+            if (target_bdyfiles / "ASCDATA.CFG").exists():
+                print(f"[WARN] Ignoring benign HYSPLIT bdyfiles copy race: {exc}")
+                return
+            raise
+        return
+    try:
+        target_bdyfiles.symlink_to(source_bdyfiles, target_is_directory=True)
+    except OSError:
+        try:
+            shutil.copytree(source_bdyfiles, target_bdyfiles, dirs_exist_ok=True)
+        except shutil.Error as exc:
+            if (target_bdyfiles / "ASCDATA.CFG").exists():
+                print(f"[WARN] Ignoring benign HYSPLIT bdyfiles copy race: {exc}")
+                return
+            raise
 
 
 def tdump_point_count(path: Path) -> int:
@@ -537,6 +586,8 @@ def run_hysplit(
     temp_parent = hysplit_temp_parent(hysplit_bin)
     with tempfile.TemporaryDirectory(prefix=f"{run.run_id}_", dir=temp_parent) as tmp:
         work_dir = Path(tmp)
+        with fs_lock:
+            ensure_hysplit_bdyfiles(work_dir, hysplit_bin)
         output_name = f"{run.run_id}.tdump"
         local_output = work_dir / output_name
         write_control_file(work_dir, local_arl, run, output_name)
@@ -748,6 +799,8 @@ def main() -> None:
             failure_count += int(status != "success")
             rows.append(_row_for_run(run, status, error))
             print(f"hysplit_run run_id={run.run_id} status={status} output_path={run.output_path if status == 'success' else None}")
+            if status != "success" and error:
+                print(f"hysplit_run_error run_id={run.run_id} error={error[:1000]}")
 
     write_metadata(spark, rows, target_table)
     print(

@@ -50,7 +50,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -82,9 +82,21 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
-def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "init_time", start_date, end_date)
 
     df.createOrReplaceTempView("traj_path_updates")
     spark.sql(
@@ -311,7 +323,7 @@ def main() -> None:
         f"'max_time': {repr(str(bounds['max_time']) if bounds else None)}}}"
     )
 
-    merge_iceberg(spark, output_df, target_table, full_refresh=full_refresh)
+    merge_iceberg(spark, output_df, target_table, full_refresh=full_refresh, start_date=args.start_date, end_date=args.end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

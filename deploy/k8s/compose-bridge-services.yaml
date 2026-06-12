@@ -7,8 +7,6 @@ metadata:
     app.kubernetes.io/name: namenode-bridge
     app.kubernetes.io/part-of: atmospheric-intelligence-system
 spec:
-  type: ExternalName
-  externalName: host.docker.internal
   ports:
     - name: hdfs
       port: 9000
@@ -16,6 +14,23 @@ spec:
     - name: webhdfs
       port: 9870
       targetPort: 9870
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: namenode
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: namenode-bridge
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+subsets:
+  - addresses:
+      - ip: 192.168.65.254
+    ports:
+      - name: hdfs
+        port: 9000
+      - name: webhdfs
+        port: 9870
 ---
 apiVersion: v1
 kind: Service
@@ -26,8 +41,6 @@ metadata:
     app.kubernetes.io/name: datanode-bridge
     app.kubernetes.io/part-of: atmospheric-intelligence-system
 spec:
-  type: ExternalName
-  externalName: host.docker.internal
   ports:
     - name: data-transfer
       port: 9866
@@ -35,3 +48,20 @@ spec:
     - name: http
       port: 9864
       targetPort: 9864
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: datanode
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: datanode-bridge
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+subsets:
+  - addresses:
+      - ip: 192.168.65.254
+    ports:
+      - name: data-transfer
+        port: 9866
+      - name: http
+        port: 9864

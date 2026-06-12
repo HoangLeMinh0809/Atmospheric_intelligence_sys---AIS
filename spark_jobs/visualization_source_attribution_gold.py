@@ -83,33 +83,16 @@ def main() -> None:
 
     try:
         hourly = read_table_if_exists(spark, tables["trajectory_hourly_silver"])
-        pred_df = read_table_if_exists(spark, tables["prediction_gold"])
         if hourly is None:
             raise RuntimeError(f"Missing trajectory hourly table: {tables['trajectory_hourly_silver']}")
         item = latest_row_asof(hourly.filter(hourly.dominant_cluster.isNotNull()), "hour", asof_time)
-        if item is None and pred_df is not None:
-            pred = latest_row_asof(pred_df, "base_hour", asof_time, filters=[pred_df.location_id == args.location_id, pred_df.model_status == "production"])
-            item = {
-                "hour": pred.get("base_hour"),
-                "dominant_cluster": pred.get("dominant_cluster"),
-                "n_traj": 0,
-                "source_lat": pred.get("source_lat"),
-                "source_lon": pred.get("source_lon"),
-                "path_no2_mean": pred.get("path_no2_mean"),
-                "path_aer_mean": pred.get("path_aer_mean"),
-                "path_no2_aer_ratio": None,
-            } if pred else None
         if item is None:
-            item = {
-                "hour": (asof_time or generated_at).replace(tzinfo=None),
-                "dominant_cluster": 0,
-                "n_traj": 0,
-                "source_lat": 21.0285,
-                "source_lon": 105.8542,
-                "path_no2_mean": 0.0,
-                "path_aer_mean": 0.0,
-                "path_no2_aer_ratio": 0.0,
-            }
+            print(
+                "job=visualization_source_attribution "
+                f"location_id={args.location_id} asof_time={asof_time} output_count=0 "
+                f"dry_run={int(dry_run)} status=no_real_attribution_rows"
+            )
+            return
 
         base_time = item["hour"]
         cluster_id = item.get("dominant_cluster")
@@ -120,12 +103,8 @@ def main() -> None:
         contribution = clamp(0.25 + min(n_traj, 10) / 20.0 + min(abs(no2) + abs(aer), 2.0) / 8.0)
         confidence = clamp(0.30 + min(n_traj, 10) / 20.0 + (0.15 if no2 or aer else 0.0))
         explanation = (
-            "Trajectory/source attribution upstream is not available yet."
-            if n_traj == 0
-            else (
-                f"Cluster {cluster_id} ({label}) is the dominant recent trajectory signal. "
-                f"Score is based on trajectory count, satellite path evidence, and PM2.5 gradient features."
-            )
+            f"Cluster {cluster_id} ({label}) is the dominant recent trajectory signal. "
+            f"Score is based on trajectory count, satellite path evidence, and PM2.5 gradient features."
         )
         vis_run_id = run_id("source_attribution", base_time, runtime["product_version"])
         source_lat = item.get("source_lat")

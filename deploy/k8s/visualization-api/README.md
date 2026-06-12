@@ -14,4 +14,5 @@ kubectl -n ais wait --for=condition=available --timeout=120s deployment/visualiz
 kubectl -n ais port-forward svc/visualization-api 8082:80
 ```
 
-The API reads only exported cache under `VIS_CACHE_BASE_URI`.
+The API reads exported visualization cache under `VIS_CACHE_BASE_URI` for historical and forecast layers.
+For the current PM2.5 heatmap, `/api/v1/visualization/live/pm25/heatmap/latest` reads the latest serving feature state directly from Cassandra and returns a low-resolution live grid for the UI hot path.

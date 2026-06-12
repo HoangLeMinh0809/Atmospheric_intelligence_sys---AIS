@@ -12,10 +12,12 @@ from hanoi_config import (
     HDFS_NAMENODE,
     ICEBERG_CATALOG,
     ICEBERG_WAREHOUSE,
+    apply_asof_time,
     get_gold_horizons_hours,
     get_gold_lag_hours,
     get_gold_rolling_hours,
     get_table_names,
+    parse_asof_time,
 )
 
 
@@ -181,6 +183,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi PM2.5 master feature gold table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--asof-time", default=os.getenv("ASOF_TIME", os.getenv("SIMULATED_NOW", os.getenv("BASE_TIME", ""))))
     parser.add_argument("--full-refresh", default=os.getenv("FULL_REFRESH", "0"))
     return parser.parse_args()
 
@@ -190,15 +193,11 @@ def as_bool(raw: str) -> bool:
 
 
 def build_spark() -> SparkSession:
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
-    )
+    packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
-    return (
+    builder = (
         SparkSession.builder
         .appName("HanoiPM25MasterFeaturesGold")
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
@@ -209,8 +208,10 @@ def build_spark() -> SparkSession:
             "spark.hadoop.dfs.client.use.datanode.hostname",
             os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
         )
-        .getOrCreate()
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
+    return builder.getOrCreate()
 
 
 def ensure_table(spark: SparkSession, table_name: str) -> None:
@@ -304,11 +305,12 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
-def apply_date_range(df, time_col: str, start_date: str, end_date: str):
+def apply_date_range(df, time_col: str, start_date: str, end_date: str, asof_time=None):
     if start_date:
         df = df.filter(F.to_date(time_col) >= F.to_date(F.lit(start_date)))
     if end_date:
         df = df.filter(F.to_date(time_col) <= F.to_date(F.lit(end_date)))
+    df = apply_asof_time(df, time_col, asof_time)
     return df
 
 
@@ -371,6 +373,14 @@ def build_maiac_asof_features(hours, maiac):
     )
 
 
+def build_era5_asof_features(hours, era5, era5_cols: list[str]):
+    era5_selected = era5.select(*era5_cols).withColumnRenamed("hour", "era5_hour")
+    candidates = hours.select("hour").join(era5_selected, F.col("era5_hour") <= F.col("hour"), "left")
+    w = Window.partitionBy("hour").orderBy(F.col("era5_hour").desc_nulls_last())
+    latest = candidates.withColumn("rn", F.row_number().over(w)).filter(F.col("rn") == 1)
+    return latest.drop("rn", "era5_hour")
+
+
 def add_time_lag_target_features(df):
     order_w = Window.orderBy("hour")
     df = (
@@ -416,15 +426,25 @@ def add_time_lag_target_features(df):
     )
 
 
-def build_master(spark: SparkSession, tables: dict[str, str], target_table: str, start_date: str, end_date: str):
-    aq = apply_date_range(spark.table(tables["openaq_hourly_silver"]), "hour", start_date, end_date)
+def build_master(
+    spark: SparkSession,
+    tables: dict[str, str],
+    target_table: str,
+    start_date: str,
+    end_date: str,
+    asof_time=None,
+):
+    aq = apply_date_range(spark.table(tables["openaq_hourly_silver"]), "hour", start_date, end_date, asof_time)
     hours = build_hour_grid(aq)
     if hours is None:
         print("warning=no_openaq_target_hours")
         return spark.table(target_table).limit(0)
 
-    weather = apply_date_range(spark.table(tables["weather_proxy_silver"]), "hour", start_date, end_date)
-    era5 = apply_date_range(spark.table(tables["era5_surface_silver"]), "hour", start_date, end_date)
+    weather = apply_date_range(spark.table(tables["weather_proxy_silver"]), "hour", start_date, end_date, asof_time)
+    era5 = spark.table(tables["era5_surface_silver"])
+    if end_date:
+        era5 = era5.filter(F.to_date("hour") <= F.to_date(F.lit(end_date)))
+    era5 = apply_asof_time(era5, "hour", asof_time)
     # Keep satellite scans bounded to the requested window to reduce join cost.
     s5p = apply_date_range(spark.table(tables["sentinel5p_silver"]), "date", start_date, end_date)
     maiac = apply_date_range(spark.table(tables["maiac_silver"]), "date", start_date, end_date)
@@ -441,7 +461,7 @@ def build_master(spark: SparkSession, tables: dict[str, str], target_table: str,
         F.col("pm25_spatial_std").alias("pm25_spatial_std"),
         F.col("pm25_grad_mag").alias("pm25_grad_mag"),
     )
-    gradient = apply_date_range(gradient, "hour", start_date, end_date)
+    gradient = apply_date_range(gradient, "hour", start_date, end_date, asof_time)
 
     traj_hourly = spark.table(tables["trajectory_hourly_silver"]).select(
         "hour",
@@ -453,7 +473,7 @@ def build_master(spark: SparkSession, tables: dict[str, str], target_table: str,
         F.col("path_aer_mean").cast("double").alias("traj_path_aer_mean"),
         F.col("path_no2_aer_ratio").cast("double").alias("traj_path_no2_aer_ratio"),
     )
-    traj_hourly = apply_date_range(traj_hourly, "hour", start_date, end_date)
+    traj_hourly = apply_date_range(traj_hourly, "hour", start_date, end_date, asof_time)
 
     weather_cols = ["hour", "vis_km", "uv", "condition_code", "is_day", "will_it_rain", "chance_of_rain"]
     era5_cols = [
@@ -473,7 +493,7 @@ def build_master(spark: SparkSession, tables: dict[str, str], target_table: str,
     hours = hours.repartition("hour")
     aq_hourly = aq.select("hour", "pm25_median", "pm25_mean", "station_count", "coverage_avg").repartition("hour")
     weather_hourly = weather.select(*weather_cols).repartition("hour")
-    era5_hourly = era5.select(*era5_cols).repartition("hour")
+    era5_hourly = build_era5_asof_features(hours, era5, era5_cols).repartition("hour")
     gradient_hourly = gradient.repartition("hour")
     traj_hourly = traj_hourly.repartition("hour")
 
@@ -512,9 +532,21 @@ def log_metrics(df) -> None:
     print(f"lag_null_count_by_lag={lag_nulls}")
 
 
-def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "hour", start_date, end_date)
     df.createOrReplaceTempView("hanoi_pm25_master_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
     insert_cols = ", ".join(OUTPUT_COLUMNS)
@@ -536,11 +568,12 @@ def main() -> None:
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")
     target_table = os.getenv("ICEBERG_TABLE", tables["master_gold"])
+    asof_time = parse_asof_time(args.asof_time)
 
     ensure_table(spark, target_table)
-    master = build_master(spark, tables, target_table, args.start_date, args.end_date)
+    master = build_master(spark, tables, target_table, args.start_date, args.end_date, asof_time)
     log_metrics(master)
-    write_iceberg(spark, master, target_table, full_refresh=as_bool(args.full_refresh))
+    write_iceberg(spark, master, target_table, full_refresh=as_bool(args.full_refresh), start_date=args.start_date, end_date=args.end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

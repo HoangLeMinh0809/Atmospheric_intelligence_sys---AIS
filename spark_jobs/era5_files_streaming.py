@@ -1,4 +1,4 @@
-"""ERA5 file metadata Kafka -> Iceberg streaming processor.
+﻿"""ERA5 file metadata Kafka -> Iceberg streaming processor.
 
 This job consumes JSON events from Kafka topic `era5-files` and writes them
 into Iceberg table `ais.weather.era5_files_bronze`.
@@ -142,7 +142,7 @@ def main() -> None:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
         .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_PATH)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 

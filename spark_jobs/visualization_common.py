@@ -25,13 +25,9 @@ from hanoi_config import (
 
 
 def build_spark(app_name: str) -> SparkSession:
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
-    )
+    packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     builder = (
         SparkSession.builder.appName(app_name)
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2"))
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
@@ -40,6 +36,8 @@ def build_spark(app_name: str) -> SparkSession:
         .config("spark.hadoop.fs.defaultFS", HDFS_NAMENODE)
         .config("spark.hadoop.dfs.client.use.datanode.hostname", os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"))
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
     return builder.getOrCreate()
 
 
@@ -93,6 +91,20 @@ def end_of_date(value: str | None) -> datetime | None:
     return day.replace(hour=23, minute=0, second=0, microsecond=0)
 
 
+def _env_int(name: str, default: Any) -> int:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return int(default)
+    return int(str(raw).strip())
+
+
+def _env_float(name: str, default: Any) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return float(default)
+    return float(str(raw).strip())
+
+
 def visualization_runtime(args: argparse.Namespace) -> dict[str, Any]:
     cfg = get_visualization_config()
     horizons = [int(v.strip()) for v in args.horizons.split(",") if v.strip()] if args.horizons else get_visualization_horizons()
@@ -105,9 +117,9 @@ def visualization_runtime(args: argparse.Namespace) -> dict[str, Any]:
         "grid_resolution_deg": float(args.grid_resolution_deg or cfg.get("grid_resolution_deg", 0.1)),
         "horizons": horizons,
         "obs_history_hours": int(cfg.get("observation_history_hours", 48)),
-        "max_trajectories": int(os.getenv("VIS_MAX_TRAJECTORIES", cfg.get("max_trajectories", 150))),
-        "max_points_per_trajectory": int(os.getenv("VIS_MAX_POINTS_PER_TRAJECTORY", cfg.get("max_points_per_trajectory", 100))),
-        "max_geojson_features": int(os.getenv("VIS_MAX_GEOJSON_FEATURES", cfg.get("max_geojson_features", 5000))),
+        "max_trajectories": _env_int("VIS_MAX_TRAJECTORIES", cfg.get("max_trajectories", 150)),
+        "max_points_per_trajectory": _env_int("VIS_MAX_POINTS_PER_TRAJECTORY", cfg.get("max_points_per_trajectory", 100)),
+        "max_geojson_features": _env_int("VIS_MAX_GEOJSON_FEATURES", cfg.get("max_geojson_features", 5000)),
         "product_version": args.product_version or str(cfg.get("product_version", "windy_v1")),
         "schema_version": args.schema_version or str(cfg.get("schema_version", "1")),
     }

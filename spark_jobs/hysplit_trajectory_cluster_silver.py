@@ -6,10 +6,13 @@ import argparse
 import os
 from datetime import datetime
 
-from pyspark.ml.clustering import KMeans
-from pyspark.ml.feature import Imputer, StandardScaler, VectorAssembler
+import numpy as np
+from pyspark.ml.feature import Imputer
 from pyspark.sql import SparkSession
+from pyspark.sql import Row
 from pyspark.sql import functions as F
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 from hanoi_config import (
     ICEBERG_CATALOG,
@@ -56,7 +59,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -103,15 +106,107 @@ def filter_by_init_window(df, start_date: str, end_date: str):
     return df.join(init_ids, on="traj_id", how="inner")
 
 
-def delete_target_directions(spark: SparkSession, table_name: str, directions: list[str]) -> None:
+def delete_target_directions(spark: SparkSession, table_name: str, directions: list[str], start_date: str, end_date: str) -> None:
     if not directions:
         return
     direction_list = ", ".join(f"'{value}'" for value in sorted(set(directions)))
-    spark.sql(f"DELETE FROM {table_name} WHERE direction IN ({direction_list})")
+    predicates = [f"direction IN ({direction_list})"]
+    if start_date:
+        predicates.append(f"timestamp >= TIMESTAMP '{start_date} 00:00:00'")
+    if end_date:
+        predicates.append(f"timestamp <= TIMESTAMP '{end_date} 23:59:59'")
+    spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
 
 
 def append_cluster_rows(df, table_name: str) -> None:
     df.writeTo(table_name).append()
+
+
+def keep_finite_feature_rows(df, feature_cols: list[str]):
+    condition = None
+    for col_name in feature_cols:
+        col_condition = F.col(col_name).isNotNull() & (~F.isnan(F.col(col_name)))
+        condition = col_condition if condition is None else condition & col_condition
+    return df.filter(condition) if condition is not None else df
+
+
+def build_sklearn_assignments(spark: SparkSession, df, feature_cols: list[str], args, source_cols: tuple[str, str, str]):
+    source_lat_name, source_lon_name, source_alt_name = source_cols
+    selected_cols = [
+        "traj_id",
+        "direction",
+        F.col(source_lat_name).alias("source_lat"),
+        F.col(source_lon_name).alias("source_lon"),
+        F.col(source_alt_name).alias("source_alt_m"),
+        *[F.col(col_name).cast("double").alias(col_name) for col_name in feature_cols],
+    ]
+    rows = df.select(*selected_cols).collect()
+    if len(rows) < 2:
+        assignment_rows = [
+            Row(
+                traj_id=row["traj_id"],
+                direction=row["direction"],
+                cluster_id=0,
+                source_lat=row["source_lat"],
+                source_lon=row["source_lon"],
+                source_alt_m=row["source_alt_m"],
+            )
+            for row in rows
+        ]
+        print("[SWEEP] skipped: fewer than 2 valid fixed-size feature rows; assigned cluster_id=0")
+        return spark.createDataFrame(assignment_rows) if assignment_rows else None
+
+    matrix = np.array([[float(row[col_name]) for col_name in feature_cols] for row in rows], dtype=float)
+    valid_mask = np.isfinite(matrix).all(axis=1)
+    valid_rows = [row for row, is_valid in zip(rows, valid_mask) if bool(is_valid)]
+    matrix = matrix[valid_mask]
+
+    if len(valid_rows) < 2:
+        assignment_rows = [
+            Row(
+                traj_id=row["traj_id"],
+                direction=row["direction"],
+                cluster_id=0,
+                source_lat=row["source_lat"],
+                source_lon=row["source_lon"],
+                source_alt_m=row["source_alt_m"],
+            )
+            for row in rows
+        ]
+        print("[SWEEP] skipped: fewer than 2 finite feature rows; assigned cluster_id=0")
+        return spark.createDataFrame(assignment_rows)
+
+    scaled = StandardScaler().fit_transform(matrix)
+    k_min = max(2, min(int(args.k_min), len(valid_rows)))
+    k_max = max(k_min, min(int(args.k_max), len(valid_rows)))
+    k_default = min(max(int(args.k_default), k_min), k_max)
+
+    print(f"[INFO] Valid clustering rows={len(valid_rows)}; feature_size={len(feature_cols)}")
+    print(f"[INFO] Running sklearn k-sweep {k_min}..{k_max}; final k={k_default}")
+    for k in range(k_min, k_max + 1):
+        model = KMeans(n_clusters=k, random_state=42, n_init=10, max_iter=40)
+        model.fit(scaled)
+        print(f"[SWEEP] k={k} WCSS={float(model.inertia_)}")
+
+    final_model = KMeans(n_clusters=k_default, random_state=42, n_init=10, max_iter=100)
+    labels = final_model.fit_predict(scaled)
+    label_by_id = {
+        (row["traj_id"], row["direction"]): int(label)
+        for row, label in zip(valid_rows, labels)
+    }
+    assignment_rows = []
+    for row in rows:
+        assignment_rows.append(
+            Row(
+                traj_id=row["traj_id"],
+                direction=row["direction"],
+                cluster_id=int(label_by_id.get((row["traj_id"], row["direction"]), 0)),
+                source_lat=row["source_lat"],
+                source_lon=row["source_lon"],
+                source_alt_m=row["source_alt_m"],
+            )
+        )
+    return spark.createDataFrame(assignment_rows)
 
 
 def main() -> None:
@@ -183,36 +278,30 @@ def main() -> None:
         imputed_cols = [f"{col_name}_imp" for col_name in feature_cols]
         imputer = Imputer(strategy="mean", inputCols=feature_cols, outputCols=imputed_cols)
         imputed = imputer.fit(grouped).transform(grouped)
-        assembled = VectorAssembler(inputCols=imputed_cols, outputCol="raw_features").transform(imputed)
-        scaler = StandardScaler(inputCol="raw_features", outputCol="features", withStd=True, withMean=True)
-        scaled = scaler.fit(assembled).transform(assembled).persist()
-
-        k_min = max(2, min(int(args.k_min), input_count))
-        k_max = max(k_min, min(int(args.k_max), input_count))
-        k_default = min(max(int(args.k_default), k_min), k_max)
-
-        print(f"[INFO] Running k-sweep {k_min}..{k_max}; final k={k_default}")
-        for k in range(k_min, k_max + 1):
-            model = KMeans(k=k, featuresCol="features", seed=42, maxIter=40).fit(scaled)
-            try:
-                cost = float(model.summary.trainingCost)
-            except Exception:
-                cost = float("nan")
-            print(f"[SWEEP] k={k} WCSS={cost}")
-
-        final_model = KMeans(k=k_default, featuresCol="features", seed=42, maxIter=100).fit(scaled)
-        assignments = (
-            final_model.transform(scaled)
-            .withColumnRenamed("prediction", "cluster_id")
-            .select(
-                "traj_id",
-                "direction",
-                F.col("cluster_id").cast("int"),
-                F.col(source_lat_name).alias("source_lat"),
-                F.col(source_lon_name).alias("source_lon"),
-                F.col(source_alt_name).alias("source_alt_m"),
+        imputed = keep_finite_feature_rows(imputed, imputed_cols)
+        valid_feature_count = imputed.count()
+        if valid_feature_count < 2:
+            assignments = (
+                grouped
+                .withColumn("cluster_id", F.lit(0).cast("int"))
+                .select(
+                    "traj_id",
+                    "direction",
+                    "cluster_id",
+                    F.col(source_lat_name).alias("source_lat"),
+                    F.col(source_lon_name).alias("source_lon"),
+                    F.col(source_alt_name).alias("source_alt_m"),
+                )
             )
-        )
+            print("[SWEEP] skipped: fewer than 2 finite feature rows; assigned cluster_id=0")
+        else:
+            assignments = build_sklearn_assignments(
+                spark,
+                imputed,
+                imputed_cols,
+                args,
+                (source_lat_name, source_lon_name, source_alt_name),
+            )
 
     output = (
         points.join(assignments, on=["traj_id", "direction"], how="inner")
@@ -248,7 +337,7 @@ def main() -> None:
             if args.direction != "all"
             else [row["direction"] for row in output.select("direction").distinct().collect()]
         )
-        delete_target_directions(spark, target_table, refresh_directions)
+        delete_target_directions(spark, target_table, refresh_directions, args.start_date, args.end_date)
     else:
         existing = spark.table(target_table).select("traj_id", "age_h")
         output = output.join(existing, on=["traj_id", "age_h"], how="left_anti")

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import os
@@ -9,8 +9,10 @@ from pyspark.sql import Window
 from hanoi_config import (
     ICEBERG_CATALOG,
     ICEBERG_WAREHOUSE,
+    apply_asof_time,
     get_hanoi_center,
     get_table_names,
+    parse_asof_time,
 )
 
 
@@ -18,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build OpenAQ spatial gradient silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--asof-time", default=os.getenv("ASOF_TIME", os.getenv("SIMULATED_NOW", os.getenv("BASE_TIME", ""))))
     parser.add_argument("--full-refresh", default=os.getenv("FULL_REFRESH", "0"))
     return parser.parse_args()
 
@@ -34,7 +37,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -62,11 +65,12 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
-def apply_date_range(df, start_date: str, end_date: str):
+def apply_date_range(df, start_date: str, end_date: str, asof_time=None):
     if start_date:
         df = df.filter(F.to_date("hour") >= F.to_date(F.lit(start_date)))
     if end_date:
         df = df.filter(F.to_date("hour") <= F.to_date(F.lit(end_date)))
+    df = apply_asof_time(df, "hour", asof_time)
     return df
 
 
@@ -147,9 +151,9 @@ def compute_spatial_gradient(station, center_lat: float, center_lon: float):
     )
 
 
-def build_output_df(spark: SparkSession, source_table: str, start_date: str, end_date: str):
+def build_output_df(spark: SparkSession, source_table: str, start_date: str, end_date: str, asof_time=None):
     station = spark.table(source_table)
-    station = apply_date_range(station, start_date, end_date)
+    station = apply_date_range(station, start_date, end_date, asof_time)
     station = station.filter(F.col("hour").isNotNull())
 
     duplicate_count_row = (
@@ -166,9 +170,21 @@ def build_output_df(spark: SparkSession, source_table: str, start_date: str, end
     return station, output, duplicate_count
 
 
-def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "hour", start_date, end_date)
 
     df.createOrReplaceTempView("openaq_gradient_updates")
     spark.sql(
@@ -225,9 +241,10 @@ def main() -> None:
         source_table=source_table,
         start_date=args.start_date,
         end_date=args.end_date,
+        asof_time=parse_asof_time(args.asof_time),
     )
     log_metrics(station_df, output_df, duplicate_count)
-    merge_iceberg(spark, output_df, target_table, full_refresh=full_refresh)
+    merge_iceberg(spark, output_df, target_table, full_refresh=full_refresh, start_date=args.start_date, end_date=args.end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

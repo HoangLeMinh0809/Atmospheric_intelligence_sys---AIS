@@ -1,0 +1,159 @@
+<mxfile host="app.diagrams.net" modified="2026-06-10T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="ais-context" name="1. System Context">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="AIS - Atmospheric Intelligence System / Top-level Context" style="text;html=1;strokeColor=none;fillColor=none;fontSize=22;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="760" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sources" value="External Data Sources&#xa;WeatherAPI / OpenAQ / Sentinel-5P / MAIAC / ERA5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="60" y="160" width="230" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ingest" value="Python Ingest Layer&#xa;source adapters publish JSON events&#xa;backfill windows + near-realtime Weather/OpenAQ demo loops" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="350" y="160" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="kafka" value="Kafka Event Bus&#xa;weather_history, openaq-hourly, sentinel5p-summary, maiac-summary, era5-files" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="630" y="145" width="230" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="spark" value="Spark Compute&#xa;Bronze stream/catch-up, silver/gold features, HYSPLIT, ML prep, visualization products" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="930" y="140" width="250" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="lakehouse" value="Iceberg on HDFS&#xa;Historical source of truth&#xa;Bronze / Silver / Gold / Models / Predictions / Visualization" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="930" y="410" width="250" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="serving" value="Serving Layer&#xa;FastAPI + HDFS visualization cache + Cassandra online prediction state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="600" y="430" width="260" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="ui" value="React UI&#xa;Hanoi air-flow dashboard&#xa;heatmap, trajectories, forecast, sources, stations" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="290" y="430" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="control" value="Control Plane&#xa;run_todo4_stack.ps1 / Airflow / Kubernetes / Monitoring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="60" y="430" width="180" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="sources" target="ingest" style="endArrow=block;html=1;rounded=0;strokeWidth=2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="ingest" target="kafka" style="endArrow=block;html=1;rounded=0;strokeWidth=2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="kafka" target="spark" style="endArrow=block;html=1;rounded=0;strokeWidth=2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="spark" target="lakehouse" style="endArrow=block;html=1;rounded=0;strokeWidth=2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="lakehouse" target="serving" style="endArrow=block;html=1;rounded=0;strokeWidth=2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="serving" target="ui" style="endArrow=block;html=1;rounded=0;strokeWidth=2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="control" target="spark" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#666666">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="control" target="kafka" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#666666">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="note" value="Design rule: Iceberg/HDFS remains the historical truth. Cassandra is the default hot path for PM2.5 prediction input/latest forecast; HDFS JSON/GeoJSON cache serves visualization layers. Demo time maps the real clock onto the latest backfill date." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13" vertex="1" parent="1">
+          <mxGeometry x="330" y="650" width="720" height="70" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="ais-data-pipeline" name="2. Data Pipeline Detail">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="t2" value="AIS Data Pipeline - From Sources to Product Tables" style="text;html=1;strokeColor=none;fillColor=none;fontSize=22;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="760" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="Weather&#xa;near-realtime poll&#xa;180m lookback / 300s loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf" vertex="1" parent="1"><mxGeometry x="60" y="110" width="150" height="85" as="geometry" /></mxCell>
+        <mxCell id="s2" value="OpenAQ PM2.5&#xa;near-realtime poll&#xa;180m lookback / 300s loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf" vertex="1" parent="1"><mxGeometry x="60" y="215" width="150" height="85" as="geometry" /></mxCell>
+        <mxCell id="s3" value="Sentinel-5P" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf" vertex="1" parent="1"><mxGeometry x="60" y="280" width="150" height="55" as="geometry" /></mxCell>
+        <mxCell id="s4" value="MAIAC AOD" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf" vertex="1" parent="1"><mxGeometry x="60" y="360" width="150" height="55" as="geometry" /></mxCell>
+        <mxCell id="s5" value="ERA5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf" vertex="1" parent="1"><mxGeometry x="60" y="440" width="150" height="55" as="geometry" /></mxCell>
+        <mxCell id="ing" value="Ingest adapters&#xa;ingest/*.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" vertex="1" parent="1"><mxGeometry x="270" y="240" width="170" height="120" as="geometry" /></mxCell>
+        <mxCell id="bus" value="Kafka topics" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" vertex="1" parent="1"><mxGeometry x="500" y="230" width="180" height="135" as="geometry" /></mxCell>
+        <mxCell id="bronze" value="Bronze ingest&#xa;bronze_ingest_to_iceberg_pipeline.py&#xa;backfill: availableNow / stop-after-batch&#xa;new data: long-running streams from latest offsets" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1" vertex="1" parent="1"><mxGeometry x="750" y="210" width="230" height="175" as="geometry" /></mxCell>
+        <mxCell id="bt" value="Bronze Iceberg&#xa;weather_bronze&#xa;openaq_bronze&#xa;s5p_bronze&#xa;maiac_bronze&#xa;era5_files_bronze" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1050" y="190" width="230" height="190" as="geometry" /></mxCell>
+        <mxCell id="silver" value="Hanoi Silver&#xa;station PM2.5&#xa;weather proxy&#xa;ERA5 surface&#xa;S5P daily&#xa;MAIAC daily" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" vertex="1" parent="1"><mxGeometry x="750" y="500" width="230" height="170" as="geometry" /></mxCell>
+        <mxCell id="traj" value="Trajectory / source features&#xa;ERA5 pressure -> ARL&#xa;HYSPLIT run/parse/cluster&#xa;path satellite sampling&#xa;spatial gradient" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1050" y="500" width="250" height="190" as="geometry" /></mxCell>
+        <mxCell id="gold" value="PM2.5 Gold&#xa;master hourly features&#xa;training dataset&#xa;serving features" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1390" y="420" width="230" height="150" as="geometry" /></mxCell>
+        <mxCell id="ml" value="ML train / promote / predict&#xa;6h, 12h, 24h forecasts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1390" y="630" width="230" height="120" as="geometry" /></mxCell>
+        <mxCell id="vis" value="Visualization gold + cache&#xa;visualization_pipeline.py --asof-time&#xa;heatmap, trajectories, plume, forecast dashboard, timeseries, sources, stations" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1390" y="820" width="270" height="155" as="geometry" /></mxCell>
+        <mxCell id="e21" edge="1" parent="1" source="s1" target="ing" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e22" edge="1" parent="1" source="s2" target="ing" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e23" edge="1" parent="1" source="s3" target="ing" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e24" edge="1" parent="1" source="s4" target="ing" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e25" edge="1" parent="1" source="s5" target="ing" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e26" edge="1" parent="1" source="ing" target="bus" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e27" edge="1" parent="1" source="bus" target="bronze" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e28" edge="1" parent="1" source="bronze" target="bt" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e29" edge="1" parent="1" source="bt" target="silver" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e30" edge="1" parent="1" source="bt" target="traj" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e31" edge="1" parent="1" source="silver" target="gold" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e32" edge="1" parent="1" source="traj" target="gold" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e33" edge="1" parent="1" source="gold" target="ml" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e34" edge="1" parent="1" source="ml" target="vis" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e35" edge="1" parent="1" source="gold" target="vis" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="ais-storage-serving" name="3. Storage and Serving">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="t3" value="Storage / Serving View" style="text;html=1;strokeColor=none;fillColor=none;fontSize=22;fontStyle=1;align=left" vertex="1" parent="1"><mxGeometry x="40" y="30" width="500" height="40" as="geometry" /></mxCell>
+        <mxCell id="hdfs" value="HDFS" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=16" vertex="1" parent="1"><mxGeometry x="80" y="150" width="190" height="120" as="geometry" /></mxCell>
+        <mxCell id="ice" value="Iceberg Warehouse&#xa;/warehouse/iceberg" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1" vertex="1" parent="1"><mxGeometry x="360" y="130" width="220" height="140" as="geometry" /></mxCell>
+        <mxCell id="raw" value="Raw files&#xa;/raw/era5&#xa;/raw/sentinel5p&#xa;/raw/maiac" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f5f5f5;strokeColor=#666666" vertex="1" parent="1"><mxGeometry x="360" y="330" width="220" height="130" as="geometry" /></mxCell>
+        <mxCell id="modelstore" value="Model artifacts&#xa;/models or hdfs://.../models" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656" vertex="1" parent="1"><mxGeometry x="360" y="520" width="220" height="120" as="geometry" /></mxCell>
+        <mxCell id="cache" value="Visualization cache&#xa;manifest/latest.json&#xa;GeoJSON / JSON layer payloads" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1" vertex="1" parent="1"><mxGeometry x="680" y="180" width="240" height="150" as="geometry" /></mxCell>
+        <mxCell id="cass" value="Cassandra serving&#xa;pm25_feature_state_by_location_hour&#xa;near-realtime prediction input&#xa;pm25_forecast_latest_by_location&#xa;API/UI hot forecast state" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1"><mxGeometry x="680" y="430" width="240" height="160" as="geometry" /></mxCell>
+        <mxCell id="visapi" value="Visualization API&#xa;/api/v1/visualization/*&#xa;map layers from HDFS cache&#xa;forecast/latest from Cassandra when date is omitted" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1030" y="150" width="250" height="155" as="geometry" /></mxCell>
+        <mxCell id="pmapi" value="PM2.5 API&#xa;/api/v1/hanoi/pm25/forecast/latest&#xa;Iceberg prediction table API&#xa;separate from visualization UI forecast card" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1030" y="370" width="250" height="150" as="geometry" /></mxCell>
+        <mxCell id="react" value="React UI&#xa;AirQualityMapDashboard.jsx&#xa;run_ui_stack.ps1 serves dashboard&#xa;forecast panel follows visualization API Cassandra hot state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1030" y="610" width="250" height="130" as="geometry" /></mxCell>
+        <mxCell id="e41" edge="1" parent="1" source="hdfs" target="ice" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e42" edge="1" parent="1" source="hdfs" target="raw" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e43" edge="1" parent="1" source="hdfs" target="modelstore" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e44" edge="1" parent="1" source="ice" target="cache" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e45" edge="1" parent="1" source="ice" target="cass" style="endArrow=block;html=1;dashed=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e46" edge="1" parent="1" source="cache" target="visapi" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e47" edge="1" parent="1" source="cache" target="pmapi" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e48" edge="1" parent="1" source="cass" target="pmapi" style="endArrow=block;html=1;dashed=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e49" edge="1" parent="1" source="cass" target="visapi" style="endArrow=block;html=1;strokeWidth=2;strokeColor=#b85450"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e50" edge="1" parent="1" source="visapi" target="react" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e51" edge="1" parent="1" source="pmapi" target="react" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="ais-runtime-control" name="4. Runtime and Control">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="950" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="t4" value="Runtime / Control View" style="text;html=1;strokeColor=none;fillColor=none;fontSize=22;fontStyle=1;align=left" vertex="1" parent="1"><mxGeometry x="40" y="30" width="500" height="40" as="geometry" /></mxCell>
+        <mxCell id="ps" value="scripts/run_todo4_stack.ps1&#xa;main local full-stack launcher" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" vertex="1" parent="1"><mxGeometry x="60" y="130" width="260" height="100" as="geometry" /></mxCell>
+        <mxCell id="compose" value="Docker Compose storage/dev infra&#xa;Zookeeper, Kafka, HDFS, Cassandra, Spark fallback" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1"><mxGeometry x="420" y="110" width="300" height="130" as="geometry" /></mxCell>
+        <mxCell id="k8s" value="Kubernetes namespace ais&#xa;Spark submit jobs, driver/executor pods, ML jobs, APIs, UI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" vertex="1" parent="1"><mxGeometry x="840" y="110" width="310" height="130" as="geometry" /></mxCell>
+        <mxCell id="cfg" value="ais-runtime-config&#xa;Kafka/HDFS/Iceberg/Cassandra/API/UI env" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1220" y="125" width="220" height="100" as="geometry" /></mxCell>
+        <mxCell id="steps" value="TODO4 Step Chain&#xa;1 infra&#xa;2 K8s config&#xa;3 build images&#xa;4 ensure Iceberg&#xa;5 backfill ingest&#xa;6 bronze catch-up&#xa;7 PM2.5 silver/gold&#xa;8 trajectory&#xa;9 rebuild gold&#xa;10 train&#xa;11 promote&#xa;12 serving features -> Cassandra -> predict&#xa;13 visualization products/cache&#xa;14 QC&#xa;15 verify forecast&#xa;16 Weather/OpenAQ near-realtime loops" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;align=left" vertex="1" parent="1"><mxGeometry x="60" y="330" width="290" height="430" as="geometry" /></mxCell>
+        <mxCell id="sparkrouter" value="scripts/submit_spark_k8s.sh&#xa;job router -> Spark app file&#xa;visualization-pipeline uses --asof-time&#xa;bronze-pipeline, pm25-feature-pipeline, trajectory-post-pipeline, etc." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1" vertex="1" parent="1"><mxGeometry x="470" y="360" width="330" height="185" as="geometry" /></mxCell>
+        <mxCell id="airflow" value="Airflow DAGs&#xa;batch bootstrap, streaming supervision, MAIAC backfill, maintenance, PM2.5 K8s chain, visualization products" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1"><mxGeometry x="900" y="360" width="310" height="160" as="geometry" /></mxCell>
+        <mxCell id="monitor" value="Monitoring UI&#xa;Kafka/HDFS/Airflow status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1" vertex="1" parent="1"><mxGeometry x="920" y="620" width="250" height="100" as="geometry" /></mxCell>
+        <mxCell id="e61" edge="1" parent="1" source="ps" target="compose" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e62" edge="1" parent="1" source="ps" target="k8s" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e63" edge="1" parent="1" source="cfg" target="k8s" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e64" edge="1" parent="1" source="ps" target="steps" style="endArrow=block;html=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e65" edge="1" parent="1" source="steps" target="sparkrouter" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e66" edge="1" parent="1" source="sparkrouter" target="k8s" style="endArrow=block;html=1;strokeWidth=2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e67" edge="1" parent="1" source="airflow" target="sparkrouter" style="endArrow=block;html=1;dashed=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e68" edge="1" parent="1" source="monitor" target="compose" style="endArrow=block;html=1;dashed=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e69" edge="1" parent="1" source="monitor" target="airflow" style="endArrow=block;html=1;dashed=1"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -20,28 +20,26 @@ for path in (ROOT_DIR, SPARK_JOBS_DIR):
 
 
 def build_pipeline_spark(app_name: str) -> SparkSession:
-    from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE
+    from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE
 
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
-    )
+    packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
-    return (
+    builder = (
         SparkSession.builder.appName(app_name)
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", HDFS_NAMENODE))
+        .config("spark.hadoop.fs.defaultFS", hdfs_base_uri())
         .config(
             "spark.hadoop.dfs.client.use.datanode.hostname",
             os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
         )
-        .getOrCreate()
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
+    return builder.getOrCreate()
 
 
 @contextlib.contextmanager
@@ -90,7 +88,7 @@ def invoke_module_main(
             module = importlib.import_module(module_name)
             module = importlib.reload(module)
             if hasattr(module, "build_spark"):
-                module.build_spark = lambda: shared_spark
+                module.build_spark = lambda *args, **kwargs: shared_spark
             _mark_active_session(shared_spark)
             module.main()
         finally:
@@ -100,4 +98,9 @@ def invoke_module_main(
 
 
 def hdfs_base_uri() -> str:
-    return (os.getenv("HDFS_NAMENODE") or "hdfs://namenode:9000").rstrip("/")
+    return (
+        os.getenv("HDFS_NAMENODE")
+        or os.getenv("HDFS_DEFAULT_FS")
+        or os.getenv("HADOOP_DEFAULT_FS")
+        or "hdfs://namenode:9000"
+    ).rstrip("/")
