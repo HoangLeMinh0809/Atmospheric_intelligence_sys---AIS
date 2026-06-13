@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ais-hourly-context-updater
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: ais-hourly-context-updater
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+spec:
+  schedule: "12 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ais-hourly-context-updater
+        spec:
+          serviceAccountName: ais-workload
+          restartPolicy: Never
+          containers:
+            - name: hourly-context
+              image: ais-spark-runtime:local
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: ais-runtime-config
+                - secretRef:
+                    name: ais-runtime-secrets
+                    optional: true
+              env:
+                - name: FULL_REFRESH
+                  value: "0"
+                - name: HYSPLIT_DIRECTION
+                  value: "backward"
+              command: ["bash", "/opt/ais/scripts/run_hourly_context_update.sh"]
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 2Gi
+                limits:
+                  cpu: "2"
+                  memory: 4Gi

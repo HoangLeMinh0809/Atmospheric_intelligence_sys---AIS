@@ -99,7 +99,7 @@ def as_bool(raw: str) -> bool:
 
 
 def allow_kafka_fallback() -> bool:
-    return as_bool(os.getenv("ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK", "0"))
+    return as_bool(os.getenv("ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK", "1"))
 
 
 def parse_base_time(raw: str) -> datetime:
@@ -527,6 +527,7 @@ def build_row(args: argparse.Namespace, context: dict[str, Any], openaq: dict[st
             "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
             "loaded_at": datetime.now(timezone.utc).replace(tzinfo=None),
             "data_watermark": data_watermark,
+            "pm25_now": openaq.get("pm25_mean") or row.get("pm25_mean"),
             "openaq_time": openaq.get("data_watermark"),
             "weather_time": weather.get("weather_time"),
             "era5_time": era5_time,
@@ -565,6 +566,7 @@ def output_schema() -> StructType:
         StructField("created_at", TimestampType(), True),
         StructField("loaded_at", TimestampType(), True),
         StructField("data_watermark", TimestampType(), True),
+        StructField("pm25_now", DoubleType(), True),
         StructField("openaq_time", TimestampType(), True),
         StructField("weather_time", TimestampType(), True),
         StructField("era5_time", TimestampType(), True),

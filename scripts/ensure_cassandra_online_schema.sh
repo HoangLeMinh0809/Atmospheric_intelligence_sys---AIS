@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_feature_state_by_location_
   created_at timestamp,
   loaded_at timestamp,
   data_watermark timestamp,
+  pm25_now double,
   openaq_time timestamp,
   weather_time timestamp,
   era5_time timestamp,
@@ -146,6 +147,7 @@ ensure_column() {
 ensure_column pm25_feature_state_by_location_hour feature_schema_hash text
 ensure_column pm25_feature_state_by_location_hour base_time timestamp
 ensure_column pm25_feature_state_by_location_hour data_watermark timestamp
+ensure_column pm25_feature_state_by_location_hour pm25_now double
 ensure_column pm25_feature_state_by_location_hour openaq_time timestamp
 ensure_column pm25_feature_state_by_location_hour weather_time timestamp
 ensure_column pm25_feature_state_by_location_hour era5_time timestamp

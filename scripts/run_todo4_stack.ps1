@@ -1282,21 +1282,29 @@ if (Should-RunStep 17) {
 }
 else { Write-Host "[SKIP] Step 17 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 
+if (Should-RunStep 18) {
+    Step "18) Start hourly ERA5/HYSPLIT context updater" {
+        kubectl apply -f deploy/k8s/hourly/ais-hourly-context-updater-cronjob.yaml | Out-Host
+        Write-Host "[INFO] Hourly context updater schedule: ERA5 surface/pressure -> ERA5 bronze/silver -> ARL -> HYSPLIT -> trajectory hourly features." -ForegroundColor Yellow
+    }
+}
+else { Write-Host "[SKIP] Step 18 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
+
 if (-not $SkipDemoRealtimeFeed) {
-    if (Should-RunStep 18) {
-        Step "18) Prepare and replay EndDate demo near-realtime feed" {
+    if (Should-RunStep 19) {
+        Step "19) Prepare and replay EndDate demo near-realtime feed" {
             Start-DemoRealtimeFeed
         }
     }
-    else { Write-Host "[SKIP] Step 18 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
+    else { Write-Host "[SKIP] Step 19 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 }
 else {
     Write-Host "[INFO] Skip demo interpolated near-realtime feed due to -SkipDemoRealtimeFeed"
 }
 
 if ($onlineServingEnabled) {
-    if (Should-RunStep 19) {
-        Step "19) Build online feature state and run realtime prediction" {
+    if (Should-RunStep 20) {
+        Step "20) Build online feature state and run realtime prediction" {
             Write-Host ("[INFO] current base_time={0} online_feature_interval={1}s prediction_interval={2}s" -f $simulatedBaseTime, $OnlineFeatureIntervalSeconds, $RealtimePredictionIntervalSeconds) -ForegroundColor Yellow
             Ensure-OnlineServingInfra
             Invoke-Bash "bash scripts/ensure_cassandra_online_schema.sh"
@@ -1325,7 +1333,7 @@ if ($onlineServingEnabled) {
             kubectl apply -f deploy/k8s/ml/online-pm25-features-cronjob.yaml | Out-Host
         }
     }
-    else { Write-Host "[SKIP] Step 19 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
+    else { Write-Host "[SKIP] Step 20 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 }
 else {
     Write-Host "[INFO] Online feature_state/prediction step disabled because -UseIcebergPredictionInput was set."

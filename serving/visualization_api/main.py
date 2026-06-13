@@ -519,6 +519,8 @@ def manifest_latest(date: str | None = None) -> dict[str, Any]:
 def pm25_heatmap_latest(horizon_h: int = 0, date: str | None = None) -> JSONResponse:
     if horizon_h not in {0, 6, 12, 24}:
         raise HTTPException(status_code=400, detail={"error": "invalid_horizon", "allowed": [0, 6, 12, 24]})
+    if date is None and horizon_h == 0 and cassandra_forecast_enabled():
+        return JSONResponse(build_live_cassandra_heatmap("hanoi"))
     layer = find_layer(load_manifest(date), "pm25_heatmap", horizon_h=horizon_h)
     if layer is None:
         raise HTTPException(status_code=404, detail={"error": "layer_not_found", "layer_name": "pm25_heatmap", "horizon_h": horizon_h})
@@ -527,6 +529,11 @@ def pm25_heatmap_latest(horizon_h: int = 0, date: str | None = None) -> JSONResp
 
 @app.get("/api/v1/visualization/live/pm25/heatmap/latest")
 def live_pm25_heatmap_latest(location_id: str = "hanoi", date: str | None = None) -> JSONResponse:
+    if date is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "live_heatmap_does_not_accept_date", "message": "Use /pm25/heatmap/latest?date=YYYY-MM-DD for historical/cache views."},
+        )
     return JSONResponse(build_live_cassandra_heatmap(location_id, date=date))
 
 

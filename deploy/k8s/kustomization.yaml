@@ -14,6 +14,7 @@ resources:
   - api/pm25-api-service.yaml
   - checks/pm25-serving-check-job.yaml
   - ml/online-pm25-features-cronjob.yaml
+  - hourly/ais-hourly-context-updater-cronjob.yaml
   - visualization-api/visualization-api-deployment.yaml
   - visualization-api/visualization-api-service.yaml
   - ui/ais-ui-deployment.yaml

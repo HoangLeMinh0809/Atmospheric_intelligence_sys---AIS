@@ -61,7 +61,11 @@ RUN rm -rf /root/.cache/pip && \
     pandas==1.5.3 \
     scipy==1.10.1 \
     scikit-learn==1.3.2 \
-    lightgbm==3.3.5 && \
+    lightgbm==3.3.5 \
+    kafka-python==2.0.2 \
+    requests==2.31.0 \
+    python-dotenv==1.0.1 \
+    cdsapi==0.7.6 && \
     if [ "${INSTALL_XGBOOST}" = "true" ]; then \
       python3 -m pip install --no-cache-dir --default-timeout="${PIP_DEFAULT_TIMEOUT}" --retries="${PIP_RETRIES}" --only-binary=:all: \
       xgboost==2.0.3; \
@@ -87,10 +91,11 @@ RUN set -eux; \
 
 COPY spark_jobs/ /opt/spark-jobs/
 COPY ml/ /opt/ml/
+COPY ingest/ /opt/ais/ingest/
 COPY config/ /opt/config/
 COPY scripts/ /opt/ais/scripts/
 
-ENV PYTHONPATH=/opt/spark-jobs:/opt/ml:/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
+ENV PYTHONPATH=/opt/spark-jobs:/opt/ml:/opt/ais/ingest:/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
 ENV HANOI_PIPELINE_CONFIG=/opt/config/hanoi_pipeline.yaml
 
 USER root

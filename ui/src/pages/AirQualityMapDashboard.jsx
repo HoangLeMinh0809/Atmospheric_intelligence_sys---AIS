@@ -113,7 +113,7 @@ export default function AirQualityMapDashboard() {
     Promise.all([
       getManifestLatest(selectedDate),
       getHeatmapLatest(requestHorizon, selectedDate),
-      getLiveHeatmapLatest("hanoi", selectedDate).catch(() => null),
+      selectedDate ? Promise.resolve(null) : getLiveHeatmapLatest("hanoi").catch(() => null),
       getBackwardTrajectoriesLatest(selectedDate),
       getForwardPlumeLatest(plumeHorizon, selectedDate),
       getForecastLatest("hanoi", selectedDate),
@@ -127,7 +127,7 @@ export default function AirQualityMapDashboard() {
         setData((current) => ({
           manifest,
           heatmap: horizonRef.current === requestHorizon ? heatmap : current.heatmap,
-          liveHeatmap: liveHeatmap || current.liveHeatmap,
+          liveHeatmap: selectedDate ? null : liveHeatmap || current.liveHeatmap,
           heatmapsByHorizon: {
             ...(current.heatmapsByHorizon || {}),
             [requestHorizon]: heatmap,
@@ -162,7 +162,10 @@ export default function AirQualityMapDashboard() {
     }),
     [data],
   );
-  const displayForecast = useMemo(() => mergeLiveNowForecast(data.forecast, data.liveHeatmap), [data.forecast, data.liveHeatmap]);
+  const displayForecast = useMemo(
+    () => (selectedDate ? data.forecast : mergeLiveNowForecast(data.forecast, data.liveHeatmap)),
+    [data.forecast, data.liveHeatmap, selectedDate],
+  );
 
   const handleMapStats = useCallback((nextStats) => {
     setMapStats((current) =>
@@ -191,7 +194,9 @@ export default function AirQualityMapDashboard() {
     }));
     Promise.all([
       nextHorizon === 0
-        ? getLiveHeatmapLatest("hanoi", selectedDate).catch(() => getHeatmapLatest(0, selectedDate))
+        ? selectedDate
+          ? getHeatmapLatest(0, selectedDate)
+          : getLiveHeatmapLatest("hanoi").catch(() => getHeatmapLatest(0))
         : cached ? Promise.resolve(cached) : getHeatmapLatest(nextHorizon, selectedDate),
       getForwardPlumeLatest(nextHorizon === 0 ? 6 : nextHorizon, selectedDate),
     ])
@@ -200,7 +205,7 @@ export default function AirQualityMapDashboard() {
         setData((current) => ({
           ...current,
           heatmap,
-          liveHeatmap: nextHorizon === 0 ? heatmap : current.liveHeatmap,
+          liveHeatmap: selectedDate ? null : nextHorizon === 0 ? heatmap : current.liveHeatmap,
           plume,
           heatmapsByHorizon: {
             ...(current.heatmapsByHorizon || {}),
