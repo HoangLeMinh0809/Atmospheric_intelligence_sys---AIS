@@ -16,8 +16,21 @@ CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_feature_state_by_location_
   feature_set_name text,
   dataset_version text,
   schema_hash text,
+  feature_schema_hash text,
+  base_time timestamp,
   created_at timestamp,
   loaded_at timestamp,
+  data_watermark timestamp,
+  openaq_time timestamp,
+  weather_time timestamp,
+  era5_time timestamp,
+  hysplit_time timestamp,
+  satellite_date timestamp,
+  s5p_staleness_days int,
+  maiac_staleness_days int,
+  era5_staleness_hours int,
+  hysplit_staleness_hours int,
+  updated_at timestamp,
   pm25_median double,
   pm25_mean double,
   station_count int,
@@ -114,13 +127,38 @@ CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_forecast_latest_by_locatio
   feature_version text,
   feature_source text,
   feature_schema_hash text,
+  data_watermark timestamp,
+  updated_at timestamp,
   inference_run_id text,
   created_at timestamp
 );
 CQL
 
-if ! docker exec "$CASSANDRA_CONTAINER" cqlsh -e "SELECT column_name FROM system_schema.columns WHERE keyspace_name='${CASSANDRA_KEYSPACE}' AND table_name='pm25_forecast_latest_by_location' AND column_name='feature_source';" | grep -q "feature_source"; then
-  docker exec "$CASSANDRA_CONTAINER" cqlsh -e "ALTER TABLE ${CASSANDRA_KEYSPACE}.pm25_forecast_latest_by_location ADD feature_source text;"
-fi
+ensure_column() {
+  local table="$1"
+  local column="$2"
+  local type="$3"
+  if ! docker exec "$CASSANDRA_CONTAINER" cqlsh -e "SELECT column_name FROM system_schema.columns WHERE keyspace_name='${CASSANDRA_KEYSPACE}' AND table_name='${table}' AND column_name='${column}';" | grep -q "$column"; then
+    docker exec "$CASSANDRA_CONTAINER" cqlsh -e "ALTER TABLE ${CASSANDRA_KEYSPACE}.${table} ADD ${column} ${type};"
+  fi
+}
+
+ensure_column pm25_feature_state_by_location_hour feature_schema_hash text
+ensure_column pm25_feature_state_by_location_hour base_time timestamp
+ensure_column pm25_feature_state_by_location_hour data_watermark timestamp
+ensure_column pm25_feature_state_by_location_hour openaq_time timestamp
+ensure_column pm25_feature_state_by_location_hour weather_time timestamp
+ensure_column pm25_feature_state_by_location_hour era5_time timestamp
+ensure_column pm25_feature_state_by_location_hour hysplit_time timestamp
+ensure_column pm25_feature_state_by_location_hour satellite_date timestamp
+ensure_column pm25_feature_state_by_location_hour s5p_staleness_days int
+ensure_column pm25_feature_state_by_location_hour maiac_staleness_days int
+ensure_column pm25_feature_state_by_location_hour era5_staleness_hours int
+ensure_column pm25_feature_state_by_location_hour hysplit_staleness_hours int
+ensure_column pm25_feature_state_by_location_hour updated_at timestamp
+
+ensure_column pm25_forecast_latest_by_location feature_source text
+ensure_column pm25_forecast_latest_by_location data_watermark timestamp
+ensure_column pm25_forecast_latest_by_location updated_at timestamp
 
 echo "Ensured Cassandra online serving schema in keyspace ${CASSANDRA_KEYSPACE}"

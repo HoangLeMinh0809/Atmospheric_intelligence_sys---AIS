@@ -57,7 +57,7 @@ def main() -> None:
     asof_time = parse_base_time(args.base_time) or end_of_date(args.end_date)
     max_paths = max(1, int(runtime.get("max_trajectories", 150)))
     max_points = max(2, int(runtime.get("max_points_per_trajectory", 100)))
-    pm25_threshold = float(os.getenv("VIS_TRAJECTORY_PM25_THRESHOLD", os.getenv("PM25_TRIGGER_THRESHOLD", "40") or "40"))
+    pm25_threshold = float(os.getenv("VIS_TRAJECTORY_PM25_THRESHOLD", os.getenv("PM25_TRIGGER_THRESHOLD", "30") or "30"))
 
     try:
         traj = read_table_if_exists(spark, tables["hysplit_cluster_silver"])

@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: online-pm25-features
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: online-pm25-features
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: online-pm25-features
+        spec:
+          serviceAccountName: ais-workload
+          restartPolicy: Never
+          containers:
+            - name: online-features
+              image: ais-spark-runtime:local
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: ais-runtime-config
+                - secretRef:
+                    name: ais-runtime-secrets
+                    optional: true
+              env:
+                # Let each run derive a moving hour from REALTIME_SIMULATION_DATE.
+                - name: BASE_TIME
+                  value: ""
+                - name: BASE_HOUR
+                  value: ""
+              command: ["bash", "/opt/ais/scripts/run_online_pm25_cycle.sh"]
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: "1"
+                  memory: 2Gi

@@ -15,11 +15,6 @@ spec:
     spec:
       serviceAccountName: ais-workload
       restartPolicy: Never
-      hostAliases:
-        - ip: "192.168.65.254"
-          hostnames:
-            - namenode
-            - datanode
       containers:
         - name: predict
           image: ais-ml-runtime:local
@@ -33,9 +28,13 @@ spec:
           command: ["/opt/spark/bin/spark-submit"]
           args:
             - --master
-            - local[2]
+            - local[1]
             - --deploy-mode
             - client
+            - --conf
+            - spark.sql.shuffle.partitions=4
+            - --conf
+            - spark.default.parallelism=4
             - --conf
             - spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
             - --conf

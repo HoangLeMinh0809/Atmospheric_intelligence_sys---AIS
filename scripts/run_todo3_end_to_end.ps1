@@ -55,9 +55,13 @@ Require-Command -CommandName "bash"
 
 $range = Resolve-DateRange
 $resolvedStartDate = $range.Start
-$resolvedEndDate = $range.End
+$realtimeSimulationDate = $range.End
+$resolvedEndDate = ([datetime]::ParseExact($realtimeSimulationDate, "yyyy-MM-dd", $null)).Date.AddDays(-1).ToString("yyyy-MM-dd")
+if ([datetime]::ParseExact($resolvedStartDate, "yyyy-MM-dd", $null) -gt [datetime]::ParseExact($resolvedEndDate, "yyyy-MM-dd", $null)) {
+    throw "Invalid window: StartDate=$resolvedStartDate must be <= historical EndDate=$resolvedEndDate (requested EndDate - 1 day)."
+}
 
-Write-Host "TODO-3 E2E test window: $resolvedStartDate -> $resolvedEndDate (UTC day)"
+Write-Host "TODO-3 historical window: $resolvedStartDate -> $resolvedEndDate (requested current day: $realtimeSimulationDate)"
 
 Step "1) Start core infra (Docker Compose)" {
     docker compose up -d --build zookeeper kafka namenode datanode spark-master spark-worker cassandra | Out-Host
@@ -81,7 +85,12 @@ else {
 if (-not $SkipBackfill) {
     Step "4) Backfill OpenAQ -> Kafka" {
         $env:LOOKBACK_DAYS = "$LookbackDays"
-        docker compose run --rm -e WINDOW_MODE=batch -e BATCH_LOOKBACK_DAYS="$LookbackDays" openaq-ingest | Out-Host
+        docker compose run --rm `
+            -e WINDOW_MODE=batch `
+            -e BATCH_LOOKBACK_DAYS="$LookbackDays" `
+            -e WINDOW_START_UTC="${resolvedStartDate}T00:00:00Z" `
+            -e WINDOW_END_UTC="${resolvedEndDate}T23:59:59Z" `
+            openaq-ingest | Out-Host
     }
 
     Step "5) Catch Kafka OpenAQ -> Iceberg bronze (earliest, batch stop)" {

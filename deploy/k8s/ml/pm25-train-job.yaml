@@ -15,11 +15,6 @@ spec:
     spec:
       serviceAccountName: ais-workload
       restartPolicy: Never
-      hostAliases:
-        - ip: "192.168.65.254"
-          hostnames:
-            - namenode
-            - datanode
       containers:
         - name: train
           image: ais-ml-runtime:local

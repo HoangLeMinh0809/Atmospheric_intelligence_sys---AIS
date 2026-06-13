@@ -517,7 +517,10 @@ select option {
   border-top: 4px solid #f59e0b;
 }
 
-.risk-high,
+.risk-high {
+  border-top: 4px solid #f97316;
+}
+
 .risk-very_high {
   border-top: 4px solid #ef4444;
 }

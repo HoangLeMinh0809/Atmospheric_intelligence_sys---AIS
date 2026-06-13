@@ -189,7 +189,12 @@ OUTPUT_COLUMN_TYPES = {
     "spark_processed_at": "TIMESTAMP",
 }
 
-TARGET_COLUMNS = ["pm25_next_6h", "pm25_next_12h", "pm25_next_24h"]
+TARGET_HORIZONS = {
+    "pm25_next_6h": 6,
+    "pm25_next_12h": 12,
+    "pm25_next_24h": 24,
+}
+TARGET_COLUMNS = list(TARGET_HORIZONS.keys())
 
 
 def parse_args() -> argparse.Namespace:
@@ -332,6 +337,19 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
+def mask_targets_crossing_cutoff(df, end_date: str):
+    if not end_date:
+        return df
+    cutoff = F.to_timestamp(F.lit(f"{end_date} 23:59:59"))
+    for target_col, horizon_h in TARGET_HORIZONS.items():
+        target_time = F.expr(f"hour + INTERVAL {horizon_h} HOURS")
+        df = df.withColumn(
+            target_col,
+            F.when(target_time <= cutoff, F.col(target_col)).otherwise(F.lit(None).cast("double")),
+        )
+    return df
+
+
 def build_training_dataset(master, dataset_version: str, feature_set_name: str):
     filtered = master.dropna(subset=TARGET_COLUMNS)
     order_w = Window.orderBy("hour")
@@ -419,6 +437,7 @@ def main() -> None:
 
     ensure_table(spark, target_table)
     master = apply_date_range(spark.table(source_table), args.start_date, args.end_date)
+    master = mask_targets_crossing_cutoff(master, args.end_date)
     training = build_training_dataset(master, args.dataset_version, args.feature_set_name)
     log_metrics(training)
     write_iceberg(spark, training, target_table, full_refresh=as_bool(args.full_refresh), start_date=args.start_date, end_date=args.end_date)

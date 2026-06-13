@@ -87,6 +87,13 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("WRITE_CASSANDRA_FORECAST", os.getenv("CASSANDRA_WRITE_FORECAST", "0")),
         help="Also write the latest forecast to Cassandra.",
     )
+    parser.add_argument(
+        "--write-iceberg-audit",
+        nargs="?",
+        const="1",
+        default=os.getenv("WRITE_FORECAST_TO_ICEBERG_AUDIT", "1"),
+        help="Write prediction to Iceberg audit/history table.",
+    )
     return parser.parse_args()
 
 
@@ -342,9 +349,9 @@ def predict_one(spark: SparkSession, model_meta: dict[str, Any], feature_row: di
 
 
 def validate_schema(feature_row: dict[str, Any], models: dict[int, dict[str, Any]]) -> str:
-    feature_schema_hash = feature_row.get("schema_hash")
+    feature_schema_hash = feature_row.get("schema_hash") or feature_row.get("feature_schema_hash")
     if not feature_schema_hash:
-        raise RuntimeError("Serving feature row has no schema_hash")
+        raise RuntimeError("Serving feature row has no schema_hash/feature_schema_hash")
     if feature_schema_hash != FEATURE_SCHEMA_HASH:
         raise RuntimeError(
             f"Serving feature schema_hash mismatch: expected={FEATURE_SCHEMA_HASH} actual={feature_schema_hash}"
@@ -448,6 +455,8 @@ def build_prediction_row(
         "model_status": args.model_status,
         "feature_version": args.feature_version,
         "feature_schema_hash": feature_schema_hash,
+        "data_watermark": feature_row.get("data_watermark"),
+        "updated_at": created_at,
         "inference_run_id": inference_run_id,
         "created_at": created_at,
         "year": int(base_hour.year),
@@ -541,6 +550,8 @@ def write_prediction_to_cassandra(spark: SparkSession, args: argparse.Namespace,
             StructField("feature_version", StringType(), True),
             StructField("feature_source", StringType(), True),
             StructField("feature_schema_hash", StringType(), True),
+            StructField("data_watermark", TimestampType(), True),
+            StructField("updated_at", TimestampType(), True),
             StructField("inference_run_id", StringType(), True),
             StructField("created_at", TimestampType(), True),
         ]
@@ -571,6 +582,8 @@ def write_prediction_to_cassandra(spark: SparkSession, args: argparse.Namespace,
         "feature_version": row.get("feature_version"),
         "feature_source": args.feature_source,
         "feature_schema_hash": row.get("feature_schema_hash"),
+        "data_watermark": row.get("data_watermark"),
+        "updated_at": row.get("updated_at"),
         "inference_run_id": row.get("inference_run_id"),
         "created_at": row.get("created_at"),
     }
@@ -621,10 +634,16 @@ def main() -> None:
             print("pm25_predict status=dry_run_success")
             return
 
-        write_prediction(spark, prediction_table, row)
+        wrote_iceberg = False
+        if parse_bool(args.write_iceberg_audit):
+            write_prediction(spark, prediction_table, row)
+            wrote_iceberg = True
         if parse_bool(args.write_cassandra_forecast) or args.feature_source == "cassandra":
             write_prediction_to_cassandra(spark, args, row)
-        print(f"pm25_predict status=success prediction_id={row['prediction_id']} table={prediction_table}")
+        print(
+            f"pm25_predict status=success prediction_id={row['prediction_id']} "
+            f"iceberg_audit_written={int(wrote_iceberg)} cassandra_forecast_table={args.cassandra_forecast_table}"
+        )
 
     finally:
         spark.stop()

@@ -106,21 +106,6 @@ function nearestPm25(heatmap, lon, lat) {
   return best;
 }
 
-function forecastRisk(value) {
-  if (value == null || Number.isNaN(value)) return "unknown";
-  if (value < 25) return "low";
-  if (value < 35) return "moderate";
-  if (value < 55) return "sensitive";
-  if (value < 80) return "high";
-  return "very_high";
-}
-
-function fallbackForecastValue(current, horizon) {
-  if (!Number.isFinite(current)) return null;
-  const drift = { 0: 0, 6: 4.5, 12: -1.5, 24: -6 }[horizon] ?? 0;
-  return Math.max(5, current + drift);
-}
-
 function inUrbanBbox(lon, lat, pad = 0.025) {
   return lon >= INNER_BBOX[0] - pad && lon <= INNER_BBOX[2] + pad && lat >= INNER_BBOX[1] - pad && lat <= INNER_BBOX[3] + pad;
 }
@@ -167,18 +152,12 @@ function percentile(values, p) {
   return sorted[lo] * (1 - frac) + sorted[hi] * frac;
 }
 
-function colorScale(values) {
-  const p5 = percentile(values, 0.05);
-  const p50 = percentile(values, 0.5);
-  const p8 = percentile(values, 0.8);
-  const p95 = percentile(values, 0.95);
-  const min = Math.max(0, p5 - 2);
-  const max = Math.max(p95, min + 28);
+function colorScale() {
   return {
-    min,
-    p50: Math.max(p50, min + 10),
-    p80: Math.max(p8, min + 18),
-    max,
+    min: 0,
+    p50: 30,
+    p80: 40,
+    max: 55,
   };
 }
 
@@ -193,12 +172,12 @@ function rgbaBetween(left, right, t, alpha) {
 function pm25Color(value, scale, alpha = 0.9) {
   if (value == null || Number.isNaN(value)) return `rgba(148,163,184,${alpha * 0.25})`;
   const stops = [
-    [scale.min, [45, 212, 191]],
-    [Math.min(25, scale.p50), [34, 197, 94]],
-    [scale.p50, [250, 204, 21]],
-    [scale.p80, [249, 115, 22]],
-    [scale.max, [239, 68, 68]],
-    [scale.max + 18, [126, 34, 206]],
+    [0, [45, 212, 191]],
+    [20, [34, 197, 94]],
+    [30, [250, 204, 21]],
+    [40, [249, 115, 22]],
+    [55, [239, 68, 68]],
+    [80, [126, 34, 206]],
   ];
   for (let i = 1; i < stops.length; i += 1) {
     if (value <= stops[i][0]) {
@@ -213,10 +192,10 @@ function pm25Color(value, scale, alpha = 0.9) {
 
 function riskLabel(value) {
   if (value == null || Number.isNaN(value)) return "Unknown";
-  if (value < 25) return "Low";
-  if (value < 35) return "Moderate";
-  if (value < 55) return "Elevated";
-  if (value < 80) return "High";
+  if (value < 20) return "Low";
+  if (value < 30) return "Moderate";
+  if (value < 40) return "Elevated";
+  if (value < 55) return "High";
   return "Very high";
 }
 
@@ -426,7 +405,8 @@ function latestTrajectoryGroup(features, receptor = DEFAULT_RECEPTOR) {
 function trajectoriesForReceptor(features, receptor = DEFAULT_RECEPTOR) {
   const matched = latestTrajectoryGroup(features, receptor);
   if (matched.length) return matched.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
-  return [];
+  const latest = latestTrajectoryGroup(features, DEFAULT_RECEPTOR);
+  return latest.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: true } }));
 }
 
 function densifyTrajectory(feature) {
@@ -461,19 +441,6 @@ function stationRadius(feature) {
   return Math.max(7, Math.min(18, 5 + value / 7));
 }
 
-function pointForecastFor(layers, lon, lat, currentValue = null) {
-  const heatmaps = layers.heatmapsByHorizon || {};
-  const values = {};
-  for (const horizon of [0, 6, 12, 24]) {
-    const fromHeatmap = nearestPm25(heatmaps[horizon], lon, lat);
-    const value = fromHeatmap ?? fallbackForecastValue(currentValue, horizon);
-    values[horizon === 0 ? "now" : `${horizon}h`] = value == null
-      ? null
-      : { pm25: Number(value.toFixed(1)), risk: forecastRisk(value) };
-  }
-  return values;
-}
-
 function clampZoom(value) {
   return Math.max(0.8, Math.min(5, Number(value)));
 }
@@ -482,7 +449,7 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
   const width = MAP_WIDTH;
   const height = MAP_HEIGHT;
   const [zoom, setZoom] = useState(1);
-  const [selectedReceptor, setSelectedReceptor] = useState(null);
+  const [selectedReceptor, setSelectedReceptor] = useState(DEFAULT_RECEPTOR);
   const rawHeatmap = layers.heatmap?.features || [];
   const rawStations = layers.stations?.features || [];
   const plume = layers.plume?.features || [];
@@ -610,7 +577,7 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
                   d={rectPath(cell, width, height)}
                   fill={cell.color}
                   className="heatmap-pixel"
-                  style={{ opacity: 0.42 + cell.normalizedValue * 0.48 }}
+                  style={{ opacity: 0.68 + cell.normalizedValue * 0.27 }}
                   onClick={() =>
                     onSelect({
                       type: "Feature",
@@ -620,7 +587,6 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
                         pm25_value: Number(cell.pm25.toFixed(1)),
                         normalized_value: Number(cell.normalizedValue.toFixed(3)),
                         description: `${cell.pm25.toFixed(1)} µg/m³ · ${riskLabel(cell.pm25)}`,
-                        point_forecast: pointForecastFor(layers, cell.lon, cell.lat, cell.pm25),
                       },
                     })
                   }
@@ -675,8 +641,9 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
                       layer_name: "Backward receptor",
                       location_name: name,
                       pm25_value: currentValue == null ? null : Number(currentValue.toFixed(1)),
-                      point_forecast: pointForecastFor(layers, lon, lat, currentValue),
-                      description: `Showing backward trajectory ensemble for ${name}`,
+                      description: currentValue == null
+                        ? `Showing backward trajectory ensemble for ${name}`
+                        : `${currentValue.toFixed(1)} µg/m³ on the visible heatmap`,
                     },
                   });
                 }}
@@ -706,7 +673,6 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
                         ...(feature.properties || {}),
                         layer_name: "Source attribution",
                         pm25_value: currentValue == null ? null : Number(currentValue.toFixed(1)),
-                        point_forecast: lon == null ? null : pointForecastFor(layers, lon, lat, currentValue),
                       },
                     })
                   }
@@ -735,7 +701,6 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
                       properties: {
                         ...(feature.properties || {}),
                         layer_name: "Monitoring station",
-                        point_forecast: lon == null ? null : pointForecastFor(layers, lon, lat, value),
                       },
                     })
                   }

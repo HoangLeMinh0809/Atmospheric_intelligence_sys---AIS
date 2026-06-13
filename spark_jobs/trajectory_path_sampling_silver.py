@@ -61,6 +61,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             traj_id STRING,
+            init_time TIMESTAMP,
             path_no2_mean DOUBLE,
             path_aer_mean DOUBLE,
             path_no2_max DOUBLE,
@@ -72,6 +73,16 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    existing = set(spark.table(table_name).columns)
+    for column, dtype in {
+        "init_time": "TIMESTAMP",
+        "path_no2_max": "DOUBLE",
+        "path_no2_std": "DOUBLE",
+        "path_no2_aer_ratio": "DOUBLE",
+        "spark_processed_at": "TIMESTAMP",
+    }.items():
+        if column not in existing:
+            spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
 def apply_date_range(df, start_date: str, end_date: str):
@@ -83,6 +94,10 @@ def apply_date_range(df, start_date: str, end_date: str):
 
 
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    columns = set(spark.table(table_name).columns)
+    if time_col not in columns:
+        print(f"delete_date_window_skip table={table_name} missing_time_col={time_col}")
+        return
     predicates = []
     if start_date:
         predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
@@ -240,7 +255,7 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
     )
 
     output = (
-        init_times.select("traj_id")
+        init_times.select("traj_id", "init_time")
         .distinct()
         .join(no2, on="traj_id", how="left")
         .join(aer, on="traj_id", how="left")
@@ -254,6 +269,7 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
         .withColumn("spark_processed_at", F.current_timestamp())
         .select(
             "traj_id",
+            "init_time",
             "path_no2_mean",
             "path_aer_mean",
             "path_no2_max",

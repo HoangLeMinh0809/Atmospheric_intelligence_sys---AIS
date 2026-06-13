@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import urllib.parse
@@ -311,7 +312,18 @@ def load_cassandra_feature_state(location_id: str, date: str | None = None) -> d
     return row._asdict()
 
 
-def live_pm25_value(data: dict[str, Any], lon: float, lat: float, west: float, south: float, east: float, north: float) -> float:
+def live_pm25_value(
+    data: dict[str, Any],
+    lon: float,
+    lat: float,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    *,
+    time_bucket: int,
+    noise_ratio: float,
+) -> float:
     base = float_or_none(data.get("pm25_mean")) or float_or_none(data.get("pm25_median")) or 0.0
     if base <= 0:
         raise HTTPException(status_code=404, detail={"error": "cassandra_feature_state_pm25_missing", "location_id": data.get("location_id")})
@@ -333,12 +345,13 @@ def live_pm25_value(data: dict[str, Any], lon: float, lat: float, west: float, s
     base_hour = to_iso(data.get("base_hour")) or ""
     phase_seed = sum(ord(ch) for ch in base_hour[-12:])
     wave = 0.45 * spread * (
-        pow(2.718281828, -((dx - 0.25) ** 2 + (dy + 0.10) ** 2) * 2.2)
-        - pow(2.718281828, -((dx + 0.35) ** 2 + (dy - 0.25) ** 2) * 2.8)
+        math.exp(-((dx - 0.25) ** 2 + (dy + 0.10) ** 2) * 2.2)
+        - math.exp(-((dx + 0.35) ** 2 + (dy - 0.25) ** 2) * 2.8)
     )
-    ripple = 0.18 * spread * (((int((lon * 10000) + phase_seed) % 7) - 3) / 3.0)
+    ripple = 0.18 * spread * (((int((lon * 10000) + phase_seed + time_bucket) % 7) - 3) / 3.0)
+    temporal = base * noise_ratio * math.sin(time_bucket * 0.73 + lon * 91.0 + lat * 77.0)
 
-    pm25 = base + ((grad_e - grad_w) * dx + (grad_n - grad_s) * dy) * 0.35 + source_bump + wave + ripple
+    pm25 = base + ((grad_e - grad_w) * dx + (grad_n - grad_s) * dy) * 0.35 + source_bump + wave + ripple + temporal
     return max(1.0, min(250.0, pm25))
 
 
@@ -347,6 +360,9 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
     west, south, east, north = parse_live_bbox()
     cols = max(8, min(48, int(env("VIS_LIVE_HEATMAP_COLS", "28") or "28")))
     rows = max(6, min(36, int(env("VIS_LIVE_HEATMAP_ROWS", "20") or "20")))
+    bucket_seconds = max(5, min(300, int(env("VIS_LIVE_HEATMAP_BUCKET_SECONDS", "15") or "15")))
+    time_bucket = int(time.time() // bucket_seconds)
+    noise_ratio = max(0.0, min(0.20, float(env("VIS_LIVE_HEATMAP_NOISE_RATIO", "0.06") or "0.06")))
     features = []
     for row_index in range(rows):
         y1 = south + ((north - south) / rows) * row_index
@@ -356,7 +372,7 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
             x2 = west + ((east - west) / cols) * (col_index + 1)
             lon = (x1 + x2) / 2
             lat = (y1 + y2) / 2
-            pm25 = live_pm25_value(data, lon, lat, west, south, east, north)
+            pm25 = live_pm25_value(data, lon, lat, west, south, east, north, time_bucket=time_bucket, noise_ratio=noise_ratio)
             features.append(
                 {
                     "type": "Feature",
@@ -380,7 +396,10 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
         "horizon_h": 0,
         "location_id": location_id,
         "base_hour": to_iso(data.get("base_hour")),
-        "generated_at": to_iso(data.get("loaded_at")) or to_iso(data.get("created_at")) or iso_z(utc_now()),
+        "generated_at": iso_z(utc_now()),
+        "source_loaded_at": to_iso(data.get("loaded_at")) or to_iso(data.get("created_at")),
+        "live_bucket_seconds": bucket_seconds,
+        "live_noise_ratio": noise_ratio,
         "resolution": {"cols": cols, "rows": rows, "cells": len(features)},
         "summary": {
             "pm25_mean": float_or_none(data.get("pm25_mean")),

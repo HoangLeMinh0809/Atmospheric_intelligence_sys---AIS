@@ -20,10 +20,52 @@ import {
   getStationsLatest,
 } from "../services/visualizationApi";
 
+function riskForPm25(value) {
+  if (value == null || Number.isNaN(Number(value))) return "unknown";
+  const pm25 = Number(value);
+  if (pm25 < 20) return "low";
+  if (pm25 < 30) return "medium";
+  if (pm25 < 40) return "medium";
+  if (pm25 < 55) return "high";
+  return "very_high";
+}
+
+function liveNowFromHeatmap(liveHeatmap) {
+  const summary = liveHeatmap?.summary || {};
+  const value = Number(summary.pm25_mean ?? summary.pm25_median);
+  if (Number.isFinite(value)) return Number(value.toFixed(1));
+  const values = (liveHeatmap?.features || [])
+    .map((feature) => Number(feature?.properties?.pm25_value))
+    .filter((item) => Number.isFinite(item));
+  if (!values.length) return null;
+  return Number((values.reduce((sum, item) => sum + item, 0) / values.length).toFixed(1));
+}
+
+function mergeLiveNowForecast(forecast, liveHeatmap) {
+  const liveNow = liveNowFromHeatmap(liveHeatmap);
+  if (liveNow == null) return forecast;
+  return {
+    ...(forecast || {}),
+    source: forecast?.source || "cassandra",
+    base_hour: liveHeatmap?.base_hour || forecast?.base_hour,
+    generated_at: liveHeatmap?.generated_at || forecast?.generated_at,
+    forecast: {
+      ...(forecast?.forecast || {}),
+      now: { pm25: liveNow, risk: riskForPm25(liveNow), source: "live_cassandra_heatmap" },
+    },
+    freshness: {
+      ...(forecast?.freshness || {}),
+      source: "cassandra_live_heatmap",
+      base_hour: liveHeatmap?.base_hour || forecast?.freshness?.base_hour,
+      generated_at: liveHeatmap?.generated_at || forecast?.freshness?.generated_at,
+    },
+  };
+}
+
 export default function AirQualityMapDashboard() {
   const [horizon, setHorizon] = useState(Number(import.meta.env.VITE_DEFAULT_HORIZON_H || 0));
   const [selectedDate, setSelectedDate] = useState(import.meta.env.VITE_DEFAULT_VIS_DATE || "");
-  const refreshMs = Number(import.meta.env.VITE_VIS_REFRESH_MS || 60000);
+  const refreshMs = Number(import.meta.env.VITE_VIS_REFRESH_MS || 15000);
   const [refreshTick, setRefreshTick] = useState(0);
   const [enabled, setEnabled] = useState({
     heatmap: true,
@@ -120,6 +162,7 @@ export default function AirQualityMapDashboard() {
     }),
     [data],
   );
+  const displayForecast = useMemo(() => mergeLiveNowForecast(data.forecast, data.liveHeatmap), [data.forecast, data.liveHeatmap]);
 
   const handleMapStats = useCallback((nextStats) => {
     setMapStats((current) =>
@@ -200,7 +243,7 @@ export default function AirQualityMapDashboard() {
         <div className="windy-top-controls">
           <DateSelector value={selectedDate} availableDates={data.manifest?.available_dates} onChange={changeDate} />
           <TimeSelector horizon={horizon} onChange={changeHorizon} />
-          <FreshnessBadge forecast={data.forecast} />
+          <FreshnessBadge forecast={displayForecast} />
         </div>
       </header>
 
@@ -212,15 +255,15 @@ export default function AirQualityMapDashboard() {
 
       <aside className="windy-right-panel">
         <LayerControl enabled={enabled} onToggle={toggleLayer} />
-        <ForecastPanel forecast={data.forecast} />
+        <ForecastPanel forecast={displayForecast} />
         <SourceAttributionPanel sourceAttribution={data.sources} plume={data.plume} />
         <PM25ForecastChart timeseries={data.timeseries} />
       </aside>
 
       <div className="windy-legend" aria-label="PM2.5 color legend">
-        <span>PM2.5 local scale</span>
+        <span>PM2.5 absolute scale</span>
         <div className="legend-ramp" />
-        <div className="legend-ticks"><b>15</b><b>25</b><b>35</b><b>55</b><b>80+</b></div>
+        <div className="legend-ticks"><b>0</b><b>20</b><b>30</b><b>40</b><b>55+</b></div>
       </div>
 
       <div className="windy-bottom-timeline">

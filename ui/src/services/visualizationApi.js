@@ -8,7 +8,7 @@ const INNER_HANOI = {
 };
 
 async function requestJson(path) {
-  const response = await fetch(`${API_BASE}${path}`);
+  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${text}`);
@@ -20,6 +20,11 @@ function withDate(path, date) {
   if (!date) return path;
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}date=${encodeURIComponent(date)}`;
+}
+
+function withCacheBust(path) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}_=${Date.now()}`;
 }
 
 function polygonCell(west, south, east, north) {
@@ -231,7 +236,7 @@ export function getHeatmapLatest(horizonH, date) {
 export function getLiveHeatmapLatest(locationId = "hanoi", date) {
   return USE_MOCK_DATA
     ? Promise.resolve(makeMockHeatmap(0))
-    : requestJson(withDate(`/live/pm25/heatmap/latest?location_id=${encodeURIComponent(locationId)}`, date));
+    : requestJson(withCacheBust(withDate(`/live/pm25/heatmap/latest?location_id=${encodeURIComponent(locationId)}`, date)));
 }
 
 export function getBackwardTrajectoriesLatest(date) {

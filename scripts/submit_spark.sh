@@ -51,6 +51,7 @@ PRESET_EXPORT_CACHE="${EXPORT_CACHE:-}"
 PRESET_BASE_TIME="${BASE_TIME:-}"
 PRESET_DRY_RUN="${DRY_RUN:-}"
 PRESET_CASSANDRA_FEATURE_LATEST_ONLY="${CASSANDRA_FEATURE_LATEST_ONLY:-}"
+PRESET_ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS:-}"
 PRESET_FEATURE_SOURCE="${FEATURE_SOURCE:-}"
 PRESET_WRITE_CASSANDRA_FORECAST="${WRITE_CASSANDRA_FORECAST:-}"
 PRESET_BASE_HOUR="${BASE_HOUR:-}"
@@ -101,6 +102,7 @@ fi
 [ -n "$PRESET_BASE_TIME" ] && BASE_TIME="$PRESET_BASE_TIME"
 [ -n "$PRESET_DRY_RUN" ] && DRY_RUN="$PRESET_DRY_RUN"
 [ -n "$PRESET_CASSANDRA_FEATURE_LATEST_ONLY" ] && CASSANDRA_FEATURE_LATEST_ONLY="$PRESET_CASSANDRA_FEATURE_LATEST_ONLY"
+[ -n "$PRESET_ONLINE_FEATURE_LOOKBACK_HOURS" ] && ONLINE_FEATURE_LOOKBACK_HOURS="$PRESET_ONLINE_FEATURE_LOOKBACK_HOURS"
 [ -n "$PRESET_FEATURE_SOURCE" ] && FEATURE_SOURCE="$PRESET_FEATURE_SOURCE"
 [ -n "$PRESET_WRITE_CASSANDRA_FORECAST" ] && WRITE_CASSANDRA_FORECAST="$PRESET_WRITE_CASSANDRA_FORECAST"
 [ -n "$PRESET_BASE_HOUR" ] && BASE_HOUR="$PRESET_BASE_HOUR"
@@ -148,6 +150,7 @@ EXPORT_CACHE="${EXPORT_CACHE:-}"
 BASE_TIME="${BASE_TIME:-}"
 DRY_RUN="${DRY_RUN:-0}"
 CASSANDRA_FEATURE_LATEST_ONLY="${CASSANDRA_FEATURE_LATEST_ONLY:-0}"
+ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
 ERA5_CONVERT_TIMEOUT_SEC="${ERA5_CONVERT_TIMEOUT_SEC:-}"
 HDFS_CMD_TIMEOUT_SEC="${HDFS_CMD_TIMEOUT_SEC:-}"
 HDFS_NAMENODE="${HDFS_NAMENODE:-${HDFS_DEFAULT_FS:-${HADOOP_DEFAULT_FS:-hdfs://namenode:9000}}}"
@@ -549,6 +552,16 @@ case "$JOB_TYPE" in
     CHECKPOINT_PATH="hdfs://namenode:9000/checkpoints/pm25_features_cassandra/"
     PACKAGES="${CASSANDRA_PACKAGES}"
     ;;
+  online-pm25-features)
+    JOB_TYPE_KIND="spark"
+    APP_NAME="OnlinePM25FeatureBuilder"
+    JOB_FILE="/opt/spark-jobs/online_pm25_feature_builder.py"
+    JOB_ARGS=("--base-time" "${BASE_TIME:-${BASE_HOUR:-}}" "--lookback-hours" "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}" "--dry-run" "${DRY_RUN:-0}")
+    HDFS_DATA_DIR="/data/online_pm25_features"
+    HDFS_CHECKPOINT_DIR="/checkpoints/online_pm25_features"
+    CHECKPOINT_PATH="hdfs://namenode:9000/checkpoints/online_pm25_features/"
+    PACKAGES="${CASSANDRA_PACKAGES}"
+    ;;
   cassandra-weather)
     JOB_TYPE_KIND="spark"
     APP_NAME="IcebergToCassandra_Weather"
@@ -637,7 +650,7 @@ case "$JOB_TYPE" in
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   *)
-    echo "Usage: $0 [weather|openaq|sentinel5p|maiac|era5-files|weather-ingest|openaq-ingest|sentinel5p-ingest|maiac-ingest|era5-ingest|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|hanoi-train-baseline|pm25-features-cassandra|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|bronze-pipeline|pm25-feature-pipeline|trajectory-post-pipeline|visualization-pipeline]"
+    echo "Usage: $0 [weather|openaq|sentinel5p|maiac|era5-files|weather-ingest|openaq-ingest|sentinel5p-ingest|maiac-ingest|era5-ingest|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|hanoi-train-baseline|pm25-features-cassandra|online-pm25-features|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|bronze-pipeline|pm25-feature-pipeline|trajectory-post-pipeline|visualization-pipeline]"
     exit 1
     ;;
 esac
@@ -822,6 +835,7 @@ DOCKER_EXEC_ARGS+=("-e" "CASSANDRA_FORECAST_TABLE=${CASSANDRA_FORECAST_TABLE:-pm
 DOCKER_EXEC_ARGS+=("-e" "FEATURE_SOURCE=${FEATURE_SOURCE:-iceberg}")
 DOCKER_EXEC_ARGS+=("-e" "WRITE_CASSANDRA_FORECAST=${WRITE_CASSANDRA_FORECAST:-0}")
 DOCKER_EXEC_ARGS+=("-e" "BASE_HOUR=${BASE_HOUR:-}")
+DOCKER_EXEC_ARGS+=("-e" "ONLINE_FEATURE_LOOKBACK_HOURS=${ONLINE_FEATURE_LOOKBACK_HOURS}")
 if [ -n "${DIRECTION:-}" ]; then
   DOCKER_EXEC_ARGS+=("-e" "DIRECTION=${DIRECTION}")
 fi

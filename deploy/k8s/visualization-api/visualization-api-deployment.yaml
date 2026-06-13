@@ -21,7 +21,7 @@ spec:
       containers:
         - name: visualization-api
           image: ais-visualization-api:local
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           envFrom:
             - configMapRef:
                 name: ais-runtime-config

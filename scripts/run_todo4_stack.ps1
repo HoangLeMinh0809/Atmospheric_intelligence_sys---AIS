@@ -36,8 +36,12 @@ param(
     [int]$DemoFeedBatchSize = 24,
     [double]$DemoFeedNoiseRatio = 0.08,
     [string]$DemoFeedSources = "weather,openaq",
+    [int]$OnlineFeatureIntervalSeconds = 120,
+    [int]$RealtimePredictionIntervalSeconds = 120,
+    [int]$OnlineFeatureLookbackHours = 72,
+    [int]$RealtimeBronzeWarmupSeconds = 45,
     [switch]$AllowTrajectoryDegraded = $true,
-    [ValidateRange(1, 17)][int]$ResumeFromStep = 1
+    [ValidateRange(1, 19)][int]$ResumeFromStep = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -203,6 +207,54 @@ function Patch-RuntimeConfig {
     }
     finally {
         Remove-Item -LiteralPath $patchFile -ErrorAction SilentlyContinue
+    }
+}
+
+function Patch-ComposeBridgeEndpoints {
+    param([Parameter(Mandatory = $true)][string]$HostAddress)
+
+    $bridgeYaml = @"
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: namenode
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: namenode-bridge
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+subsets:
+  - addresses:
+      - ip: $HostAddress
+    ports:
+      - name: hdfs
+        port: 9000
+      - name: webhdfs
+        port: 9870
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: datanode
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: datanode-bridge
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+subsets:
+  - addresses:
+      - ip: $HostAddress
+    ports:
+      - name: data-transfer
+        port: 9866
+      - name: http
+        port: 9864
+"@
+    $bridgeFile = Join-Path ([System.IO.Path]::GetTempPath()) ("ais-compose-bridge-endpoints-{0}.yaml" -f ([guid]::NewGuid().ToString("N")))
+    try {
+        Set-Content -Path $bridgeFile -Value $bridgeYaml -Encoding UTF8
+        Invoke-Kubectl @("apply", "-f", $bridgeFile)
+    }
+    finally {
+        Remove-Item -LiteralPath $bridgeFile -ErrorAction SilentlyContinue
     }
 }
 
@@ -442,8 +494,19 @@ function Start-RealtimeNewData {
         }
     }
 
+}
+
+function Start-RealtimeBronzeStreaming {
     Invoke-Bash "DETACH=true KAFKA_STARTING_OFFSETS=latest STOP_AFTER_BATCH=false PROCESSING_TIME='$RealtimeProcessingTime' bash scripts/submit_spark.sh openaq"
     Invoke-Bash "DETACH=true KAFKA_STARTING_OFFSETS=latest STOP_AFTER_BATCH=false PROCESSING_TIME='$RealtimeProcessingTime' bash scripts/submit_spark.sh weather"
+}
+
+function Ensure-OnlineServingInfra {
+    Write-Host "[INFO] Ensuring Cassandra and HDFS are running for online serving." -ForegroundColor Yellow
+    $env:HDFS_NAMENODE_HOST_PORT = "$resolvedHdfsHostPort"
+    Invoke-DockerCompose @("up", "-d", "cassandra", "namenode", "datanode")
+    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("cassandra", "namenode", "datanode")
+    Invoke-Bash "bash scripts/init_hdfs_layout.sh"
 }
 
 function Start-DemoRealtimeFeed {
@@ -802,7 +865,12 @@ Require-Command -CommandName "bash"
 
 $range = Resolve-DateRange
 $resolvedStartDate = $range.Start
-$resolvedEndDate = $range.End
+$realtimeSimulationDate = $range.End
+$historicalBackfillEndDate = ([datetime]::ParseExact($realtimeSimulationDate, "yyyy-MM-dd", $null)).Date.AddDays(-1).ToString("yyyy-MM-dd")
+$resolvedEndDate = $historicalBackfillEndDate
+if ([datetime]::ParseExact($resolvedStartDate, "yyyy-MM-dd", $null) -gt [datetime]::ParseExact($historicalBackfillEndDate, "yyyy-MM-dd", $null)) {
+    throw "Invalid window: StartDate=$resolvedStartDate must be <= HistoricalBackfillEndDate=$historicalBackfillEndDate (EndDate - 1 day)."
+}
 $resolvedHdfsHostPort = Resolve-HdfsHostPort -RequestedPort $HdfsHostPort
 $resolvedSparkMasterUiHostPort = Resolve-SparkMasterUiHostPort -RequestedPort $SparkMasterUiHostPort
 $k8sHostBridge = Resolve-K8sHostAddress -RequestedHost $K8sHostAddress
@@ -817,9 +885,11 @@ $composeHdfsEnv = "HDFS_NAMENODE='$composeHdfsNamenode' HDFS_DEFAULT_FS='$compos
 $runnerNow = Get-Date
 $simulatedCurrentClock = $runnerNow.ToString("HH:mm:ss")
 $simulatedCurrentHour = $runnerNow.ToString("HH")
-$simulatedBaseTime = "${resolvedEndDate}T${simulatedCurrentClock}Z"
-$simulatedBaseHour = "${resolvedEndDate}T${simulatedCurrentHour}:00:00Z"
-$asofEnv = "BASE_TIME='$simulatedBaseTime' BASE_HOUR='$simulatedBaseHour' "
+$historicalBackfillEndTime = "${historicalBackfillEndDate}T23:59:59Z"
+$simulatedBaseTime = "${realtimeSimulationDate}T${simulatedCurrentClock}Z"
+$simulatedBaseHour = "${realtimeSimulationDate}T${simulatedCurrentHour}:00:00Z"
+$asofEnv = "BASE_TIME='$historicalBackfillEndTime' BASE_HOUR='${historicalBackfillEndDate}T23:00:00Z' "
+$realtimeEnv = "BASE_TIME='$simulatedBaseTime' BASE_HOUR='$simulatedBaseHour' REALTIME_SIMULATION_DATE='$realtimeSimulationDate' HISTORICAL_BACKFILL_END_DATE='$historicalBackfillEndDate' ONLINE_FEATURE_LOOKBACK_HOURS=$OnlineFeatureLookbackHours "
 $onlineServingEnabled = -not $UseIcebergPredictionInput
 if ($UseCassandraOnlineServing) {
     $onlineServingEnabled = $true
@@ -832,8 +902,10 @@ elseif ($UseCombinedPipelines) {
     $combinedMode = $true
 }
 
-Write-Host "TODO4 stack run window: $resolvedStartDate -> $resolvedEndDate"
-Write-Host "Simulated current time: $simulatedBaseTime (date=end of backfill, clock=current runner clock)"
+Write-Host "TODO4 requested window: $resolvedStartDate -> $realtimeSimulationDate"
+Write-Host "Historical batch range: $resolvedStartDate -> $historicalBackfillEndDate"
+Write-Host "Realtime simulation date: $realtimeSimulationDate"
+Write-Host "Simulated current time: $simulatedBaseTime (date=realtime simulation date, clock=current runner clock)"
 Write-Host "Simulated feature base hour: $simulatedBaseHour (hourly feature/prediction key)"
 Write-Host "Default demo window: StartDate=$StartDate EndDate=$EndDate. LookbackDays is used only when you pass an empty StartDate/EndDate."
 Write-Host "Resume from step: $ResumeFromStep"
@@ -842,6 +914,7 @@ Write-Host ("Trajectory directions: {0}" -f $(if ($IncludeForwardTrajectory) { "
 Write-Host ("Online inference feature source: {0}" -f $(if ($onlineServingEnabled) { "Cassandra feature state" } else { "Iceberg serving features" })) -ForegroundColor Yellow
 Write-Host ("New-data realtime loop: {0}" -f $(if ($SkipRealtimeNewData) { "disabled" } else { "weather/openaq poll=${RealtimePollSeconds}s lookback=${RealtimeLookbackMinutes}m bronze_trigger='$RealtimeProcessingTime'" })) -ForegroundColor Yellow
 Write-Host ("Demo near-realtime feed: {0}" -f $(if ($SkipDemoRealtimeFeed) { "disabled" } else { "enabled sources=$DemoFeedSources step=${DemoFeedStepMinutes}m ticks=$DemoFeedMaxBatches interval=${DemoFeedBatchIntervalSeconds}s noise=$DemoFeedNoiseRatio" })) -ForegroundColor Yellow
+Write-Host ("Realtime online feature loop: enabled interval=${OnlineFeatureIntervalSeconds}s lookback=${OnlineFeatureLookbackHours}h prediction_interval=${RealtimePredictionIntervalSeconds}s") -ForegroundColor Yellow
 Write-Host "K8s host bridge: $k8sHostBridge" -ForegroundColor Yellow
 Write-Host "K8s Kafka bootstrap: $K8sKafkaBootstrapServers" -ForegroundColor Yellow
 Write-Host "HDFS host endpoint: $k8sHdfsNamenode" -ForegroundColor Yellow
@@ -862,6 +935,7 @@ if (Should-RunStep 2) {
         kubectl apply -f deploy/k8s/rbac.yaml | Out-Host
         kubectl apply -f deploy/k8s/configmap.yaml | Out-Host
         kubectl apply -f deploy/k8s/compose-bridge-services.yaml | Out-Host
+        Patch-ComposeBridgeEndpoints -HostAddress $k8sHostBridge
         kubectl apply -f deploy/k8s/spark/spark-serviceaccount.yaml | Out-Host
         kubectl apply -f deploy/k8s/spark/spark-rbac.yaml | Out-Host
 
@@ -874,6 +948,12 @@ if (Should-RunStep 2) {
             ICEBERG_WAREHOUSE = $k8sIcebergWarehouse
             MODEL_ARTIFACT_BASE_URI = "$k8sHdfsNamenode/models"
             VIS_CACHE_BASE_URI = "$k8sHdfsNamenode/visualization_cache"
+            HISTORICAL_BACKFILL_END_DATE = $historicalBackfillEndDate
+            REALTIME_SIMULATION_DATE = $realtimeSimulationDate
+            ENABLE_REALTIME_ONLINE_FEATURES = "1"
+            ONLINE_FEATURE_INTERVAL_SECONDS = "$OnlineFeatureIntervalSeconds"
+            REALTIME_PREDICTION_INTERVAL_SECONDS = "$RealtimePredictionIntervalSeconds"
+            ONLINE_FEATURE_LOOKBACK_HOURS = "$OnlineFeatureLookbackHours"
             BASE_TIME = $simulatedBaseTime
             BASE_HOUR = $simulatedBaseHour
             FEATURE_SOURCE = $(if ($onlineServingEnabled) { "cassandra" } else { "iceberg" })
@@ -1074,12 +1154,11 @@ else {
 }
 
 if (Should-RunStep 12) {
-    Step "12) TODO3 serving features and prediction" {
+    Step "12) TODO3 historical serving features" {
         Submit-SparkK8s "hanoi-serving-features-gold" $asofEnv
         if ($onlineServingEnabled) {
-            Write-Host "[INFO] Updating Cassandra online prediction input table" -ForegroundColor Yellow
+            Write-Host "[INFO] Online serving enabled; realtime feature_state and prediction are deferred until after realtime replay/streaming." -ForegroundColor Yellow
             Invoke-Bash "bash scripts/ensure_cassandra_online_schema.sh"
-            Submit-SparkK8s "pm25-features-cassandra" ($asofEnv + "CASSANDRA_FEATURE_LATEST_ONLY=0 ")
 
             Patch-RuntimeConfig @{
                 FEATURE_SOURCE = "cassandra"
@@ -1097,10 +1176,10 @@ if (Should-RunStep 12) {
                 BASE_HOUR = $simulatedBaseHour
                 BASE_TIME = $simulatedBaseTime
             }
+            kubectl -n ais delete job pm25-predict --ignore-not-found | Out-Host
+            kubectl apply -f deploy/k8s/ml/pm25-predict-job.yaml | Out-Host
+            kubectl -n ais wait --for=condition=complete --timeout=600s job/pm25-predict | Out-Host
         }
-        kubectl -n ais delete job pm25-predict --ignore-not-found | Out-Host
-        kubectl apply -f deploy/k8s/ml/pm25-predict-job.yaml | Out-Host
-        kubectl -n ais wait --for=condition=complete --timeout=600s job/pm25-predict | Out-Host
     }
 }
 else { Write-Host "[SKIP] Step 12 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
@@ -1161,20 +1240,25 @@ else {
 }
 
 if (Should-RunStep 15) {
-    Step "15) Show latest forecast rows" {
-        $verifySql = @'
+    Step "15) Show latest historical/audit forecast rows" {
+        if ($onlineServingEnabled) {
+            Write-Host "[INFO] Online serving enabled; latest forecast will be produced after realtime feature_state." -ForegroundColor Yellow
+        }
+        else {
+            $verifySql = @'
 SELECT location_id, base_hour, created_at, pm25_6h, pm25_12h, pm25_24h, model_version_6h, model_version_12h, model_version_24h
 FROM ais.predictions.hanoi_pm25_forecast_gold
 ORDER BY created_at DESC
 LIMIT 5;
 '@
-        docker exec spark-master /opt/spark/bin/spark-sql -S `
-            --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions `
-            --conf spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog `
-            --conf spark.sql.catalog.ais.type=hadoop `
-            --conf "spark.hadoop.fs.defaultFS=$composeHdfsNamenode" `
-            --conf "spark.sql.catalog.ais.warehouse=$composeIcebergWarehouse" `
-            -e $verifySql | Out-Host
+            docker exec spark-master /opt/spark/bin/spark-sql -S `
+                --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions `
+                --conf spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog `
+                --conf spark.sql.catalog.ais.type=hadoop `
+                --conf "spark.hadoop.fs.defaultFS=$composeHdfsNamenode" `
+                --conf "spark.sql.catalog.ais.warehouse=$composeIcebergWarehouse" `
+                -e $verifySql | Out-Host
+        }
     }
 }
 else { Write-Host "[SKIP] Step 15 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
@@ -1191,18 +1275,63 @@ else {
     Write-Host "[INFO] Skip near-realtime new-data loops due to -SkipRealtimeNewData"
 }
 
+if (Should-RunStep 17) {
+    Step "17) Start Spark streaming Kafka to Bronze for realtime audit" {
+        Start-RealtimeBronzeStreaming
+    }
+}
+else { Write-Host "[SKIP] Step 17 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
+
 if (-not $SkipDemoRealtimeFeed) {
-    if (Should-RunStep 17) {
-        Step "17) Start demo interpolated near-realtime feed" {
+    if (Should-RunStep 18) {
+        Step "18) Prepare and replay EndDate demo near-realtime feed" {
             Start-DemoRealtimeFeed
         }
     }
-    else { Write-Host "[SKIP] Step 17 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
+    else { Write-Host "[SKIP] Step 18 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 }
 else {
     Write-Host "[INFO] Skip demo interpolated near-realtime feed due to -SkipDemoRealtimeFeed"
 }
 
+if ($onlineServingEnabled) {
+    if (Should-RunStep 19) {
+        Step "19) Build online feature state and run realtime prediction" {
+            Write-Host ("[INFO] current base_time={0} online_feature_interval={1}s prediction_interval={2}s" -f $simulatedBaseTime, $OnlineFeatureIntervalSeconds, $RealtimePredictionIntervalSeconds) -ForegroundColor Yellow
+            Ensure-OnlineServingInfra
+            Invoke-Bash "bash scripts/ensure_cassandra_online_schema.sh"
+            Patch-RuntimeConfig @{
+                FEATURE_SOURCE = "cassandra"
+                WRITE_CASSANDRA_FORECAST = "1"
+                VIS_FORECAST_SOURCE = "cassandra"
+                BASE_HOUR = $simulatedBaseHour
+                BASE_TIME = $simulatedBaseTime
+                HISTORICAL_BACKFILL_END_DATE = $historicalBackfillEndDate
+                REALTIME_SIMULATION_DATE = $realtimeSimulationDate
+                ONLINE_FEATURE_INTERVAL_SECONDS = "$OnlineFeatureIntervalSeconds"
+                REALTIME_PREDICTION_INTERVAL_SECONDS = "$RealtimePredictionIntervalSeconds"
+                ONLINE_FEATURE_LOOKBACK_HOURS = "$OnlineFeatureLookbackHours"
+            }
+            if ($RealtimeBronzeWarmupSeconds -gt 0) {
+                Write-Host ("[INFO] Waiting {0}s for realtime Kafka->Bronze streaming warmup before online feature build." -f $RealtimeBronzeWarmupSeconds) -ForegroundColor Yellow
+                Start-Sleep -Seconds $RealtimeBronzeWarmupSeconds
+            }
+            Patch-ComposeBridgeEndpoints -HostAddress $k8sHostBridge
+            Submit-SparkK8s "online-pm25-features" ("SPARK_EXECUTOR_INSTANCES=1 SPARK_SQL_SHUFFLE_PARTITIONS=4 SPARK_DEFAULT_PARALLELISM=4 " + $realtimeEnv) -NoDateRange
+            kubectl -n ais delete job pm25-predict --ignore-not-found | Out-Host
+            kubectl apply -f deploy/k8s/ml/pm25-predict-job.yaml | Out-Host
+            kubectl -n ais wait --for=condition=complete --timeout=600s job/pm25-predict | Out-Host
+            kubectl -n ais delete cronjob pm25-predict --ignore-not-found | Out-Host
+            kubectl apply -f deploy/k8s/ml/online-pm25-features-cronjob.yaml | Out-Host
+        }
+    }
+    else { Write-Host "[SKIP] Step 19 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
+}
+else {
+    Write-Host "[INFO] Online feature_state/prediction step disabled because -UseIcebergPredictionInput was set."
+}
+
 Write-Host ""
 Write-Host "TODO4 stack run completed." -ForegroundColor Green
-Write-Host "Window: $resolvedStartDate -> $resolvedEndDate"
+Write-Host "Historical batch range: $resolvedStartDate -> $historicalBackfillEndDate"
+Write-Host "Realtime simulation date: $realtimeSimulationDate"

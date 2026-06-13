@@ -43,6 +43,7 @@ _AIS_ENV_HDFS_DEFAULT_FS="${HDFS_DEFAULT_FS-}"
 _AIS_ENV_HADOOP_DEFAULT_FS="${HADOOP_DEFAULT_FS-}"
 _AIS_ENV_DRY_RUN="${DRY_RUN-}"
 _AIS_ENV_CASSANDRA_FEATURE_LATEST_ONLY="${CASSANDRA_FEATURE_LATEST_ONLY-}"
+_AIS_ENV_ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS-}"
 _AIS_ENV_FEATURE_SOURCE="${FEATURE_SOURCE-}"
 _AIS_ENV_WRITE_CASSANDRA_FORECAST="${WRITE_CASSANDRA_FORECAST-}"
 _AIS_ENV_BASE_HOUR="${BASE_HOUR-}"
@@ -86,6 +87,7 @@ fi
 [ -n "$_AIS_ENV_HADOOP_DEFAULT_FS" ] && HADOOP_DEFAULT_FS="$_AIS_ENV_HADOOP_DEFAULT_FS"
 [ -n "$_AIS_ENV_DRY_RUN" ] && DRY_RUN="$_AIS_ENV_DRY_RUN"
 [ -n "$_AIS_ENV_CASSANDRA_FEATURE_LATEST_ONLY" ] && CASSANDRA_FEATURE_LATEST_ONLY="$_AIS_ENV_CASSANDRA_FEATURE_LATEST_ONLY"
+[ -n "$_AIS_ENV_ONLINE_FEATURE_LOOKBACK_HOURS" ] && ONLINE_FEATURE_LOOKBACK_HOURS="$_AIS_ENV_ONLINE_FEATURE_LOOKBACK_HOURS"
 [ -n "$_AIS_ENV_FEATURE_SOURCE" ] && FEATURE_SOURCE="$_AIS_ENV_FEATURE_SOURCE"
 [ -n "$_AIS_ENV_WRITE_CASSANDRA_FORECAST" ] && WRITE_CASSANDRA_FORECAST="$_AIS_ENV_WRITE_CASSANDRA_FORECAST"
 [ -n "$_AIS_ENV_BASE_HOUR" ] && BASE_HOUR="$_AIS_ENV_BASE_HOUR"
@@ -131,6 +133,7 @@ HDFS_DEFAULT_FS="${HDFS_DEFAULT_FS:-$HDFS_NAMENODE}"
 HADOOP_DEFAULT_FS="${HADOOP_DEFAULT_FS:-$HDFS_DEFAULT_FS}"
 ICEBERG_WAREHOUSE="${ICEBERG_WAREHOUSE:-${HDFS_NAMENODE%/}/warehouse/iceberg}"
 CASSANDRA_FEATURE_LATEST_ONLY="${CASSANDRA_FEATURE_LATEST_ONLY:-0}"
+ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
 FEATURE_SOURCE="${FEATURE_SOURCE:-iceberg}"
 WRITE_CASSANDRA_FORECAST="${WRITE_CASSANDRA_FORECAST:-0}"
 BASE_HOUR="${BASE_HOUR:-}"
@@ -327,6 +330,12 @@ case "$JOB_TYPE" in
     JOB_ARGS=("--latest-only" "${CASSANDRA_FEATURE_LATEST_ONLY:-0}" "--dry-run" "$DRY_RUN")
     PACKAGES="${CASSANDRA_PACKAGES}"
     ;;
+  online-pm25-features)
+    APP_NAME="OnlinePM25FeatureBuilder"
+    JOB_FILE="/opt/spark-jobs/online_pm25_feature_builder.py"
+    JOB_ARGS=("--base-time" "${BASE_TIME:-${BASE_HOUR:-}}" "--lookback-hours" "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}" "--dry-run" "$DRY_RUN")
+    PACKAGES="${CASSANDRA_PACKAGES}"
+    ;;
   cassandra-weather)
     APP_NAME="IcebergToCassandra_Weather"
     JOB_FILE="/opt/spark-jobs/iceberg_to_cassandra.py"
@@ -430,7 +439,7 @@ case "$JOB_TYPE" in
     JOB_ARGS=("--dry-run" "$DRY_RUN")
     ;;
   *)
-    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|pm25-features-cassandra|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|bronze-pipeline|pm25-feature-pipeline|trajectory-post-pipeline|visualization-pipeline|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks]"
+    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|pm25-features-cassandra|online-pm25-features|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|bronze-pipeline|pm25-feature-pipeline|trajectory-post-pipeline|visualization-pipeline|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks]"
     exit 1
     ;;
 esac
@@ -668,6 +677,8 @@ spec:
               value: "$(printf "%s" "${BASE_TIME:-}")"
             - name: BASE_HOUR
               value: "$(printf "%s" "${BASE_HOUR:-}")"
+            - name: ONLINE_FEATURE_LOOKBACK_HOURS
+              value: "$(printf "%s" "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}")"
           resources:
             requests:
               cpu: ${SPARK_SUBMIT_REQUEST_CPU:-500m}
@@ -764,6 +775,7 @@ spec:
                 --conf "spark.kubernetes.driverEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
                 --conf "spark.kubernetes.driverEnv.BASE_TIME=\${BASE_TIME:-}"
                 --conf "spark.kubernetes.driverEnv.BASE_HOUR=\${BASE_HOUR:-}"
+                --conf "spark.kubernetes.driverEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
                 --conf "spark.kubernetes.driverEnv.DRY_RUN=\${DRY_RUN:-0}"
                 --conf "spark.kubernetes.driverEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"
                 --conf "spark.kubernetes.driverEnv.VIS_SCHEMA_VERSION=\${VIS_SCHEMA_VERSION:-1}"
@@ -831,6 +843,7 @@ spec:
                 --conf "spark.executorEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
                 --conf "spark.executorEnv.BASE_TIME=\${BASE_TIME:-}"
                 --conf "spark.executorEnv.BASE_HOUR=\${BASE_HOUR:-}"
+                --conf "spark.executorEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
                 --conf "spark.executorEnv.DRY_RUN=\${DRY_RUN:-0}"
                 --conf "spark.executorEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"
                 --conf "spark.executorEnv.VIS_SCHEMA_VERSION=\${VIS_SCHEMA_VERSION:-1}"
