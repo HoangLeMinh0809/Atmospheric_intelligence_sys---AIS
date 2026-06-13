@@ -21,12 +21,22 @@ STEP_CONFIG = {
 
 
 DEFAULT_STEPS = ",".join(STEP_CONFIG.keys())
+DATE_REQUIRED_STEPS = {"era5-surface", "sentinel5p-silver", "maiac-silver"}
+ASOF_SUPPORTED_STEPS = {
+    "openaq-station",
+    "weather-proxy",
+    "era5-surface",
+    "openaq-gradient",
+    "master-features",
+    "serving-features",
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run PM2.5 silver/gold/features in one Spark app")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--asof-time", default=os.getenv("ASOF_TIME", os.getenv("SIMULATED_NOW", os.getenv("BASE_TIME", ""))))
     parser.add_argument("--full-refresh", default=os.getenv("FULL_REFRESH", "0"))
     parser.add_argument("--steps", default=os.getenv("PIPELINE_STEPS", DEFAULT_STEPS))
     return parser.parse_args()
@@ -38,23 +48,29 @@ def main() -> None:
     invalid = [item for item in steps if item not in STEP_CONFIG]
     if invalid:
         raise ValueError(f"Unknown PM2.5 pipeline steps: {invalid}")
+    missing_date_steps = sorted(DATE_REQUIRED_STEPS.intersection(steps))
+    if missing_date_steps and (not args.start_date.strip() or not args.end_date.strip()):
+        raise ValueError(
+            "START_DATE and END_DATE are required for steps: "
+            f"{','.join(missing_date_steps)}; got START_DATE={args.start_date!r}, END_DATE={args.end_date!r}"
+        )
 
     spark = build_pipeline_spark("AISPM25FeaturePipeline")
     spark.sparkContext.setLogLevel("WARN")
     try:
         for step in steps:
             module_name, extra_args = STEP_CONFIG[step]
+            module_args = []
+            if args.start_date.strip():
+                module_args.extend(["--start-date", args.start_date.strip()])
+            if args.end_date.strip():
+                module_args.extend(["--end-date", args.end_date.strip()])
+            if args.asof_time.strip() and step in ASOF_SUPPORTED_STEPS:
+                module_args.extend(["--asof-time", args.asof_time.strip()])
+            module_args.extend(["--full-refresh", args.full_refresh, *extra_args])
             invoke_module_main(
                 module_name,
-                [
-                    "--start-date",
-                    args.start_date,
-                    "--end-date",
-                    args.end_date,
-                    "--full-refresh",
-                    args.full_refresh,
-                    *extra_args,
-                ],
+                module_args,
                 spark,
             )
     finally:

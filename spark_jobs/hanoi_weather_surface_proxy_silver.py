@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import os
@@ -6,7 +6,7 @@ import os
 from pyspark.sql import SparkSession, Window
 from pyspark.sql import functions as F
 
-from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_hanoi_bbox, get_table_names
+from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, apply_asof_time, get_hanoi_bbox, get_table_names, parse_asof_time
 
 
 OUTPUT_COLUMNS = [
@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi WeatherAPI surface proxy silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--asof-time", default=os.getenv("ASOF_TIME", os.getenv("SIMULATED_NOW", os.getenv("BASE_TIME", ""))))
     parser.add_argument("--full-refresh", default=os.getenv("FULL_REFRESH", "0"))
     return parser.parse_args()
 
@@ -49,7 +50,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -91,10 +92,11 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
-def build_silver_df(spark: SparkSession, source_table: str, start_date: str, end_date: str):
+def build_silver_df(spark: SparkSession, source_table: str, start_date: str, end_date: str, asof_time: str = ""):
     bbox = get_hanoi_bbox()
     raw = spark.table(source_table).filter(F.col("event_time").isNotNull())
     raw = apply_date_range(raw, start_date, end_date)
+    raw = apply_asof_time(raw, "event_time", parse_asof_time(asof_time))
 
     location_text = F.lower(
         F.concat_ws(" ", F.col("province"), F.col("region"), F.col("location_name"))
@@ -160,9 +162,21 @@ def log_metrics(raw, hanoi, silver, duplicate_count: int) -> None:
     print(f"null_ratio_by_important_columns={null_ratios}")
 
 
-def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "hour", start_date, end_date)
 
     df.createOrReplaceTempView("weather_hanoi_surface_proxy_silver_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
@@ -195,9 +209,10 @@ def main() -> None:
         source_table=source_table,
         start_date=args.start_date,
         end_date=args.end_date,
+        asof_time=args.asof_time,
     )
     log_metrics(raw, hanoi, silver, duplicate_count)
-    write_iceberg(spark, silver, target_table, full_refresh=as_bool(args.full_refresh))
+    write_iceberg(spark, silver, target_table, full_refresh=as_bool(args.full_refresh), start_date=args.start_date, end_date=args.end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

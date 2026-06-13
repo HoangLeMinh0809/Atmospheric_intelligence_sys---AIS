@@ -71,6 +71,29 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("ENFORCE_FEATURE_FRESHNESS", "0"),
         help="Use 1/true to fail when serving feature is older than max-feature-age-minutes.",
     )
+    parser.add_argument(
+        "--feature-source",
+        default=os.getenv("FEATURE_SOURCE", "iceberg"),
+        choices=["iceberg", "cassandra"],
+        help="Read model-ready serving features from Iceberg or Cassandra.",
+    )
+    parser.add_argument("--cassandra-keyspace", default=os.getenv("CASSANDRA_KEYSPACE", "ais_serving"))
+    parser.add_argument("--cassandra-feature-table", default=os.getenv("CASSANDRA_FEATURE_TABLE", "pm25_feature_state_by_location_hour"))
+    parser.add_argument("--cassandra-forecast-table", default=os.getenv("CASSANDRA_FORECAST_TABLE", "pm25_forecast_latest_by_location"))
+    parser.add_argument(
+        "--write-cassandra-forecast",
+        nargs="?",
+        const="1",
+        default=os.getenv("WRITE_CASSANDRA_FORECAST", os.getenv("CASSANDRA_WRITE_FORECAST", "0")),
+        help="Also write the latest forecast to Cassandra.",
+    )
+    parser.add_argument(
+        "--write-iceberg-audit",
+        nargs="?",
+        const="1",
+        default=os.getenv("WRITE_FORECAST_TO_ICEBERG_AUDIT", "1"),
+        help="Write prediction to Iceberg audit/history table.",
+    )
     return parser.parse_args()
 
 
@@ -78,15 +101,18 @@ def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", ICEBERG_CATALOG)
     warehouse = os.getenv("ICEBERG_WAREHOUSE", ICEBERG_WAREHOUSE)
     hdfs_namenode = os.getenv("HDFS_NAMENODE", HDFS_NAMENODE)
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
-    )
+    packages = os.getenv("SPARK_JARS_PACKAGES")
+    if packages is None:
+        packages = (
+            "org.apache.hadoop:hadoop-client:3.3.4,"
+            "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1,"
+            "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
+        )
+    packages = packages.strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
-    return (
+    builder = (
         SparkSession.builder.appName("PredictHanoiPM25")
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{catalog}", "org.apache.iceberg.spark.SparkCatalog")
@@ -97,8 +123,12 @@ def build_spark() -> SparkSession:
             "spark.hadoop.dfs.client.use.datanode.hostname",
             os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
         )
-        .getOrCreate()
+        .config("spark.cassandra.connection.host", os.getenv("CASSANDRA_HOST", "cassandra"))
+        .config("spark.cassandra.connection.port", os.getenv("CASSANDRA_PORT", "9042"))
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
+    return builder.getOrCreate()
 
 
 def risk_level(pm25: float | None) -> str | None:
@@ -234,6 +264,49 @@ def load_feature_row(spark: SparkSession, table: str, args: argparse.Namespace) 
     return row
 
 
+def load_feature_row_from_cassandra(spark: SparkSession, args: argparse.Namespace) -> dict[str, Any]:
+    base_df = (
+        spark.read.format("org.apache.spark.sql.cassandra")
+        .options(table=args.cassandra_feature_table, keyspace=args.cassandra_keyspace)
+        .load()
+    )
+
+    scoped = base_df.filter(F.col("location_id") == F.lit(args.location_id))
+    scoped = scoped.filter(F.col("feature_version") == F.lit(args.feature_version))
+    if args.feature_set_name and "feature_set_name" in scoped.columns:
+        scoped = scoped.filter(F.col("feature_set_name") == F.lit(args.feature_set_name))
+    if args.base_hour:
+        scoped = scoped.filter(F.col("base_hour") == F.to_timestamp(F.lit(args.base_hour)))
+    else:
+        scoped = scoped.orderBy(F.col("base_hour").desc())
+
+    rows = scoped.limit(1).collect()
+    if not rows:
+        hint = f"base_hour={args.base_hour}" if args.base_hour else "latest"
+        raise RuntimeError(
+            f"No Cassandra serving feature row found in {args.cassandra_keyspace}.{args.cassandra_feature_table} "
+            f"for location={args.location_id} feature_version={args.feature_version} {hint}"
+        )
+
+    row = rows[0].asDict()
+    base_hour = row.get("base_hour")
+    if base_hour is not None and not args.base_hour:
+        age_minutes = (datetime.utcnow() - base_hour.replace(tzinfo=None)).total_seconds() / 60.0
+        if age_minutes > args.max_feature_age_minutes:
+            message = (
+                f"Latest Cassandra serving feature is stale: base_hour={base_hour} "
+                f"age_minutes={age_minutes:.1f} threshold={args.max_feature_age_minutes}"
+            )
+            if parse_bool(args.enforce_feature_freshness):
+                raise RuntimeError(message)
+            print(f"pm25_predict warning=stale_cassandra_feature_row {message}")
+
+    missing = [name for name in FEATURE_COLUMNS if name not in row]
+    if missing:
+        raise RuntimeError(f"Cassandra serving feature row is missing required feature columns: {missing}")
+    return row
+
+
 def prepare_features(row: dict[str, Any], model_feature_names: list[str]) -> pd.DataFrame:
     pdf = pd.DataFrame([{name: row.get(name) for name in FEATURE_COLUMNS}])
     pdf["low_pbl"] = pdf["low_pbl"].fillna(False).astype(int)
@@ -276,9 +349,9 @@ def predict_one(spark: SparkSession, model_meta: dict[str, Any], feature_row: di
 
 
 def validate_schema(feature_row: dict[str, Any], models: dict[int, dict[str, Any]]) -> str:
-    feature_schema_hash = feature_row.get("schema_hash")
+    feature_schema_hash = feature_row.get("schema_hash") or feature_row.get("feature_schema_hash")
     if not feature_schema_hash:
-        raise RuntimeError("Serving feature row has no schema_hash")
+        raise RuntimeError("Serving feature row has no schema_hash/feature_schema_hash")
     if feature_schema_hash != FEATURE_SCHEMA_HASH:
         raise RuntimeError(
             f"Serving feature schema_hash mismatch: expected={FEATURE_SCHEMA_HASH} actual={feature_schema_hash}"
@@ -382,6 +455,8 @@ def build_prediction_row(
         "model_status": args.model_status,
         "feature_version": args.feature_version,
         "feature_schema_hash": feature_schema_hash,
+        "data_watermark": feature_row.get("data_watermark"),
+        "updated_at": created_at,
         "inference_run_id": inference_run_id,
         "created_at": created_at,
         "year": int(base_hour.year),
@@ -447,6 +522,80 @@ def write_prediction(spark: SparkSession, table: str, row: dict[str, Any]) -> No
     )
 
 
+def write_prediction_to_cassandra(spark: SparkSession, args: argparse.Namespace, row: dict[str, Any]) -> None:
+    schema = StructType(
+        [
+            StructField("location_id", StringType(), False),
+            StructField("base_hour", TimestampType(), False),
+            StructField("prediction_id", StringType(), False),
+            StructField("location_name", StringType(), True),
+            StructField("pm25_now", DoubleType(), True),
+            StructField("pm25_6h", DoubleType(), True),
+            StructField("risk_6h", StringType(), True),
+            StructField("pm25_12h", DoubleType(), True),
+            StructField("risk_12h", StringType(), True),
+            StructField("pm25_24h", DoubleType(), True),
+            StructField("risk_24h", StringType(), True),
+            StructField("dominant_cluster", IntegerType(), True),
+            StructField("source_lat", DoubleType(), True),
+            StructField("source_lon", DoubleType(), True),
+            StructField("path_no2_mean", DoubleType(), True),
+            StructField("path_aer_mean", DoubleType(), True),
+            StructField("pm25_grad_mag", DoubleType(), True),
+            StructField("model_version", StringType(), True),
+            StructField("model_version_6h", StringType(), True),
+            StructField("model_version_12h", StringType(), True),
+            StructField("model_version_24h", StringType(), True),
+            StructField("model_status", StringType(), True),
+            StructField("feature_version", StringType(), True),
+            StructField("feature_source", StringType(), True),
+            StructField("feature_schema_hash", StringType(), True),
+            StructField("data_watermark", TimestampType(), True),
+            StructField("updated_at", TimestampType(), True),
+            StructField("inference_run_id", StringType(), True),
+            StructField("created_at", TimestampType(), True),
+        ]
+    )
+    payload = {
+        "location_id": row["location_id"],
+        "base_hour": row["base_hour"],
+        "prediction_id": row["prediction_id"],
+        "location_name": row.get("location_name"),
+        "pm25_now": row.get("pm25_now"),
+        "pm25_6h": row.get("pm25_6h"),
+        "risk_6h": row.get("risk_6h"),
+        "pm25_12h": row.get("pm25_12h"),
+        "risk_12h": row.get("risk_12h"),
+        "pm25_24h": row.get("pm25_24h"),
+        "risk_24h": row.get("risk_24h"),
+        "dominant_cluster": row.get("dominant_cluster"),
+        "source_lat": row.get("source_lat"),
+        "source_lon": row.get("source_lon"),
+        "path_no2_mean": row.get("path_no2_mean"),
+        "path_aer_mean": row.get("path_aer_mean"),
+        "pm25_grad_mag": row.get("pm25_grad_mag"),
+        "model_version": row.get("model_version"),
+        "model_version_6h": row.get("model_version_6h"),
+        "model_version_12h": row.get("model_version_12h"),
+        "model_version_24h": row.get("model_version_24h"),
+        "model_status": row.get("model_status"),
+        "feature_version": row.get("feature_version"),
+        "feature_source": args.feature_source,
+        "feature_schema_hash": row.get("feature_schema_hash"),
+        "data_watermark": row.get("data_watermark"),
+        "updated_at": row.get("updated_at"),
+        "inference_run_id": row.get("inference_run_id"),
+        "created_at": row.get("created_at"),
+    }
+    (
+        spark.createDataFrame([payload], schema=schema)
+        .write.format("org.apache.spark.sql.cassandra")
+        .mode("append")
+        .options(keyspace=args.cassandra_keyspace, table=args.cassandra_forecast_table)
+        .save()
+    )
+
+
 def main() -> None:
     args = parse_args()
     dry_run = parse_bool(args.dry_run)
@@ -460,7 +609,10 @@ def main() -> None:
     spark.sparkContext.setLogLevel("WARN")
     try:
         models = load_production_models(spark, model_registry_table, args)
-        feature_row = load_feature_row(spark, serving_feature_table, args)
+        if args.feature_source == "cassandra":
+            feature_row = load_feature_row_from_cassandra(spark, args)
+        else:
+            feature_row = load_feature_row(spark, serving_feature_table, args)
         feature_schema_hash = validate_schema(feature_row, models)
         predictions = {horizon: predict_one(spark, models[horizon], feature_row) for horizon in HORIZONS}
         row = build_prediction_row(args, feature_row, models, predictions, feature_schema_hash)
@@ -468,6 +620,7 @@ def main() -> None:
         print(
             "pm25_predict "
             f"input_count=1 output_count=1 "
+            f"feature_source={args.feature_source} "
             f"model_version_6h={row['model_version_6h']} "
             f"model_version_12h={row['model_version_12h']} "
             f"model_version_24h={row['model_version_24h']} "
@@ -481,8 +634,16 @@ def main() -> None:
             print("pm25_predict status=dry_run_success")
             return
 
-        write_prediction(spark, prediction_table, row)
-        print(f"pm25_predict status=success prediction_id={row['prediction_id']} table={prediction_table}")
+        wrote_iceberg = False
+        if parse_bool(args.write_iceberg_audit):
+            write_prediction(spark, prediction_table, row)
+            wrote_iceberg = True
+        if parse_bool(args.write_cassandra_forecast) or args.feature_source == "cassandra":
+            write_prediction_to_cassandra(spark, args, row)
+        print(
+            f"pm25_predict status=success prediction_id={row['prediction_id']} "
+            f"iceberg_audit_written={int(wrote_iceberg)} cassandra_forecast_table={args.cassandra_forecast_table}"
+        )
 
     finally:
         spark.stop()

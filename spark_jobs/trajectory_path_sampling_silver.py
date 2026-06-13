@@ -50,7 +50,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -61,6 +61,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             traj_id STRING,
+            init_time TIMESTAMP,
             path_no2_mean DOUBLE,
             path_aer_mean DOUBLE,
             path_no2_max DOUBLE,
@@ -72,6 +73,16 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    existing = set(spark.table(table_name).columns)
+    for column, dtype in {
+        "init_time": "TIMESTAMP",
+        "path_no2_max": "DOUBLE",
+        "path_no2_std": "DOUBLE",
+        "path_no2_aer_ratio": "DOUBLE",
+        "spark_processed_at": "TIMESTAMP",
+    }.items():
+        if column not in existing:
+            spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
 def apply_date_range(df, start_date: str, end_date: str):
@@ -82,9 +93,25 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
-def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    columns = set(spark.table(table_name).columns)
+    if time_col not in columns:
+        print(f"delete_date_window_skip table={table_name} missing_time_col={time_col}")
+        return
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "init_time", start_date, end_date)
 
     df.createOrReplaceTempView("traj_path_updates")
     spark.sql(
@@ -228,7 +255,7 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
     )
 
     output = (
-        init_times.select("traj_id")
+        init_times.select("traj_id", "init_time")
         .distinct()
         .join(no2, on="traj_id", how="left")
         .join(aer, on="traj_id", how="left")
@@ -242,6 +269,7 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
         .withColumn("spark_processed_at", F.current_timestamp())
         .select(
             "traj_id",
+            "init_time",
             "path_no2_mean",
             "path_aer_mean",
             "path_no2_max",
@@ -311,7 +339,7 @@ def main() -> None:
         f"'max_time': {repr(str(bounds['max_time']) if bounds else None)}}}"
     )
 
-    merge_iceberg(spark, output_df, target_table, full_refresh=full_refresh)
+    merge_iceberg(spark, output_df, target_table, full_refresh=full_refresh, start_date=args.start_date, end_date=args.end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

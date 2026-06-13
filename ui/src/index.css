@@ -517,7 +517,10 @@ select option {
   border-top: 4px solid #f59e0b;
 }
 
-.risk-high,
+.risk-high {
+  border-top: 4px solid #f97316;
+}
+
 .risk-very_high {
   border-top: 4px solid #ef4444;
 }
@@ -797,4 +800,779 @@ select option {
 
 .chart-panel {
   min-height: 420px;
+}
+
+/* Windy-inspired Hanoi map view ------------------------------------------------ */
+.windy-shell {
+  min-height: 100vh;
+  background: #020617;
+  color: #e5f3ff;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.windy-map-canvas {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 54% 47%, rgba(20, 184, 166, 0.16), transparent 28%),
+    radial-gradient(circle at 42% 58%, rgba(245, 158, 11, 0.09), transparent 24%),
+    linear-gradient(135deg, #030712 0%, #08111d 45%, #04101a 100%);
+}
+
+.windy-map-canvas svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.map-zoom-control {
+  position: absolute;
+  z-index: 6;
+  left: 18px;
+  bottom: 128px;
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(3, 7, 18, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.map-zoom-control button {
+  width: 38px;
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.86);
+  color: #e0f2fe;
+  font-size: 18px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.map-zoom-control button:last-child {
+  width: 54px;
+  font-size: 11px;
+}
+
+.map-zoom-control button:hover {
+  background: rgba(14, 165, 233, 0.9);
+  color: #02111f;
+}
+
+.map-attribution {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  z-index: 6;
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 10px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.hanoi-map-bg {
+  fill: #030712;
+}
+
+.hanoi-grid line {
+  stroke: rgba(148, 163, 184, 0.12);
+  stroke-width: 1;
+  stroke-dasharray: 4 10;
+}
+
+.hanoi-region-fill {
+  fill: none;
+  stroke: rgba(125, 211, 252, 0.12);
+  stroke-width: 0.8;
+}
+
+.hanoi-region-outline {
+  fill: none;
+  stroke: rgba(226, 247, 255, 0.5);
+  stroke-width: 1.2;
+}
+
+.hanoi-bbox-outline {
+  fill: none;
+  stroke: rgba(226, 247, 255, 0.78);
+  stroke-width: 1.4;
+  stroke-dasharray: 8 6;
+  vector-effect: non-scaling-stroke;
+}
+
+.hanoi-bbox-fill {
+  fill: rgba(15, 23, 42, 0.22);
+  stroke: none;
+}
+
+.basemap-water {
+  pointer-events: none;
+}
+
+.water-polygon {
+  fill: rgba(55, 135, 190, 0.25);
+  stroke: rgba(120, 200, 255, 0.35);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.water-line {
+  fill: none;
+  stroke: rgba(120, 200, 255, 0.35);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.basemap-roads,
+.basemap-boundaries {
+  pointer-events: none;
+}
+
+.basemap-roads path {
+  fill: none;
+  stroke: rgba(220, 230, 240, 0.2);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.basemap-roads .road-major {
+  stroke-width: 1.8;
+  opacity: 0.35;
+}
+
+.basemap-roads .road-primary {
+  stroke-width: 1.5;
+  opacity: 0.3;
+}
+
+.basemap-roads .road-secondary {
+  stroke-width: 1.1;
+  opacity: 0.24;
+}
+
+.basemap-roads .road-tertiary {
+  stroke-width: 0.8;
+  opacity: 0.18;
+}
+
+.basemap-boundaries path {
+  fill: none;
+  stroke: rgba(200, 220, 255, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.hanoi-roads path {
+  fill: none;
+  stroke: rgba(226, 232, 240, 0.25);
+  stroke-width: 2.2;
+}
+
+.heatmap-glow circle {
+  mix-blend-mode: screen;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.heatmap-cell {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 0.55;
+  cursor: pointer;
+  transition: opacity 0.16s ease, stroke 0.16s ease;
+}
+
+.heatmap-cell:hover {
+  opacity: 0.9;
+  stroke: rgba(255, 255, 255, 0.7);
+}
+
+.heatmap-pixels {
+  mix-blend-mode: screen;
+}
+
+.heatmap-pixel {
+  stroke: rgba(255, 255, 255, 0.035);
+  stroke-width: 0.18;
+  shape-rendering: crispEdges;
+  cursor: crosshair;
+  transition: opacity 0.14s ease, stroke 0.14s ease;
+}
+
+.heatmap-pixel:hover {
+  opacity: 1;
+  stroke: rgba(255, 255, 255, 0.86);
+  stroke-width: 0.7;
+}
+
+.plume-layer path {
+  fill: rgba(59, 130, 246, 0.18);
+  stroke: rgba(125, 211, 252, 0.42);
+  stroke-width: 2;
+  stroke-dasharray: 9 8;
+}
+
+.trajectory-layer {
+  cursor: pointer;
+}
+
+.trajectory-halo {
+  fill: none;
+  stroke: rgba(1, 7, 19, 0.5);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.trajectory-line {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-opacity: 0.9;
+  vector-effect: non-scaling-stroke;
+}
+
+.trajectory-moving-arrow {
+  opacity: 0.92;
+  stroke: rgba(2, 6, 23, 0.42);
+  stroke-width: 0.8;
+  pointer-events: none;
+  filter: drop-shadow(0 0 4px rgba(224, 242, 254, 0.28));
+}
+
+.trajectory-pulse {
+  fill: none;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-dasharray: 4 16;
+  animation: windy-flow 2.2s linear infinite;
+  opacity: 0.55;
+}
+
+.trajectory-particle {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 1 42;
+  animation: windy-flow 1.8s linear infinite;
+  opacity: 0.45;
+}
+
+@keyframes windy-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+
+.district-labels text {
+  fill: rgba(226, 232, 240, 0.72);
+  font-size: 13px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(2, 6, 23, 0.82);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.receptor-layer {
+  cursor: pointer;
+}
+
+.receptor-point circle {
+  fill: rgba(224, 242, 254, 0.92);
+  stroke: rgba(2, 6, 23, 0.92);
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 8px rgba(14, 165, 233, 0.42));
+}
+
+.receptor-point text {
+  fill: rgba(226, 232, 240, 0.86);
+  font-size: 13px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(2, 6, 23, 0.86);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.receptor-point.active circle {
+  fill: #38bdf8;
+  stroke: #e0f2fe;
+  stroke-width: 3;
+}
+
+.receptor-point:hover circle {
+  fill: #7dd3fc;
+}
+
+.source-layer,
+.station-layer {
+  cursor: pointer;
+}
+
+.source-ring {
+  fill: rgba(251, 191, 36, 0.2);
+  stroke: rgba(251, 191, 36, 0.9);
+  stroke-width: 2;
+  animation: source-pulse 2.4s ease-in-out infinite;
+}
+
+.source-core {
+  fill: #facc15;
+  stroke: #fff7ed;
+  stroke-width: 2;
+}
+
+@keyframes source-pulse {
+  0%, 100% { opacity: 0.42; transform: scale(0.92); }
+  50% { opacity: 0.92; transform: scale(1.08); }
+}
+
+.station-layer circle:first-child {
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 2.2;
+}
+
+.station-heat-ring {
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1;
+  filter: drop-shadow(0 0 12px rgba(250, 204, 21, 0.3));
+}
+
+.station-ring {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.34);
+  stroke-width: 1.2;
+}
+
+.fallback-warning rect {
+  fill: rgba(3, 7, 18, 0.78);
+  stroke: rgba(250, 204, 21, 0.52);
+  stroke-width: 1.2;
+}
+
+.fallback-warning text {
+  fill: #fde68a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hanoi-map-title text:first-child {
+  fill: rgba(255, 255, 255, 0.82);
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.05em;
+}
+
+.hanoi-map-title text:last-child {
+  fill: rgba(186, 230, 253, 0.76);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.windy-topbar {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  pointer-events: none;
+}
+
+.windy-brand,
+.windy-top-controls,
+.windy-right-panel,
+.windy-left-rail,
+.windy-legend,
+.windy-bottom-timeline,
+.windy-shell .map-panel,
+.windy-shell .map-popup,
+.windy-shell .status-toast,
+.windy-shell .time-selector,
+.windy-shell .date-selector,
+.windy-shell .freshness-badge {
+  background: rgba(3, 7, 18, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px) saturate(1.25);
+}
+
+.windy-brand,
+.windy-top-controls {
+  pointer-events: auto;
+  border-radius: 18px;
+}
+
+.windy-brand {
+  min-width: 330px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 16px;
+}
+
+.windy-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #0ea5e9, #22c55e);
+  color: #00131f;
+  font-weight: 950;
+  letter-spacing: -0.05em;
+}
+
+.windy-brand h1 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+
+.windy-brand span {
+  display: block;
+  margin-top: 3px;
+  color: rgba(203, 213, 225, 0.8);
+  font-size: 12px;
+}
+
+.windy-top-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+}
+
+.windy-shell .date-selector,
+.windy-shell .time-selector,
+.windy-shell .freshness-badge {
+  box-shadow: none;
+  background: rgba(15, 23, 42, 0.7);
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
+.windy-shell .date-selector input {
+  background: rgba(15, 23, 42, 0.92);
+  color: #e0f2fe;
+}
+
+.windy-shell .segmented-btn {
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
+.windy-shell .segmented-btn.active {
+  background: linear-gradient(135deg, #0ea5e9, #22c55e);
+  color: #03141f;
+}
+
+.windy-shell .freshness-badge,
+.windy-shell .freshness-badge strong {
+  color: #cbd5e1;
+}
+
+.windy-left-rail {
+  position: absolute;
+  z-index: 5;
+  left: 18px;
+  top: 116px;
+  width: 118px;
+  border-radius: 24px;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.mini-stat {
+  min-height: 88px;
+  border-radius: 18px;
+  padding: 11px 10px;
+  background: rgba(15, 23, 42, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  display: grid;
+  align-content: center;
+  gap: 3px;
+}
+
+.mini-stat.active {
+  background: linear-gradient(160deg, rgba(14, 165, 233, 0.38), rgba(34, 197, 94, 0.18));
+}
+
+.mini-stat span,
+.mini-stat em {
+  color: rgba(203, 213, 225, 0.76);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.mini-stat strong {
+  color: #f8fafc;
+  font-size: 28px;
+  letter-spacing: -0.06em;
+}
+
+.windy-right-panel {
+  position: absolute;
+  z-index: 5;
+  top: 116px;
+  right: 18px;
+  width: min(390px, calc(100vw - 36px));
+  max-height: calc(100vh - 166px);
+  overflow: auto;
+  border-radius: 24px;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.windy-right-panel::-webkit-scrollbar {
+  width: 7px;
+}
+
+.windy-right-panel::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+  border-radius: 999px;
+}
+
+.windy-shell .map-panel {
+  border-radius: 18px;
+  padding: 14px;
+  box-shadow: none;
+}
+
+.windy-shell .map-panel h3,
+.windy-shell .map-popup h3 {
+  color: #f8fafc;
+}
+
+.windy-shell .panel-title-row,
+.windy-shell .forecast-meta,
+.windy-shell .source-panel p,
+.windy-shell .source-main,
+.windy-shell .layer-toggle,
+.windy-shell .unavailable-note {
+  color: rgba(203, 213, 225, 0.82);
+}
+
+.windy-shell .source-main strong {
+  color: #f8fafc;
+}
+
+.windy-shell .forecast-card {
+  background: rgba(15, 23, 42, 0.74);
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
+.windy-shell .forecast-card strong {
+  color: #f8fafc;
+}
+
+.windy-shell .forecast-card span,
+.windy-shell .forecast-card em {
+  color: rgba(203, 213, 225, 0.74);
+}
+
+.windy-shell .layer-toggle input {
+  accent-color: #38bdf8;
+}
+
+.windy-legend {
+  position: absolute;
+  z-index: 5;
+  left: 158px;
+  bottom: 26px;
+  width: min(360px, calc(100vw - 188px));
+  border-radius: 18px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.windy-legend span {
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.legend-ramp {
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8 0%, #22c55e 25%, #facc15 46%, #f97316 62%, #ef4444 80%, #7e22ce 100%);
+  box-shadow: 0 0 22px rgba(14, 165, 233, 0.22);
+}
+
+.legend-ticks {
+  display: flex;
+  justify-content: space-between;
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 11px;
+}
+
+.windy-bottom-timeline {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 40px));
+  border-radius: 22px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.timeline-caption {
+  display: grid;
+  gap: 2px;
+}
+
+.timeline-caption strong {
+  color: #f8fafc;
+  font-size: 14px;
+}
+
+.timeline-caption span {
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 12px;
+}
+
+.windy-bottom-timeline .time-selector {
+  grid-template-columns: repeat(4, 58px);
+}
+
+.windy-status {
+  bottom: 98px;
+  color: #e2e8f0;
+}
+
+.windy-shell .map-popup {
+  background: rgba(3, 7, 18, 0.86);
+  color: #e2e8f0;
+  border-radius: 20px;
+  bottom: 102px;
+}
+
+.windy-shell .map-popup dt {
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.windy-shell .map-popup dd {
+  color: #f8fafc;
+}
+
+.windy-shell .map-popup button {
+  background: rgba(14, 165, 233, 0.82);
+  color: #00131f;
+  border-radius: 999px;
+}
+
+.popup-point-forecast {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.popup-forecast-card {
+  min-height: 58px;
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  display: grid;
+  gap: 2px;
+}
+
+.popup-forecast-card span,
+.popup-forecast-card em {
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.popup-forecast-card strong {
+  color: #f8fafc;
+  font-size: 18px;
+}
+
+@media (max-width: 1040px) {
+  .windy-topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .windy-top-controls {
+    align-self: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .windy-right-panel {
+    top: auto;
+    right: 12px;
+    left: 12px;
+    bottom: 96px;
+    width: auto;
+    max-height: 40vh;
+  }
+
+  .windy-left-rail {
+    display: none;
+  }
+
+  .windy-legend {
+    left: 12px;
+    bottom: 12px;
+    width: 260px;
+  }
+
+  .windy-bottom-timeline {
+    right: 12px;
+    left: auto;
+    transform: none;
+    width: min(480px, calc(100vw - 296px));
+    bottom: 12px;
+  }
+}
+
+@media (max-width: 720px) {
+  .windy-brand {
+    min-width: 0;
+  }
+
+  .windy-brand h1 {
+    font-size: 19px;
+  }
+
+  .windy-top-controls .time-selector {
+    display: none;
+  }
+
+  .windy-right-panel {
+    display: none;
+  }
+
+  .windy-legend {
+    display: none;
+  }
+
+  .windy-bottom-timeline {
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
 }

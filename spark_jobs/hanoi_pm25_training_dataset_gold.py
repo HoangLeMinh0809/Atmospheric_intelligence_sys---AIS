@@ -189,7 +189,12 @@ OUTPUT_COLUMN_TYPES = {
     "spark_processed_at": "TIMESTAMP",
 }
 
-TARGET_COLUMNS = ["pm25_next_6h", "pm25_next_12h", "pm25_next_24h"]
+TARGET_HORIZONS = {
+    "pm25_next_6h": 6,
+    "pm25_next_12h": 12,
+    "pm25_next_24h": 24,
+}
+TARGET_COLUMNS = list(TARGET_HORIZONS.keys())
 
 
 def parse_args() -> argparse.Namespace:
@@ -207,15 +212,11 @@ def as_bool(raw: str) -> bool:
 
 
 def build_spark() -> SparkSession:
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
-    )
+    packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
-    return (
+    builder = (
         SparkSession.builder
         .appName("HanoiPM25TrainingDatasetGold")
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
@@ -226,8 +227,10 @@ def build_spark() -> SparkSession:
             "spark.hadoop.dfs.client.use.datanode.hostname",
             os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
         )
-        .getOrCreate()
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
+    return builder.getOrCreate()
 
 
 def ensure_table(spark: SparkSession, table_name: str) -> None:
@@ -334,6 +337,19 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
+def mask_targets_crossing_cutoff(df, end_date: str):
+    if not end_date:
+        return df
+    cutoff = F.to_timestamp(F.lit(f"{end_date} 23:59:59"))
+    for target_col, horizon_h in TARGET_HORIZONS.items():
+        target_time = F.expr(f"hour + INTERVAL {horizon_h} HOURS")
+        df = df.withColumn(
+            target_col,
+            F.when(target_time <= cutoff, F.col(target_col)).otherwise(F.lit(None).cast("double")),
+        )
+    return df
+
+
 def build_training_dataset(master, dataset_version: str, feature_set_name: str):
     filtered = master.dropna(subset=TARGET_COLUMNS)
     order_w = Window.orderBy("hour")
@@ -379,9 +395,21 @@ def log_metrics(df) -> None:
     bounds_by_split.show(truncate=False)
 
 
-def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
-    if full_refresh:
+def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
+    predicates = []
+    if start_date:
+        predicates.append(f"to_date({time_col}) >= DATE '{start_date}'")
+    if end_date:
+        predicates.append(f"to_date({time_col}) <= DATE '{end_date}'")
+    if predicates:
+        spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+    else:
         spark.sql(f"DELETE FROM {table_name}")
+
+
+def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
+    if full_refresh:
+        delete_date_window(spark, table_name, "hour", start_date, end_date)
     df.createOrReplaceTempView("hanoi_pm25_training_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
     insert_cols = ", ".join(OUTPUT_COLUMNS)
@@ -409,9 +437,10 @@ def main() -> None:
 
     ensure_table(spark, target_table)
     master = apply_date_range(spark.table(source_table), args.start_date, args.end_date)
+    master = mask_targets_crossing_cutoff(master, args.end_date)
     training = build_training_dataset(master, args.dataset_version, args.feature_set_name)
     log_metrics(training)
-    write_iceberg(spark, training, target_table, full_refresh=as_bool(args.full_refresh))
+    write_iceberg(spark, training, target_table, full_refresh=as_bool(args.full_refresh), start_date=args.start_date, end_date=args.end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from hanoi_config import apply_asof_time, parse_asof_time
 
 # Keep feature selection aligned with training.
 # This import works in-repo and inside the Spark runtime image (/opt/ais).
@@ -110,6 +111,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build PM2.5 serving feature gold table (K8s-ready)")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--asof-time", default=os.getenv("ASOF_TIME", os.getenv("SIMULATED_NOW", os.getenv("BASE_TIME", ""))))
     parser.add_argument("--full-refresh", default=os.getenv("FULL_REFRESH", "0"))
     parser.add_argument("--feature-version", default=os.getenv("FEATURE_VERSION", "hanoi_pm25_core_v1"))
     parser.add_argument("--feature-set-name", default=os.getenv("FEATURE_SET_NAME", "hanoi_pm25_core_v1"))
@@ -123,16 +125,17 @@ def parse_args() -> argparse.Namespace:
 def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     warehouse = os.getenv("ICEBERG_WAREHOUSE", "")
-    hdfs_namenode = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
+    hdfs_namenode = (
+        os.getenv("HDFS_NAMENODE")
+        or os.getenv("HDFS_DEFAULT_FS")
+        or os.getenv("HADOOP_DEFAULT_FS")
+        or "hdfs://namenode:9000"
     )
+    packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
     builder = (
         SparkSession.builder.appName("HanoiPM25ServingFeaturesGold")
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{catalog}", "org.apache.iceberg.spark.SparkCatalog")
@@ -144,6 +147,8 @@ def build_spark() -> SparkSession:
         "spark.hadoop.dfs.client.use.datanode.hostname",
         os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
     return builder.getOrCreate()
 
 
@@ -226,6 +231,7 @@ def main() -> None:
     try:
         df = spark.read.table(source_table)
         df = apply_date_range(df, "hour", args.start_date, args.end_date)
+        df = apply_asof_time(df, "hour", parse_asof_time(args.asof_time))
 
         # base_hour = hour (required by TODO)
         df = df.withColumnRenamed("hour", "base_hour")

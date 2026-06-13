@@ -90,7 +90,8 @@ hysplit:
     lon: [0.0]
   run_hours_utc: [0, 12]
   meteo_interval_hours: 6
-  pm25_trigger_threshold: 75
+  pm25_trigger_threshold: 40
+  backward_fallback_to_run_hours: true
 
 trajectory:
   anchor_hours: [0, -6, -12, -24, -36, -48, -60, -72]

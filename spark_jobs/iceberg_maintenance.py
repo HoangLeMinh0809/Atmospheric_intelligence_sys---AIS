@@ -1,12 +1,19 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime, timedelta, timezone
 
 from pyspark.sql import SparkSession
 
-ICEBERG_CATALOG = "ais"
-ICEBERG_WAREHOUSE = "hdfs://namenode:9000/warehouse/iceberg"
+HDFS_NAMENODE = (
+    os.getenv("HDFS_NAMENODE")
+    or os.getenv("HDFS_DEFAULT_FS")
+    or os.getenv("HADOOP_DEFAULT_FS")
+    or "hdfs://namenode:9000"
+).rstrip("/")
+ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
+ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", f"{HDFS_NAMENODE}/warehouse/iceberg")
 TABLES = [
     "weather.weather_history_bronze",
     "air_quality.openaq_hourly_bronze",
@@ -23,7 +30,7 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", HDFS_NAMENODE)
         .getOrCreate()
     )
 

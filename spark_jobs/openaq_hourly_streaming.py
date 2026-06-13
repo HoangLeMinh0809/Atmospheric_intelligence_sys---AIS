@@ -1,4 +1,4 @@
-"""
+﻿"""
 OpenAQ hourly Kafka -> Iceberg streaming processor.
 
 Default mode is long-running streaming.
@@ -33,6 +33,7 @@ from runtime_utils import apply_stream_trigger, parse_streaming_runtime
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "openaq-hourly")
 KAFKA_STARTING_OFFSETS = os.getenv("KAFKA_STARTING_OFFSETS", "latest")
+MAX_OFFSETS_PER_TRIGGER = os.getenv("MAX_OFFSETS_PER_TRIGGER", "10000")
 CHECKPOINT_PATH = os.getenv("CHECKPOINT_PATH", "hdfs://namenode:9000/checkpoints/openaq_hourly/")
 ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
 ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", "hdfs://namenode:9000/warehouse/iceberg")
@@ -82,7 +83,7 @@ def main() -> None:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
         .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_PATH)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", os.getenv("HDFS_NAMENODE", os.getenv("HDFS_DEFAULT_FS", os.getenv("HADOOP_DEFAULT_FS", "hdfs://namenode:9000"))))
         .getOrCreate()
     )
 
@@ -95,6 +96,7 @@ def main() -> None:
         .option("subscribe", KAFKA_TOPIC)
         .option("startingOffsets", KAFKA_STARTING_OFFSETS)
         .option("failOnDataLoss", "false")
+        .option("maxOffsetsPerTrigger", MAX_OFFSETS_PER_TRIGGER)
         .load()
     )
 

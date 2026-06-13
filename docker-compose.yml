@@ -71,7 +71,7 @@ services:
     hostname: namenode
     ports:
       - "9870:9870"    # Web UI
-      - "9000:9000"    # HDFS RPC
+      - "${HDFS_NAMENODE_HOST_PORT:-9000}:9000"    # HDFS RPC
     volumes:
       - namenode_data:/hadoop/dfs/name
     environment:
@@ -81,7 +81,7 @@ services:
     networks:
       - bigdata-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9870/ || exit 1"]
+      test: ["CMD-SHELL", "hdfs dfsadmin -fs hdfs://namenode:9000 -safemode get >/dev/null 2>&1 && curl -fsS http://localhost:9870/ >/dev/null"]
       interval: 15s
       timeout: 10s
       retries: 20
@@ -108,6 +108,12 @@ services:
       - ./hadoop/hadoop.env
     networks:
       - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9864/ >/dev/null && hdfs dfs -fs hdfs://namenode:9000 -test -d /"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
 
   # ---------------------------------------------------------------------------
   # SPARK MASTER — điều phối Spark jobs
@@ -125,7 +131,7 @@ services:
     container_name: spark-master
     hostname: spark-master
     ports:
-      - "8080:8080"    # Spark Master Web UI
+      - "${SPARK_MASTER_UI_HOST_PORT:-8080}:8080"    # Spark Master Web UI
       - "7077:7077"    # Spark Master RPC
     command: /opt/spark/sbin/start-master.sh
     environment:
@@ -200,11 +206,11 @@ services:
       SOURCE_MODE: ${WEATHER_SOURCE_MODE:-api}
       WEATHER_API_KEY: ${WEATHER_API_KEY:-}
       WEATHER_QUERY_LIST: "${WEATHER_QUERY_LIST:-}"
-      WINDOW_MODE: ${WEATHER_WINDOW_MODE:-batch}
+      WINDOW_MODE: ${WEATHER_WINDOW_MODE:-realtime}
       BATCH_LOOKBACK_DAYS: ${WEATHER_BATCH_LOOKBACK_DAYS:-7}
-      REALTIME_LOOKBACK_MINUTES: ${WEATHER_REALTIME_LOOKBACK_MINUTES:-10}
-      REALTIME_CONTINUOUS: ${WEATHER_REALTIME_CONTINUOUS:-false}
-      REALTIME_POLL_SECONDS: ${WEATHER_REALTIME_POLL_SECONDS:-600}
+      REALTIME_LOOKBACK_MINUTES: ${WEATHER_REALTIME_LOOKBACK_MINUTES:-180}
+      REALTIME_CONTINUOUS: ${WEATHER_REALTIME_CONTINUOUS:-true}
+      REALTIME_POLL_SECONDS: ${WEATHER_REALTIME_POLL_SECONDS:-60}
       WINDOW_START_UTC: "${WEATHER_WINDOW_START_UTC:-}"
       WINDOW_END_UTC: "${WEATHER_WINDOW_END_UTC:-}"
       WINDOW_STATE_FILE: /opt/checkpoints/runtime_state/weather_window_state.json
@@ -246,11 +252,11 @@ services:
       OPENAQ_COUNTRY_CODE: ${OPENAQ_COUNTRY_CODE:-VN}
       OPENAQ_COUNTRY_ID: ${OPENAQ_COUNTRY_ID:-56}
       OPENAQ_BBOX: ${OPENAQ_BBOX:-105.25,20.55,106.10,21.40}
-      WINDOW_MODE: ${OPENAQ_WINDOW_MODE:-batch}
+      WINDOW_MODE: ${OPENAQ_WINDOW_MODE:-realtime}
       BATCH_LOOKBACK_DAYS: ${OPENAQ_BATCH_LOOKBACK_DAYS:-7}
-      REALTIME_LOOKBACK_MINUTES: ${OPENAQ_REALTIME_LOOKBACK_MINUTES:-10}
-      REALTIME_CONTINUOUS: ${OPENAQ_REALTIME_CONTINUOUS:-false}
-      REALTIME_POLL_SECONDS: ${OPENAQ_REALTIME_POLL_SECONDS:-600}
+      REALTIME_LOOKBACK_MINUTES: ${OPENAQ_REALTIME_LOOKBACK_MINUTES:-180}
+      REALTIME_CONTINUOUS: ${OPENAQ_REALTIME_CONTINUOUS:-true}
+      REALTIME_POLL_SECONDS: ${OPENAQ_REALTIME_POLL_SECONDS:-60}
       WINDOW_START_UTC: "${OPENAQ_WINDOW_START_UTC:-}"
       WINDOW_END_UTC: "${OPENAQ_WINDOW_END_UTC:-}"
       WINDOW_STATE_FILE: /opt/checkpoints/runtime_state/openaq_window_state.json
@@ -260,6 +266,39 @@ services:
     volumes:
       - ./checkpoints:/opt/checkpoints
     command: ["python", "-u", "openaq_ingest.py"]
+    networks:
+      - bigdata-net
+
+  # ---------------------------------------------------------------------------
+  # DEMO REALTIME FEED — dữ liệu nội suy chuẩn bị sẵn, phát theo lô nhỏ vào Kafka
+  # ---------------------------------------------------------------------------
+  demo-realtime-feed:
+    build:
+      context: ./ingest
+      dockerfile: Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CONNECT_MAX_RETRIES: "120"
+      KAFKA_CONNECT_RETRY_DELAY: "5"
+      DEMO_FEED_MODE: ${DEMO_FEED_MODE:-prepare-and-replay}
+      DEMO_FEED_SOURCES: ${DEMO_FEED_SOURCES:-weather,openaq}
+      DEMO_FEED_BASE_TIME: ${DEMO_FEED_BASE_TIME:-}
+      DEMO_FEED_OUTPUT_DIR: /opt/demo_realtime_feed
+      DEMO_FEED_STEP_MINUTES: ${DEMO_FEED_STEP_MINUTES:-1}
+      DEMO_FEED_MAX_BATCHES: ${DEMO_FEED_MAX_BATCHES:-60}
+      DEMO_FEED_BATCH_INTERVAL_SECONDS: ${DEMO_FEED_BATCH_INTERVAL_SECONDS:-60}
+      DEMO_FEED_BATCH_SIZE: ${DEMO_FEED_BATCH_SIZE:-24}
+      DEMO_FEED_NOISE_RATIO: ${DEMO_FEED_NOISE_RATIO:-0.08}
+      DEMO_FEED_SEND_DELAY_MS: ${DEMO_FEED_SEND_DELAY_MS:-0}
+      DEMO_FEED_WEATHER_TOPIC: weather_history
+      DEMO_FEED_OPENAQ_TOPIC: openaq-hourly
+    volumes:
+      - ./data/demo_realtime_feed:/opt/demo_realtime_feed
+    command: ["python", "-u", "demo_realtime_feed.py"]
     networks:
       - bigdata-net
 

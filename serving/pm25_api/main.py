@@ -107,6 +107,9 @@ def _forecast_cache_uri() -> str | None:
 
 
 def _load_forecast_payload() -> dict[str, Any]:
+    if _cassandra_forecast_enabled():
+        return _load_forecast_payload_from_cassandra()
+
     timeout_s = int(_env("READINESS_TIMEOUT_SECONDS", "5") or "5")
     uri = _forecast_cache_uri()
     if not uri:
@@ -243,6 +246,37 @@ def _normalize_forecast_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return _row_to_forecast_payload(payload, location_id=location_id)
 
 
+def _cassandra_forecast_enabled() -> bool:
+    source = _env("VIS_FORECAST_SOURCE") or _env("FEATURE_SOURCE")
+    return source.lower() == "cassandra"
+
+
+def _load_forecast_payload_from_cassandra() -> dict[str, Any]:
+    try:
+        from cassandra.cluster import Cluster
+    except Exception as exc:  # pragma: no cover - depends on runtime image
+        raise HTTPException(status_code=503, detail={"error": "cassandra_driver_unavailable", "message": str(exc)}) from exc
+
+    host = _env("CASSANDRA_HOST", "cassandra")
+    port = int(_env("CASSANDRA_PORT", "9042") or "9042")
+    keyspace = _env("CASSANDRA_KEYSPACE", "ais_serving")
+    table = _env("CASSANDRA_FORECAST_TABLE", "pm25_forecast_latest_by_location")
+    location_id = _env("LOCATION_ID", "hanoi") or "hanoi"
+
+    cluster = Cluster([host], port=port)
+    session = cluster.connect()
+    try:
+        row = session.execute(f"SELECT * FROM {keyspace}.{table} WHERE location_id = %s", (location_id,)).one()
+    finally:
+        session.shutdown()
+        cluster.shutdown()
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error": "cassandra_forecast_not_found", "location": location_id})
+    payload = _row_to_forecast_payload(row._asdict(), location_id=location_id)
+    payload["source"] = "cassandra"
+    return payload
+
+
 app = FastAPI(title="AIS PM2.5 API", version="0.1.0")
 
 
@@ -281,6 +315,8 @@ def healthz() -> dict[str, str]:
 def readyz() -> dict:
     try:
         # Readiness must be lightweight. It must not create SparkSession.
+        if _cassandra_forecast_enabled():
+            return {"status": "ready", "mode": "cassandra", "location_id": _env("LOCATION_ID", "hanoi") or "hanoi"}
         uri = _forecast_cache_uri()
         if uri:
             timeout_s = int(_env("READINESS_TIMEOUT_SECONDS", "5") or "5")

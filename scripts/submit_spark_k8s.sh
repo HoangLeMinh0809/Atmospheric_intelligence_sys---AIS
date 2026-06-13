@@ -38,6 +38,15 @@ _AIS_ENV_BASE_TIME="${BASE_TIME-}"
 _AIS_ENV_ERA5_CONVERT_TIMEOUT_SEC="${ERA5_CONVERT_TIMEOUT_SEC-}"
 _AIS_ENV_HDFS_CMD_TIMEOUT_SEC="${HDFS_CMD_TIMEOUT_SEC-}"
 _AIS_ENV_HDFS_CLIENT_USE_DATANODE_HOSTNAME="${HDFS_CLIENT_USE_DATANODE_HOSTNAME-}"
+_AIS_ENV_HDFS_NAMENODE="${HDFS_NAMENODE-}"
+_AIS_ENV_HDFS_DEFAULT_FS="${HDFS_DEFAULT_FS-}"
+_AIS_ENV_HADOOP_DEFAULT_FS="${HADOOP_DEFAULT_FS-}"
+_AIS_ENV_DRY_RUN="${DRY_RUN-}"
+_AIS_ENV_CASSANDRA_FEATURE_LATEST_ONLY="${CASSANDRA_FEATURE_LATEST_ONLY-}"
+_AIS_ENV_ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS-}"
+_AIS_ENV_FEATURE_SOURCE="${FEATURE_SOURCE-}"
+_AIS_ENV_WRITE_CASSANDRA_FORECAST="${WRITE_CASSANDRA_FORECAST-}"
+_AIS_ENV_BASE_HOUR="${BASE_HOUR-}"
 
 if [ -f ".env" ]; then
   set +u
@@ -73,6 +82,15 @@ fi
 [ -n "$_AIS_ENV_ERA5_CONVERT_TIMEOUT_SEC" ] && ERA5_CONVERT_TIMEOUT_SEC="$_AIS_ENV_ERA5_CONVERT_TIMEOUT_SEC"
 [ -n "$_AIS_ENV_HDFS_CMD_TIMEOUT_SEC" ] && HDFS_CMD_TIMEOUT_SEC="$_AIS_ENV_HDFS_CMD_TIMEOUT_SEC"
 [ -n "$_AIS_ENV_HDFS_CLIENT_USE_DATANODE_HOSTNAME" ] && HDFS_CLIENT_USE_DATANODE_HOSTNAME="$_AIS_ENV_HDFS_CLIENT_USE_DATANODE_HOSTNAME"
+[ -n "$_AIS_ENV_HDFS_NAMENODE" ] && HDFS_NAMENODE="$_AIS_ENV_HDFS_NAMENODE"
+[ -n "$_AIS_ENV_HDFS_DEFAULT_FS" ] && HDFS_DEFAULT_FS="$_AIS_ENV_HDFS_DEFAULT_FS"
+[ -n "$_AIS_ENV_HADOOP_DEFAULT_FS" ] && HADOOP_DEFAULT_FS="$_AIS_ENV_HADOOP_DEFAULT_FS"
+[ -n "$_AIS_ENV_DRY_RUN" ] && DRY_RUN="$_AIS_ENV_DRY_RUN"
+[ -n "$_AIS_ENV_CASSANDRA_FEATURE_LATEST_ONLY" ] && CASSANDRA_FEATURE_LATEST_ONLY="$_AIS_ENV_CASSANDRA_FEATURE_LATEST_ONLY"
+[ -n "$_AIS_ENV_ONLINE_FEATURE_LOOKBACK_HOURS" ] && ONLINE_FEATURE_LOOKBACK_HOURS="$_AIS_ENV_ONLINE_FEATURE_LOOKBACK_HOURS"
+[ -n "$_AIS_ENV_FEATURE_SOURCE" ] && FEATURE_SOURCE="$_AIS_ENV_FEATURE_SOURCE"
+[ -n "$_AIS_ENV_WRITE_CASSANDRA_FORECAST" ] && WRITE_CASSANDRA_FORECAST="$_AIS_ENV_WRITE_CASSANDRA_FORECAST"
+[ -n "$_AIS_ENV_BASE_HOUR" ] && BASE_HOUR="$_AIS_ENV_BASE_HOUR"
 
 JOB_TYPE="${1:-spark-smoke}"
 if [ "$#" -gt 0 ]; then
@@ -110,6 +128,15 @@ PIPELINE_LAYERS="${PIPELINE_LAYERS:-}"
 EXPORT_CACHE="${EXPORT_CACHE:-}"
 ERA5_CONVERT_TIMEOUT_SEC="${ERA5_CONVERT_TIMEOUT_SEC:-}"
 HDFS_CMD_TIMEOUT_SEC="${HDFS_CMD_TIMEOUT_SEC:-}"
+HDFS_NAMENODE="${HDFS_NAMENODE:-${HDFS_DEFAULT_FS:-${HADOOP_DEFAULT_FS:-hdfs://namenode:9000}}}"
+HDFS_DEFAULT_FS="${HDFS_DEFAULT_FS:-$HDFS_NAMENODE}"
+HADOOP_DEFAULT_FS="${HADOOP_DEFAULT_FS:-$HDFS_DEFAULT_FS}"
+ICEBERG_WAREHOUSE="${ICEBERG_WAREHOUSE:-${HDFS_NAMENODE%/}/warehouse/iceberg}"
+CASSANDRA_FEATURE_LATEST_ONLY="${CASSANDRA_FEATURE_LATEST_ONLY:-0}"
+ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
+FEATURE_SOURCE="${FEATURE_SOURCE:-iceberg}"
+WRITE_CASSANDRA_FORECAST="${WRITE_CASSANDRA_FORECAST:-0}"
+BASE_HOUR="${BASE_HOUR:-}"
 
 # Runtime image pre-bakes Spark dependencies; keep package injection opt-in.
 KAFKA_HADOOP_PACKAGES=""
@@ -125,6 +152,20 @@ KAFKA_TOPIC="${KAFKA_TOPIC:-}"
 ICEBERG_TABLE="${ICEBERG_TABLE:-}"
 CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 
+normalize_hdfs_uri() {
+  local value="$1"
+  local base="${HDFS_NAMENODE%/}"
+  if [[ "$value" == hdfs://namenode:9000/* ]]; then
+    printf '%s%s' "$base" "${value#hdfs://namenode:9000}"
+  elif [[ "$value" == hdfs://host.docker.internal:9000/* ]]; then
+    printf '%s%s' "$base" "${value#hdfs://host.docker.internal:9000}"
+  elif [[ "$value" == hdfs://192.168.65.254:9000/* ]]; then
+    printf '%s%s' "$base" "${value#hdfs://192.168.65.254:9000}"
+  else
+    printf '%s' "$value"
+  fi
+}
+
 case "$JOB_TYPE" in
   spark-smoke)
     APP_NAME="AIS_SparkK8sSmoke"
@@ -135,7 +176,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/weather_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-weather_history}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.weather.weather_history_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/weather_history/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://192.168.65.254:9000/checkpoints/weather_history/}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   era5-files)
@@ -143,7 +184,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/era5_files_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-era5-files}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.weather.era5_files_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/era5_files/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://192.168.65.254:9000/checkpoints/era5_files/}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   openaq)
@@ -151,7 +192,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/openaq_hourly_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-openaq-hourly}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.air_quality.openaq_hourly_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/openaq_hourly/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://192.168.65.254:9000/checkpoints/openaq_hourly/}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   sentinel5p)
@@ -159,7 +200,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/sentinel5p_summary_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-sentinel5p-summary}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.satellite.sentinel5p_summary_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/sentinel5p_summary/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://192.168.65.254:9000/checkpoints/sentinel5p_summary/}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   maiac)
@@ -167,7 +208,7 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/maiac_summary_streaming.py"
     KAFKA_TOPIC="${KAFKA_TOPIC:-maiac-summary}"
     ICEBERG_TABLE="${ICEBERG_TABLE:-ais.satellite.maiac_summary_bronze}"
-    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://host.docker.internal:9000/checkpoints/maiac_summary/}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-hdfs://192.168.65.254:9000/checkpoints/maiac_summary/}"
     PACKAGES="${ICEBERG_PACKAGES}"
     ;;
   hanoi-openaq-silver)
@@ -283,6 +324,18 @@ case "$JOB_TYPE" in
     JOB_FILE="/opt/spark-jobs/hanoi_pm25_serving_features_gold.py"
     JOB_ARGS=("--full-refresh" "$FULL_REFRESH")
     ;;
+  pm25-features-cassandra)
+    APP_NAME="PM25ServingFeaturesToCassandra"
+    JOB_FILE="/opt/spark-jobs/pm25_serving_features_to_cassandra.py"
+    JOB_ARGS=("--latest-only" "${CASSANDRA_FEATURE_LATEST_ONLY:-0}" "--dry-run" "$DRY_RUN")
+    PACKAGES="${CASSANDRA_PACKAGES}"
+    ;;
+  online-pm25-features)
+    APP_NAME="OnlinePM25FeatureBuilder"
+    JOB_FILE="/opt/spark-jobs/online_pm25_feature_builder.py"
+    JOB_ARGS=("--base-time" "${BASE_TIME:-${BASE_HOUR:-}}" "--lookback-hours" "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}" "--dry-run" "$DRY_RUN")
+    PACKAGES="${CASSANDRA_PACKAGES}"
+    ;;
   cassandra-weather)
     APP_NAME="IcebergToCassandra_Weather"
     JOB_FILE="/opt/spark-jobs/iceberg_to_cassandra.py"
@@ -307,7 +360,17 @@ case "$JOB_TYPE" in
   pm25-feature-pipeline)
     APP_NAME="AISPM25FeaturePipeline"
     JOB_FILE="/opt/spark-jobs/pipelines/pm25_feature_pipeline.py"
-    JOB_ARGS=("--start-date" "$START_DATE" "--end-date" "$END_DATE" "--full-refresh" "$FULL_REFRESH" "--steps" "${PIPELINE_STEPS:-}")
+    JOB_ARGS=()
+    if [ -n "$START_DATE" ]; then
+      JOB_ARGS+=("--start-date" "$START_DATE")
+    fi
+    if [ -n "$END_DATE" ]; then
+      JOB_ARGS+=("--end-date" "$END_DATE")
+    fi
+    JOB_ARGS+=("--full-refresh" "$FULL_REFRESH")
+    if [ -n "${PIPELINE_STEPS:-}" ]; then
+      JOB_ARGS+=("--steps" "${PIPELINE_STEPS:-}")
+    fi
     ;;
   trajectory-post-pipeline)
     APP_NAME="AISTrajectoryPostPipeline"
@@ -376,10 +439,17 @@ case "$JOB_TYPE" in
     JOB_ARGS=("--dry-run" "$DRY_RUN")
     ;;
   *)
-    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|bronze-pipeline|pm25-feature-pipeline|trajectory-post-pipeline|visualization-pipeline|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks]"
+    echo "Usage: $0 [spark-smoke|weather|openaq|sentinel5p|maiac|era5-files|hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|traj-path-sampling|traj-hourly-features|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|pm25-features-cassandra|online-pm25-features|cassandra-weather|cassandra-openaq|ensure-iceberg|maintenance-iceberg|reconcile-serving|bronze-pipeline|pm25-feature-pipeline|trajectory-post-pipeline|visualization-pipeline|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks]"
     exit 1
     ;;
 esac
+
+CHECKPOINT_PATH="$(normalize_hdfs_uri "$CHECKPOINT_PATH")"
+if [ -n "${HYSPLIT_OUTPUT_BASE_PATH:-}" ]; then
+  HYSPLIT_OUTPUT_BASE_PATH="$(normalize_hdfs_uri "$HYSPLIT_OUTPUT_BASE_PATH")"
+else
+  HYSPLIT_OUTPUT_BASE_PATH="${HDFS_NAMENODE%/}/raw/hysplit/trajectories"
+fi
 
 case "$JOB_TYPE" in
   weather|openaq|sentinel5p|maiac|era5-files)
@@ -390,21 +460,31 @@ case "$JOB_TYPE" in
       STREAM_ARGS+=("--processing-time" "$PROCESSING_TIME")
     fi
     ;;
-  hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks)
+  hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|era5-pressure-arl|hysplit-run|hysplit-parse|hysplit-cluster|sentinel5p-hanoi-silver|openaq-gradient|s5p-grid-silver|maiac-hanoi-silver|hanoi-master-features-gold|hanoi-training-dataset-gold|hanoi-serving-features-gold|pm25-features-cassandra|visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks)
     if [ -n "$START_DATE" ]; then
       JOB_ARGS+=("--start-date" "$START_DATE")
     fi
     if [ -n "$END_DATE" ]; then
       JOB_ARGS+=("--end-date" "$END_DATE")
     fi
-    if [ -n "$BASE_TIME" ]; then
-      JOB_ARGS+=("--base-time" "$BASE_TIME")
-    fi
     if [ -n "$VIS_HORIZONS" ]; then
       JOB_ARGS+=("--horizons" "$VIS_HORIZONS")
     fi
     if [ -n "$VIS_GRID_RESOLUTION_DEG" ]; then
       JOB_ARGS+=("--grid-resolution-deg" "$VIS_GRID_RESOLUTION_DEG")
+    fi
+    ;;
+esac
+
+case "$JOB_TYPE" in
+  hanoi-openaq-silver|hanoi-weather-silver|era5-surface-hanoi-silver|openaq-gradient|hanoi-master-features-gold|hanoi-serving-features-gold|pm25-feature-pipeline)
+    if [ -n "$BASE_TIME" ]; then
+      JOB_ARGS+=("--asof-time" "$BASE_TIME")
+    fi
+    ;;
+  visualization-heatmap-grid|visualization-backward-trajectories|visualization-forward-plume|visualization-forecast-dashboard|visualization-pm25-timeseries|visualization-source-attribution|visualization-station-observations|visualization-export-cache|visualization-quality-checks)
+    if [ -n "$BASE_TIME" ]; then
+      JOB_ARGS+=("--base-time" "$BASE_TIME")
     fi
     ;;
 esac
@@ -521,6 +601,12 @@ spec:
               value: "$(printf "%s" "$END_DATE")"
             - name: FULL_REFRESH
               value: "$(printf "%s" "$FULL_REFRESH")"
+            - name: HDFS_NAMENODE
+              value: "$(printf "%s" "$HDFS_NAMENODE")"
+            - name: HDFS_DEFAULT_FS
+              value: "$(printf "%s" "$HDFS_DEFAULT_FS")"
+            - name: HADOOP_DEFAULT_FS
+              value: "$(printf "%s" "$HADOOP_DEFAULT_FS")"
             - name: HDFS_CLIENT_USE_DATANODE_HOSTNAME
               value: "$(printf "%s" "${HDFS_CLIENT_USE_DATANODE_HOSTNAME:-true}")"
             - name: S5P_QA_THRESHOLD
@@ -544,7 +630,7 @@ spec:
             - name: HYSPLIT_BIN
               value: "$(printf "%s" "${HYSPLIT_BIN:-/opt/hysplit/exec/hyts_std}")"
             - name: HYSPLIT_OUTPUT_BASE_PATH
-              value: "$(printf "%s" "${HYSPLIT_OUTPUT_BASE_PATH:-hdfs://host.docker.internal:9000/raw/hysplit/trajectories}")"
+              value: "$(printf "%s" "$HYSPLIT_OUTPUT_BASE_PATH")"
             - name: HYSPLIT_MAX_RUNS
               value: "$(printf "%s" "${HYSPLIT_MAX_RUNS:-}")"
             - name: HYSPLIT_PARALLELISM
@@ -589,6 +675,10 @@ spec:
               value: "$(printf "%s" "${SPARK_SMOKE_CHECK_ICEBERG:-1}")"
             - name: BASE_TIME
               value: "$(printf "%s" "${BASE_TIME:-}")"
+            - name: BASE_HOUR
+              value: "$(printf "%s" "${BASE_HOUR:-}")"
+            - name: ONLINE_FEATURE_LOOKBACK_HOURS
+              value: "$(printf "%s" "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}")"
           resources:
             requests:
               cpu: ${SPARK_SUBMIT_REQUEST_CPU:-500m}
@@ -625,7 +715,7 @@ spec:
                 --conf "spark.kubernetes.driver.limit.cores=\${SPARK_DRIVER_LIMIT_CORES:-1}"
                 --conf "spark.kubernetes.executor.request.cores=\${SPARK_EXECUTOR_REQUEST_CORES:-500m}"
                 --conf "spark.kubernetes.executor.limit.cores=\${SPARK_EXECUTOR_LIMIT_CORES:-1}"
-                --conf "spark.hadoop.fs.defaultFS=\${HDFS_NAMENODE}"
+                --conf "spark.hadoop.fs.defaultFS=\${HDFS_NAMENODE:-\${HDFS_DEFAULT_FS:-\${HADOOP_DEFAULT_FS:-}}}"
                 --conf "spark.hadoop.dfs.client.use.datanode.hostname=\${HDFS_CLIENT_USE_DATANODE_HOSTNAME:-true}"
                 --conf "spark.jars.ivy=\${SPARK_IVY_DIR:-/tmp/.ivy2}"
                 --conf "spark.kubernetes.driverEnv.KAFKA_BOOTSTRAP_SERVERS=\${KAFKA_BOOTSTRAP_SERVERS:-}"
@@ -636,12 +726,20 @@ spec:
                 --conf "spark.kubernetes.driverEnv.END_DATE=\${END_DATE:-}"
                 --conf "spark.kubernetes.driverEnv.FULL_REFRESH=\${FULL_REFRESH:-0}"
                 --conf "spark.kubernetes.driverEnv.HDFS_NAMENODE=\${HDFS_NAMENODE:-}"
+                --conf "spark.kubernetes.driverEnv.HDFS_DEFAULT_FS=\${HDFS_DEFAULT_FS:-\${HDFS_NAMENODE:-}}"
+                --conf "spark.kubernetes.driverEnv.HADOOP_DEFAULT_FS=\${HADOOP_DEFAULT_FS:-\${HDFS_DEFAULT_FS:-\${HDFS_NAMENODE:-}}}"
                 --conf "spark.kubernetes.driverEnv.HDFS_WEBHDFS_BASE=\${HDFS_WEBHDFS_BASE:-}"
                 --conf "spark.kubernetes.driverEnv.HDFS_CLIENT_USE_DATANODE_HOSTNAME=\${HDFS_CLIENT_USE_DATANODE_HOSTNAME:-true}"
                 --conf "spark.kubernetes.driverEnv.ICEBERG_CATALOG=\${ICEBERG_CATALOG:-ais}"
                 --conf "spark.kubernetes.driverEnv.ICEBERG_CATALOG_URI=\${ICEBERG_CATALOG_URI:-}"
                 --conf "spark.kubernetes.driverEnv.ICEBERG_WAREHOUSE=\${ICEBERG_WAREHOUSE:-}"
                 --conf "spark.kubernetes.driverEnv.CASSANDRA_HOST=\${CASSANDRA_HOST:-}"
+                --conf "spark.kubernetes.driverEnv.CASSANDRA_PORT=\${CASSANDRA_PORT:-9042}"
+                --conf "spark.kubernetes.driverEnv.CASSANDRA_KEYSPACE=\${CASSANDRA_KEYSPACE:-ais_serving}"
+                --conf "spark.kubernetes.driverEnv.CASSANDRA_FEATURE_TABLE=\${CASSANDRA_FEATURE_TABLE:-pm25_feature_state_by_location_hour}"
+                --conf "spark.kubernetes.driverEnv.CASSANDRA_FORECAST_TABLE=\${CASSANDRA_FORECAST_TABLE:-pm25_forecast_latest_by_location}"
+                --conf "spark.kubernetes.driverEnv.FEATURE_SOURCE=\${FEATURE_SOURCE:-iceberg}"
+                --conf "spark.kubernetes.driverEnv.WRITE_CASSANDRA_FORECAST=\${WRITE_CASSANDRA_FORECAST:-0}"
                 --conf "spark.kubernetes.driverEnv.HANOI_PIPELINE_CONFIG=\${HANOI_PIPELINE_CONFIG:-/opt/config/hanoi_pipeline.yaml}"
                 --conf "spark.kubernetes.driverEnv.S5P_QA_THRESHOLD=\${S5P_QA_THRESHOLD:-}"
                 --conf "spark.kubernetes.driverEnv.S5P_NO2_QA_THRESHOLD=\${S5P_NO2_QA_THRESHOLD:-}"
@@ -676,6 +774,8 @@ spec:
                 --conf "spark.kubernetes.driverEnv.PM25_TRIGGER_THRESHOLD=\${PM25_TRIGGER_THRESHOLD:-}"
                 --conf "spark.kubernetes.driverEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
                 --conf "spark.kubernetes.driverEnv.BASE_TIME=\${BASE_TIME:-}"
+                --conf "spark.kubernetes.driverEnv.BASE_HOUR=\${BASE_HOUR:-}"
+                --conf "spark.kubernetes.driverEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
                 --conf "spark.kubernetes.driverEnv.DRY_RUN=\${DRY_RUN:-0}"
                 --conf "spark.kubernetes.driverEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"
                 --conf "spark.kubernetes.driverEnv.VIS_SCHEMA_VERSION=\${VIS_SCHEMA_VERSION:-1}"
@@ -694,12 +794,20 @@ spec:
                 --conf "spark.executorEnv.END_DATE=\${END_DATE:-}"
                 --conf "spark.executorEnv.FULL_REFRESH=\${FULL_REFRESH:-0}"
                 --conf "spark.executorEnv.HDFS_NAMENODE=\${HDFS_NAMENODE:-}"
+                --conf "spark.executorEnv.HDFS_DEFAULT_FS=\${HDFS_DEFAULT_FS:-\${HDFS_NAMENODE:-}}"
+                --conf "spark.executorEnv.HADOOP_DEFAULT_FS=\${HADOOP_DEFAULT_FS:-\${HDFS_DEFAULT_FS:-\${HDFS_NAMENODE:-}}}"
                 --conf "spark.executorEnv.HDFS_WEBHDFS_BASE=\${HDFS_WEBHDFS_BASE:-}"
                 --conf "spark.executorEnv.HDFS_CLIENT_USE_DATANODE_HOSTNAME=\${HDFS_CLIENT_USE_DATANODE_HOSTNAME:-true}"
                 --conf "spark.executorEnv.ICEBERG_CATALOG=\${ICEBERG_CATALOG:-ais}"
                 --conf "spark.executorEnv.ICEBERG_CATALOG_URI=\${ICEBERG_CATALOG_URI:-}"
                 --conf "spark.executorEnv.ICEBERG_WAREHOUSE=\${ICEBERG_WAREHOUSE:-}"
                 --conf "spark.executorEnv.CASSANDRA_HOST=\${CASSANDRA_HOST:-}"
+                --conf "spark.executorEnv.CASSANDRA_PORT=\${CASSANDRA_PORT:-9042}"
+                --conf "spark.executorEnv.CASSANDRA_KEYSPACE=\${CASSANDRA_KEYSPACE:-ais_serving}"
+                --conf "spark.executorEnv.CASSANDRA_FEATURE_TABLE=\${CASSANDRA_FEATURE_TABLE:-pm25_feature_state_by_location_hour}"
+                --conf "spark.executorEnv.CASSANDRA_FORECAST_TABLE=\${CASSANDRA_FORECAST_TABLE:-pm25_forecast_latest_by_location}"
+                --conf "spark.executorEnv.FEATURE_SOURCE=\${FEATURE_SOURCE:-iceberg}"
+                --conf "spark.executorEnv.WRITE_CASSANDRA_FORECAST=\${WRITE_CASSANDRA_FORECAST:-0}"
                 --conf "spark.executorEnv.HANOI_PIPELINE_CONFIG=\${HANOI_PIPELINE_CONFIG:-/opt/config/hanoi_pipeline.yaml}"
                 --conf "spark.executorEnv.S5P_QA_THRESHOLD=\${S5P_QA_THRESHOLD:-}"
                 --conf "spark.executorEnv.S5P_NO2_QA_THRESHOLD=\${S5P_NO2_QA_THRESHOLD:-}"
@@ -734,6 +842,8 @@ spec:
                 --conf "spark.executorEnv.PM25_TRIGGER_THRESHOLD=\${PM25_TRIGGER_THRESHOLD:-}"
                 --conf "spark.executorEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
                 --conf "spark.executorEnv.BASE_TIME=\${BASE_TIME:-}"
+                --conf "spark.executorEnv.BASE_HOUR=\${BASE_HOUR:-}"
+                --conf "spark.executorEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
                 --conf "spark.executorEnv.DRY_RUN=\${DRY_RUN:-0}"
                 --conf "spark.executorEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"
                 --conf "spark.executorEnv.VIS_SCHEMA_VERSION=\${VIS_SCHEMA_VERSION:-1}"
@@ -763,8 +873,36 @@ spec:
               exec /opt/spark/bin/spark-submit "\${submit_args[@]}"
 YAML
 
+timeout_to_seconds() {
+  local raw="${1:-1800s}"
+  case "$raw" in
+    *s) echo "${raw%s}" ;;
+    *m) echo "$(( ${raw%m} * 60 ))" ;;
+    *h) echo "$(( ${raw%h} * 3600 ))" ;;
+    *) echo "$raw" ;;
+  esac
+}
+
+wait_for_job_terminal() {
+  local timeout_sec
+  timeout_sec="$(timeout_to_seconds "$KUBECTL_TIMEOUT")"
+  local deadline=$((SECONDS + timeout_sec))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    local conditions
+    conditions="$(kubectl -n "$K8S_NAMESPACE" get job "$SUBMIT_JOB_NAME" -o jsonpath='{range .status.conditions[*]}{.type}={.status}{"\n"}{end}' 2>/dev/null || true)"
+    if printf "%s\n" "$conditions" | grep -q '^Complete=True$'; then
+      return 0
+    fi
+    if printf "%s\n" "$conditions" | grep -q '^Failed=True$'; then
+      return 1
+    fi
+    sleep 5
+  done
+  return 2
+}
+
 if [ "$WAIT_FOR_COMPLETION" = "true" ]; then
-  if kubectl -n "$K8S_NAMESPACE" wait --for=condition=complete "job/${SUBMIT_JOB_NAME}" --timeout="$KUBECTL_TIMEOUT"; then
+  if wait_for_job_terminal; then
     DRIVER_PHASES="$(kubectl -n "$K8S_NAMESPACE" get pods -l "spark-role=driver" -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null | grep "$SUBMIT_JOB_NAME" || true)"
     if [ -n "$DRIVER_PHASES" ] && printf "%s\n" "$DRIVER_PHASES" | grep -q " Failed"; then
       echo "[ERROR] Spark driver pod failed for submit job ${SUBMIT_JOB_NAME}" >&2

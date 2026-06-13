@@ -141,6 +141,7 @@ def _k8s_job_type_for_file(job_file: str, *, extra_args: str = "", with_cassandr
         "hanoi_pm25_master_features_gold.py": "hanoi-master-features-gold",
         "hanoi_pm25_training_dataset_gold.py": "hanoi-training-dataset-gold",
         "hanoi_pm25_serving_features_gold.py": "hanoi-serving-features-gold",
+        "pm25_serving_features_to_cassandra.py": "pm25-features-cassandra",
         "visualization_pm25_heatmap_grid_gold.py": "visualization-heatmap-grid",
         "visualization_backward_trajectory_paths_gold.py": "visualization-backward-trajectories",
         "visualization_forward_plume_probability_gold.py": "visualization-forward-plume",
@@ -191,7 +192,8 @@ def ensure_cassandra_schema_command() -> str:
         "set -euo pipefail\n"
         "docker exec cassandra cqlsh -e \"CREATE KEYSPACE IF NOT EXISTS ais_serving WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};\"\n"
         "docker exec cassandra cqlsh -e \"CREATE TABLE IF NOT EXISTS ais_serving.weather_hourly_by_province_day (province text, day text, event_time timestamp, event_id text, query_date text, location_name text, lat double, lon double, temp_c double, temp_f double, humidity int, wind_kph double, wind_degree int, wind_dir text, precip_mm double, condition_text text, source text, ingest_time text, PRIMARY KEY ((province, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);\"\n"
-        "docker exec cassandra cqlsh -e \"CREATE TABLE IF NOT EXISTS ais_serving.openaq_hourly_by_city_parameter_day (city text, parameter text, day text, event_time timestamp, event_id text, location_id bigint, location_name text, provider text, sensor_id bigint, unit text, value double, min double, max double, sd double, coverage_pct double, source text, ingest_time text, PRIMARY KEY ((city, parameter, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);\""
+        "docker exec cassandra cqlsh -e \"CREATE TABLE IF NOT EXISTS ais_serving.openaq_hourly_by_city_parameter_day (city text, parameter text, day text, event_time timestamp, event_id text, location_id bigint, location_name text, provider text, sensor_id bigint, unit text, value double, min double, max double, sd double, coverage_pct double, source text, ingest_time text, PRIMARY KEY ((city, parameter, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);\"\n"
+        "bash /opt/ais/scripts/ensure_cassandra_online_schema.sh"
     )
 
 

@@ -1,7 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,13 @@ except ModuleNotFoundError:  # pragma: no cover - Spark images may not have PyYA
 
 
 ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
-ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", "hdfs://namenode:9000/warehouse/iceberg")
-HDFS_NAMENODE = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
+HDFS_NAMENODE = (
+    os.getenv("HDFS_NAMENODE")
+    or os.getenv("HDFS_DEFAULT_FS")
+    or os.getenv("HADOOP_DEFAULT_FS")
+    or "hdfs://namenode:9000"
+).rstrip("/")
+ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", f"{HDFS_NAMENODE}/warehouse/iceberg")
 
 # Base URI for storing model artifacts (mounted path in containers, or a remote URI in production).
 # Used by training/promote scripts to build artifact URIs.
@@ -80,6 +86,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "run_hours_utc": [0, 12],
         "meteo_interval_hours": 6,
         "pm25_trigger_threshold": 75,
+        "backward_fallback_to_run_hours": True,
     },
     "trajectory": {
         "anchor_hours": [0, -6, -12, -24, -36, -48, -60, -72],
@@ -206,6 +213,7 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     cfg = deepcopy(cfg)
     bbox = cfg["hanoi"]["bbox"]
     center = cfg["hanoi"]["center"]
+    hdfs_base = HDFS_NAMENODE.rstrip("/")
 
     bbox["west"] = float(os.getenv("HANOI_BBOX_WEST", bbox["west"]))
     bbox["east"] = float(os.getenv("HANOI_BBOX_EAST", bbox["east"]))
@@ -213,6 +221,23 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     bbox["north"] = float(os.getenv("HANOI_BBOX_NORTH", bbox["north"]))
     center["lat"] = float(os.getenv("HANOI_CENTER_LAT", center["lat"]))
     center["lon"] = float(os.getenv("HANOI_CENTER_LON", center["lon"]))
+
+    era5 = cfg.setdefault("era5", {})
+    sentinel5p = cfg.setdefault("sentinel5p", {})
+    maiac = cfg.setdefault("maiac", {})
+    era5["raw_base_path"] = _normalize_hdfs_default(
+        _env_str("ERA5_RAW_BASE_PATH", str(era5.get("raw_base_path", f"{hdfs_base}/raw/era5"))),
+        hdfs_base,
+    )
+    sentinel5p["raw_base_path"] = _env_str(
+        "SENTINEL5P_RAW_BASE_PATH",
+        str(sentinel5p.get("raw_base_path", f"{hdfs_base}/raw/sentinel5p")),
+    )
+    sentinel5p["raw_base_path"] = _normalize_hdfs_default(sentinel5p["raw_base_path"], hdfs_base)
+    maiac["raw_base_path"] = _normalize_hdfs_default(
+        _env_str("MAIAC_RAW_BASE_PATH", str(maiac.get("raw_base_path", f"{hdfs_base}/raw/maiac"))),
+        hdfs_base,
+    )
 
     vis = cfg.setdefault("visualization", {})
     vis["product_version"] = _env_str("VIS_PRODUCT_VERSION", str(vis.get("product_version", "windy_v1")))
@@ -235,7 +260,10 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     vis["max_points_per_trajectory"] = _env_int("VIS_MAX_POINTS_PER_TRAJECTORY", vis.get("max_points_per_trajectory", 100))
     vis["max_geojson_features"] = _env_int("VIS_MAX_GEOJSON_FEATURES", vis.get("max_geojson_features", 5000))
     cache = vis.setdefault("cache", {})
-    cache["base_uri"] = _env_str("VIS_CACHE_BASE_URI", str(cache.get("base_uri", "hdfs://namenode:9000/visualization_cache")))
+    cache["base_uri"] = _normalize_hdfs_default(
+        _env_str("VIS_CACHE_BASE_URI", str(cache.get("base_uri", "hdfs://namenode:9000/visualization_cache"))),
+        hdfs_base,
+    )
     cache["format"] = _env_str("VIS_CACHE_FORMAT", str(cache.get("format", "geojson")))
 
     sampling = cfg.setdefault("sampling", {})
@@ -247,6 +275,12 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
 def _env_str(name: str, default: str) -> str:
     value = os.getenv(name, "").strip()
     return value if value else default
+
+
+def _normalize_hdfs_default(value: str, hdfs_base: str) -> str:
+    if value.startswith("hdfs://namenode:9000/") and hdfs_base != "hdfs://namenode:9000":
+        return f"{hdfs_base}{value[len('hdfs://namenode:9000'):]}"
+    return value
 
 
 def _env_float(name: str, default: Any) -> float:
@@ -352,7 +386,10 @@ def get_visualization_horizons() -> list[int]:
 def get_visualization_cache_base_uri() -> str:
     cfg = get_visualization_config()
     cache = cfg.get("cache", {})
-    return _env_str("VIS_CACHE_BASE_URI", str(cache.get("base_uri", "hdfs://namenode:9000/visualization_cache"))).rstrip("/")
+    return _normalize_hdfs_default(
+        _env_str("VIS_CACHE_BASE_URI", str(cache.get("base_uri", "hdfs://namenode:9000/visualization_cache"))),
+        HDFS_NAMENODE.rstrip("/"),
+    ).rstrip("/")
 
 
 def get_visualization_cluster_labels() -> dict[int, str]:
@@ -374,6 +411,27 @@ def get_era5_pressure_level_times() -> list[str]:
 
 def get_table_names() -> dict[str, str]:
     return TABLES.copy()
+
+
+def parse_asof_time(raw: str | None = None) -> datetime | None:
+    value = (raw or os.getenv("ASOF_TIME") or os.getenv("SIMULATED_NOW") or os.getenv("BASE_TIME") or os.getenv("BASE_HOUR") or "").strip()
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.replace(minute=0, second=0, microsecond=0)
+
+
+def apply_asof_time(df: DataFrame, time_col: str, asof_time: datetime | str | None) -> DataFrame:
+    if not asof_time:
+        return df
+    if isinstance(asof_time, datetime):
+        value = asof_time.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        parsed = parse_asof_time(asof_time)
+        value = parsed.strftime("%Y-%m-%d %H:%M:%S") if parsed else str(asof_time)
+    return df.filter(F.col(time_col) <= F.to_timestamp(F.lit(value)))
 
 
 def filter_hanoi_bbox(df: DataFrame, lat_col: str, lon_col: str) -> DataFrame:

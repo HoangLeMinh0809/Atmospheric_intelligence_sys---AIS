@@ -10,7 +10,7 @@ export default function ForecastPanel({ forecast }) {
   return (
     <section className="map-panel forecast-panel">
       <div className="panel-title-row">
-        <h3>PM2.5 Forecast</h3>
+        <h3>Model City Forecast</h3>
         <span>{forecast?.model?.model_version || forecast?.model?.model_version_6h || "model pending"}</span>
       </div>
       <div className="forecast-grid">

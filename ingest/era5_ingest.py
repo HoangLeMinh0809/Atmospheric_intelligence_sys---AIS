@@ -160,52 +160,98 @@ def _split_hdfs_uri(uri: str) -> tuple[str, str]:
 
 
 def _webhdfs_base() -> str:
-    return os.getenv("WEBHDFS_BASE", "http://namenode:9870/webhdfs/v1").rstrip("/")
+    return os.getenv("WEBHDFS_BASE", os.getenv("HDFS_WEBHDFS_BASE", "http://namenode:9870/webhdfs/v1")).rstrip("/")
 
 
-def _webhdfs_path_url(hdfs_uri: str) -> str:
+def _webhdfs_bases() -> list[str]:
+    return [
+        base.strip().rstrip("/")
+        for base in os.getenv("WEBHDFS_BASE", os.getenv("HDFS_WEBHDFS_BASE", "http://namenode:9870/webhdfs/v1")).split(",")
+        if base.strip()
+    ]
+
+
+def _webhdfs_path_urls(hdfs_uri: str) -> list[str]:
     _, abs_path = _split_hdfs_uri(hdfs_uri)
-    return f"{_webhdfs_base()}{abs_path}"
+    return [f"{base}{abs_path}" for base in _webhdfs_bases()]
+
+
+def _is_standby_response(response: requests.Response) -> bool:
+    if response.status_code != 403:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    remote_exception = payload.get("RemoteException", {})
+    return remote_exception.get("exception") == "StandbyException"
+
+
+def _raise_last_webhdfs_error(last_response: requests.Response | None) -> None:
+    if last_response is not None:
+        last_response.raise_for_status()
+    raise RuntimeError("No WebHDFS endpoint configured")
 
 
 def _hdfs_path_exists(hdfs_uri: str) -> bool:
-    url = _webhdfs_path_url(hdfs_uri)
-    response = requests.get(
-        url,
-        params={"op": "GETFILESTATUS", "user.name": os.getenv("HDFS_USER", "root")},
-        timeout=30,
-    )
-    if response.status_code == 200:
-        return True
-    if response.status_code == 404:
-        return False
-    response.raise_for_status()
+    last_response = None
+    for url in _webhdfs_path_urls(hdfs_uri):
+        response = requests.get(
+            url,
+            params={"op": "GETFILESTATUS", "user.name": os.getenv("HDFS_USER", "root")},
+            timeout=30,
+        )
+        last_response = response
+        if _is_standby_response(response):
+            logger.info("WebHDFS endpoint is standby, trying next endpoint: %s", url)
+            continue
+        if response.status_code == 200:
+            return True
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+    _raise_last_webhdfs_error(last_response)
     return False
 
 
 def _hdfs_mkdirs(hdfs_uri: str) -> None:
     _, abs_path = _split_hdfs_uri(hdfs_uri)
     parent = posixpath.dirname(abs_path)
-    url = f"{_webhdfs_base()}{parent}"
-    response = requests.put(
-        url,
-        params={"op": "MKDIRS", "user.name": os.getenv("HDFS_USER", "root")},
-        timeout=60,
-    )
-    response.raise_for_status()
+    last_response = None
+    for base in _webhdfs_bases():
+        url = f"{base}{parent}"
+        response = requests.put(
+            url,
+            params={"op": "MKDIRS", "user.name": os.getenv("HDFS_USER", "root")},
+            timeout=60,
+        )
+        last_response = response
+        if _is_standby_response(response):
+            logger.info("WebHDFS endpoint is standby, trying next endpoint: %s", url)
+            continue
+        response.raise_for_status()
+        return
+    _raise_last_webhdfs_error(last_response)
 
 
 def _hdfs_put(local_path: Path, hdfs_uri: str) -> None:
     _hdfs_mkdirs(hdfs_uri)
-    url = _webhdfs_path_url(hdfs_uri)
     params = {
         "op": "CREATE",
         "overwrite": "true",
         "user.name": os.getenv("HDFS_USER", "root"),
     }
-    with local_path.open("rb") as f:
-        response = requests.put(url, params=params, data=f, allow_redirects=True)
-    response.raise_for_status()
+    last_response = None
+    for url in _webhdfs_path_urls(hdfs_uri):
+        with local_path.open("rb") as f:
+            response = requests.put(url, params=params, data=f, allow_redirects=True)
+        last_response = response
+        if _is_standby_response(response):
+            logger.info("WebHDFS endpoint is standby, trying next endpoint: %s", url)
+            continue
+        response.raise_for_status()
+        return
+    _raise_last_webhdfs_error(last_response)
 
 
 def _build_surface_request(

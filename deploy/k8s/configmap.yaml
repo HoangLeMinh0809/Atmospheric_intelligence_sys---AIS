@@ -7,17 +7,23 @@ metadata:
     app.kubernetes.io/name: ais
     app.kubernetes.io/part-of: atmospheric-intelligence-system
 data:
-  KAFKA_BOOTSTRAP_SERVERS: host.docker.internal:29092
-  KAFKA_HOST: host.docker.internal
+  KAFKA_BOOTSTRAP_SERVERS: 192.168.65.254:29092
+  KAFKA_HOST: 192.168.65.254
   KAFKA_PORT: "29092"
-  HDFS_NAMENODE: hdfs://host.docker.internal:9000
-  HDFS_WEBHDFS_BASE: http://host.docker.internal:9870/webhdfs/v1
+  HDFS_NAMENODE: hdfs://namenode:9000
+  HDFS_DEFAULT_FS: hdfs://namenode:9000
+  HADOOP_DEFAULT_FS: hdfs://namenode:9000
+  HDFS_WEBHDFS_BASE: http://namenode:9870/webhdfs/v1
   HDFS_CLIENT_USE_DATANODE_HOSTNAME: "true"
   ICEBERG_CATALOG: ais
   ICEBERG_CATALOG_URI: ""
-  ICEBERG_WAREHOUSE: hdfs://host.docker.internal:9000/warehouse/iceberg
-  CASSANDRA_HOST: host.docker.internal
-  MODEL_ARTIFACT_BASE_URI: hdfs://host.docker.internal:9000/models
+  ICEBERG_WAREHOUSE: hdfs://namenode:9000/warehouse/iceberg
+  CASSANDRA_HOST: 192.168.65.254
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_KEYSPACE: ais_serving
+  CASSANDRA_FEATURE_TABLE: pm25_feature_state_by_location_hour
+  CASSANDRA_FORECAST_TABLE: pm25_forecast_latest_by_location
+  MODEL_ARTIFACT_BASE_URI: hdfs://namenode:9000/models
   HANOI_PIPELINE_CONFIG: /opt/config/hanoi_pipeline.yaml
   FEATURE_VERSION: hanoi_pm25_core_v1
   FEATURE_SET_NAME: hanoi_pm25_core_v1
@@ -29,6 +35,17 @@ data:
   MODEL_REGISTRY_TABLE: ais.models.hanoi_pm25_model_registry_gold
   SERVING_FEATURE_TABLE: ais.features.hanoi_pm25_serving_features_gold
   PREDICTION_TABLE: ais.predictions.hanoi_pm25_forecast_gold
+  FEATURE_SOURCE: cassandra
+  WRITE_CASSANDRA_FORECAST: "1"
+  WRITE_FORECAST_TO_ICEBERG_AUDIT: "1"
+  ENABLE_REALTIME_ONLINE_FEATURES: "1"
+  HISTORICAL_BACKFILL_END_DATE: ""
+  REALTIME_SIMULATION_DATE: ""
+  ONLINE_FEATURE_INTERVAL_SECONDS: "120"
+  REALTIME_PREDICTION_INTERVAL_SECONDS: "120"
+  ONLINE_FEATURE_LOOKBACK_HOURS: "72"
+  BASE_TIME: ""
+  BASE_HOUR: ""
   VIS_PRODUCT_VERSION: windy_v1
   VIS_SCHEMA_VERSION: "1"
   VIS_REGION_BBOX_WEST: "100.0"
@@ -39,10 +56,12 @@ data:
   VIS_HORIZONS: "0,6,12,24"
   VIS_OBS_HISTORY_HOURS: "48"
   VIS_FORWARD_PLUME_REQUIRED: "false"
-  VIS_CACHE_BASE_URI: hdfs://host.docker.internal:9000/visualization_cache
+  VIS_CACHE_BASE_URI: hdfs://namenode:9000/visualization_cache
   VIS_CACHE_FORMAT: geojson
+  VIS_FORECAST_SOURCE: cassandra
   VIS_HEATMAP_TABLE: ais.visualization.pm25_heatmap_grid_gold
   VIS_TRAJECTORY_TABLE: ais.visualization.backward_trajectory_paths_gold
+  VIS_TRAJECTORY_PM25_THRESHOLD: "30"
   VIS_PLUME_TABLE: ais.visualization.forward_plume_probability_gold
   VIS_DASHBOARD_TABLE: ais.visualization.pm25_forecast_dashboard_gold
   VIS_TIMESERIES_TABLE: ais.visualization.pm25_timeseries_gold
@@ -54,11 +73,18 @@ data:
   VIS_OPTIONAL_LAYERS: forward_plume
   VIS_FRESHNESS_MAX_MINUTES: "720"
   VIS_READY_TIMEOUT_SECONDS: "5"
+  VIS_API_CACHE_TTL_SECONDS: "60"
+  VIS_LIVE_HEATMAP_BBOX: "105.75,20.95,105.95,21.10"
+  VIS_LIVE_HEATMAP_COLS: "28"
+  VIS_LIVE_HEATMAP_ROWS: "20"
+  VIS_LIVE_HEATMAP_BUCKET_SECONDS: "15"
+  VIS_LIVE_HEATMAP_NOISE_RATIO: "0.06"
   VIS_ENABLE_TABLE_FALLBACK: "false"
   VIS_API_BASE_URL: http://visualization-api.ais.svc.cluster.local
   VITE_VIS_API_BASE: /api/v1/visualization
   VITE_USE_MOCK_DATA: "false"
   VITE_DEFAULT_HORIZON_H: "0"
+  VITE_VIS_REFRESH_MS: "15000"
   VITE_DEFAULT_MAP_CENTER_LAT: "21.0285"
   VITE_DEFAULT_MAP_CENTER_LON: "105.8542"
   VITE_DEFAULT_MAP_ZOOM: "7"

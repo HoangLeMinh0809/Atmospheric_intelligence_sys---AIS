@@ -42,16 +42,17 @@ def as_bool(raw: str) -> bool:
 def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     warehouse = os.getenv("ICEBERG_WAREHOUSE", "")
-    hdfs_namenode = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
-    packages = os.getenv(
-        "SPARK_JARS_PACKAGES",
-        "org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1",
+    hdfs_namenode = (
+        os.getenv("HDFS_NAMENODE")
+        or os.getenv("HDFS_DEFAULT_FS")
+        or os.getenv("HADOOP_DEFAULT_FS")
+        or "hdfs://host.docker.internal:9000"
     )
+    packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
     builder = (
         SparkSession.builder.appName("PromoteHanoiPM25Model")
-        .config("spark.jars.packages", packages)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{catalog}", "org.apache.iceberg.spark.SparkCatalog")
@@ -62,6 +63,8 @@ def build_spark() -> SparkSession:
             os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
         )
     )
+    if packages:
+        builder = builder.config("spark.jars.packages", packages)
     if warehouse:
         builder = builder.config(f"spark.sql.catalog.{catalog}.warehouse", warehouse)
     return builder.getOrCreate()

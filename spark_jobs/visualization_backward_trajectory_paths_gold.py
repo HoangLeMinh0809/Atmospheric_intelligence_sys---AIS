@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 from pyspark.sql import Row
 from pyspark.sql import functions as F
@@ -56,6 +57,7 @@ def main() -> None:
     asof_time = parse_base_time(args.base_time) or end_of_date(args.end_date)
     max_paths = max(1, int(runtime.get("max_trajectories", 150)))
     max_points = max(2, int(runtime.get("max_points_per_trajectory", 100)))
+    pm25_threshold = float(os.getenv("VIS_TRAJECTORY_PM25_THRESHOLD", os.getenv("PM25_TRIGGER_THRESHOLD", "30") or "30"))
 
     try:
         traj = read_table_if_exists(spark, tables["hysplit_cluster_silver"])
@@ -84,10 +86,29 @@ def main() -> None:
         if args.end_date:
             init_df = init_df.filter(F.to_date("init_time") <= F.to_date(F.lit(args.end_date)))
 
+        pm25_col = None
+        aq_df = read_table_if_exists(spark, tables["openaq_hourly_silver"])
+        if aq_df is not None and "hour" in aq_df.columns:
+            for candidate in ("pm25_median", "pm25_mean", "pm25"):
+                if candidate in aq_df.columns:
+                    pm25_col = candidate
+                    break
+        if aq_df is not None and pm25_col is not None and pm25_threshold > 0:
+            pm25_hours = (
+                aq_df.select(
+                    F.col("hour").alias("init_time"),
+                    F.col(pm25_col).cast("double").alias("trajectory_pm25"),
+                )
+                .filter(F.col("trajectory_pm25") >= F.lit(pm25_threshold))
+                .dropDuplicates(["init_time"])
+            )
+            init_df = init_df.join(pm25_hours, on="init_time", how="inner")
+
         selected_ids = init_df.orderBy(F.col("init_time").desc()).limit(max_paths)
         selected_count = selected_ids.count()
         scoped = points.join(selected_ids, on="traj_id", how="inner")
         source = [r.asDict(recursive=True) for r in scoped.collect()]
+        selected_meta = {str(r["traj_id"]): r.asDict(recursive=True) for r in selected_ids.collect()}
 
         selected_id_df = selected_ids.select("traj_id")
         path_features = {}
@@ -119,11 +140,14 @@ def main() -> None:
             cluster_id = first.get("cluster_id")
             label = runtime["cluster_labels"].get(int(cluster_id), "Unknown source cluster") if cluster_id is not None else None
             evidence = path_features.get(traj_id, {})
+            meta = selected_meta.get(traj_id, {})
             ages = [int(item["age_h"]) for item in ordered if item.get("age_h") is not None]
             props = {
                 "traj_id": traj_id,
                 "cluster_id": cluster_id,
                 "source_label": label,
+                "trajectory_pm25": meta.get("trajectory_pm25"),
+                "pm25_threshold": pm25_threshold,
                 "source_lat": first.get("source_lat"),
                 "source_lon": first.get("source_lon"),
                 "path_no2_mean": evidence.get("path_no2_mean"),
@@ -170,44 +194,16 @@ def main() -> None:
             )
 
         if not rows:
-            init_time = base_time
-            rows.append(
-                Row(
-                    visualization_run_id=vis_run_id,
-                    product_version=runtime["product_version"],
-                    schema_version=runtime["schema_version"],
-                    base_time=base_time,
-                    init_time=init_time,
-                    direction="backward",
-                    traj_id="upstream_trajectory_missing",
-                    traj_no=0,
-                    cluster_id=0,
-                    source_label="upstream_trajectory_missing",
-                    source_lat=21.0285,
-                    source_lon=105.8542,
-                    source_alt_m=0.0,
-                    start_lat=21.0285,
-                    start_lon=105.8542,
-                    end_lat=21.05,
-                    end_lon=105.88,
-                    age_start_h=0,
-                    age_end_h=0,
-                    point_count=2,
-                    path_no2_mean=0.0,
-                    path_aer_mean=0.0,
-                    path_no2_aer_ratio=0.0,
-                    geometry_geojson=line_geojson([
-                        {"lon": 105.8542, "lat": 21.0285, "alt_m": 0.0},
-                        {"lon": 105.88, "lat": 21.05, "alt_m": 0.0},
-                    ]),
-                    properties_json=json.dumps({"available": False, "reason": "upstream_trajectory_missing"}, separators=(",", ":")),
-                    style_color="#64748b",
-                    generated_at=generated_at,
-                    year=int(init_time.year),
-                    month=int(init_time.month),
-                    day=int(init_time.day),
-                )
+            print(
+                "job=visualization_backward_trajectory_paths "
+                f"selected_trajectory_count={selected_count} input_point_count={len(source)} "
+                f"trajectory_count=0 exported_point_count={exported_points} "
+                f"max_trajectories={max_paths} max_points_per_trajectory={max_points} "
+                f"pm25_threshold={pm25_threshold} "
+                f"invalid_geometry_count={invalid} dry_run={int(dry_run)} "
+                "status=no_real_trajectory_rows"
             )
+            return
         out = spark.createDataFrame(rows)
         count = write_product(out, tables["visualization_backward_trajectory_paths_gold"], dry_run)
         print(
@@ -215,6 +211,7 @@ def main() -> None:
             f"selected_trajectory_count={selected_count} input_point_count={len(source)} "
             f"trajectory_count={len(rows)} exported_point_count={exported_points} "
             f"max_trajectories={max_paths} max_points_per_trajectory={max_points} "
+            f"pm25_threshold={pm25_threshold} "
             f"invalid_geometry_count={invalid} dry_run={int(dry_run)} "
             f"status={'dry_run_success' if dry_run else 'written'} table_rows={count}"
         )

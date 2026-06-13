@@ -31,6 +31,7 @@ from hanoi_config import (
     get_maiac_scale_factor,
     get_table_names,
 )
+from hdfs_utils import hdfs_default_fs
 
 
 OUTPUT_COLUMNS = [
@@ -105,7 +106,11 @@ def build_spark() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", hdfs_default_fs())
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
         .getOrCreate()
     )
 
@@ -423,9 +428,24 @@ def log_metrics(candidate_count: int, bronze_count: int, file_records: list[dict
         print("warning=maiac_silver_empty")
 
 
-def write_iceberg(spark: SparkSession, rows: list[dict[str, Any]], table_name: str, full_refresh: bool) -> None:
+def write_iceberg(
+    spark: SparkSession,
+    rows: list[dict[str, Any]],
+    table_name: str,
+    full_refresh: bool,
+    start_date: date | None,
+    end_date: date | None,
+) -> None:
     if full_refresh:
-        spark.sql(f"DELETE FROM {table_name}")
+        predicates = []
+        if start_date:
+            predicates.append(f"date >= DATE '{start_date.isoformat()}'")
+        if end_date:
+            predicates.append(f"date <= DATE '{end_date.isoformat()}'")
+        if predicates:
+            spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
+        else:
+            spark.sql(f"DELETE FROM {table_name}")
 
     df = spark.createDataFrame(rows, schema=OUTPUT_SCHEMA)
     df.createOrReplaceTempView("maiac_hanoi_daily_silver_updates")
@@ -477,7 +497,7 @@ def main() -> None:
 
     daily_rows = build_daily_rows(file_records)
     log_metrics(len(candidate_files), bronze_count, file_records, daily_rows)
-    write_iceberg(spark, daily_rows, target_table, full_refresh=as_bool(args.full_refresh))
+    write_iceberg(spark, daily_rows, target_table, full_refresh=as_bool(args.full_refresh), start_date=start_date, end_date=end_date)
     print(f"Saved: {target_table}")
     spark.stop()
 

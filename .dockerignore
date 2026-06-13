@@ -9,7 +9,3 @@ checkpoints
 models
 data
 notebooks
-spark/hysplit/*.tar.gz
-spark/hysplit/*.tgz
-spark/hysplit/*.tar
-spark/hysplit/*.zip

@@ -25,8 +25,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
-import tempfile
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -54,6 +52,7 @@ from hanoi_config import (
     get_sentinel5p_products,
     get_sentinel5p_raw_base_path,
 )
+from hdfs_utils import copy_hdfs_to_local, hdfs_default_fs, list_hdfs_files, normalize_hdfs_path
 
 
 PRODUCTS = {
@@ -138,7 +137,11 @@ def create_spark_session() -> SparkSession:
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.warehouse", ICEBERG_WAREHOUSE)
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.hadoop.fs.defaultFS", hdfs_default_fs())
+        .config(
+            "spark.hadoop.dfs.client.use.datanode.hostname",
+            os.getenv("HDFS_CLIENT_USE_DATANODE_HOSTNAME", "true"),
+        )
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .getOrCreate()
     )
@@ -268,25 +271,9 @@ def _list_hdfs_files(root_path: str) -> dict[str, str]:
     from pyspark.sql import SparkSession
 
     spark = SparkSession.builder.getOrCreate()
-    jconf = spark._jsc.hadoopConfiguration()
-    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(jconf)
-    path = spark._jvm.org.apache.hadoop.fs.Path(root_path)
-
-    try:
-        if not fs.exists(path):
-            return {}
-    except Exception:
-        return {}
-
-    index: dict[str, str] = {}
-    iterator = fs.listFiles(path, True)
-    while iterator.hasNext():
-        file_status = iterator.next()
-        path_text = file_status.getPath().toString()
-        basename = file_status.getPath().getName()
-        index.setdefault(basename, path_text)
+    index = list_hdfs_files(root_path, spark)
+    for basename, path_text in list(index.items()):
         index.setdefault(_sanitize_fragment(basename), path_text)
-
     return index
 
 
@@ -294,7 +281,12 @@ def _resolve_source_file(metadata: dict[str, Any], raw_base_path: str) -> tuple[
     raw_file_path = str(metadata.get("raw_file_path") or "").strip()
     raw_downloaded = metadata.get("raw_downloaded")
     if raw_file_path and raw_downloaded is not False:
-        return raw_file_path, raw_file_path
+        resolved = (
+            normalize_hdfs_path(raw_file_path)
+            if raw_file_path.startswith("hdfs://") or (raw_file_path.startswith("/") and not Path(raw_file_path).exists())
+            else raw_file_path
+        )
+        return resolved, resolved
 
     candidates = _candidate_file_names(metadata)
     if not candidates:
@@ -333,20 +325,7 @@ def _copy_hdfs_file_to_local(remote_path: str) -> Path:
     from pyspark.sql import SparkSession
 
     spark = SparkSession.builder.getOrCreate()
-    jconf = spark._jsc.hadoopConfiguration()
-    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(jconf)
-
-    temp_dir = Path(tempfile.mkdtemp(prefix="sentinel5p_"))
-    local_dst = spark._jvm.org.apache.hadoop.fs.Path(str(temp_dir.resolve()))
-    src = spark._jvm.org.apache.hadoop.fs.Path(remote_path)
-
-    try:
-        # preserve source, copy to local dir
-        fs.copyToLocalFile(False, src, local_dst, True)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to copy {remote_path}: {exc}") from exc
-
-    return temp_dir / Path(remote_path).name
+    return copy_hdfs_to_local(remote_path, spark, prefix="sentinel5p_", temp_base="/tmp/ais_sentinel5p")
 
 
 def _find_product_group(dataset: Any, variable_name: str) -> Any | None:
@@ -596,10 +575,16 @@ def create_output_dataframe(spark: SparkSession, rows: list[dict[str, Any]]):
     return spark.createDataFrame([], schema=OUTPUT_SCHEMA)
 
 
-def write_to_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool) -> None:
+def write_to_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: date, end_date: date) -> None:
     print(f"[INFO] Writing {df.count()} Sentinel-5P row(s) to {table_name}")
     if full_refresh:
-        spark.sql(f"DELETE FROM {table_name}")
+        spark.sql(
+            f"""
+            DELETE FROM {table_name}
+            WHERE date >= DATE '{start_date.isoformat()}'
+              AND date <= DATE '{end_date.isoformat()}'
+            """
+        )
     df.writeTo(table_name).overwritePartitions()
 
 
@@ -633,6 +618,8 @@ def main() -> None:
     parser.add_argument("--full-refresh", type=int, default=0, help="Full refresh (1) or incremental (0)")
     args = parser.parse_args()
 
+    if not args.start_date.strip() or not args.end_date.strip():
+        raise ValueError("--start-date and --end-date must be non-empty YYYY-MM-DD")
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
     end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
     if start_date > end_date:
@@ -649,7 +636,7 @@ def main() -> None:
     rows = build_daily_rows(spark, start_date, end_date)
     output_df = create_output_dataframe(spark, rows)
     validate_output(output_df)
-    write_to_iceberg(spark, output_df, TABLES["sentinel5p_silver"], full_refresh=bool(args.full_refresh))
+    write_to_iceberg(spark, output_df, TABLES["sentinel5p_silver"], full_refresh=bool(args.full_refresh), start_date=start_date, end_date=end_date)
 
     print(f"Successfully wrote Sentinel-5P daily silver to {TABLES['sentinel5p_silver']}")
     spark.stop()

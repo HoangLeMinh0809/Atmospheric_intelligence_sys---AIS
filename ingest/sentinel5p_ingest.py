@@ -113,7 +113,17 @@ REQUEST_DELAY_SEC = float(os.getenv("REQUEST_DELAY_SEC", "0.2"))
 SEND_DELAY_MS = int(os.getenv("SEND_DELAY_MS", "0"))
 DOWNLOAD_RAW = parse_bool(os.getenv("S5P_DOWNLOAD_RAW", os.getenv("DOWNLOAD_RAW", "false")), default=False)
 RAW_HDFS_BASE_PATH = os.getenv("S5P_RAW_HDFS_BASE_PATH", "/raw/sentinel5p").strip().rstrip("/")
-HDFS_WEBHDFS_BASE = os.getenv("HDFS_WEBHDFS_BASE", "http://namenode:9870/webhdfs/v1").strip().rstrip("/")
+HDFS_WEBHDFS_BASES = [
+    base.strip().rstrip("/")
+    for base in os.getenv("HDFS_WEBHDFS_BASE", "http://namenode:9870/webhdfs/v1").split(",")
+    if base.strip()
+]
+HDFS_NAMENODE = (
+    os.getenv("HDFS_NAMENODE")
+    or os.getenv("HDFS_DEFAULT_FS")
+    or os.getenv("HADOOP_DEFAULT_FS")
+    or "hdfs://namenode:9000"
+).strip().rstrip("/")
 DOWNLOAD_TIMEOUT_SEC = int(os.getenv("DOWNLOAD_TIMEOUT_SEC", "600"))
 DOWNLOAD_CHUNK_SIZE = int(os.getenv("DOWNLOAD_CHUNK_SIZE", str(1024 * 1024)))
 MAX_DOWNLOAD_BYTES = int(os.getenv("S5P_MAX_DOWNLOAD_BYTES", "0"))
@@ -180,54 +190,98 @@ def build_download_url(product_id: str) -> str:
     return f"https://download.dataspace.copernicus.eu/odata/v1/Products({product_id})/$value"
 
 
-def _webhdfs_path(path: str) -> str:
-    return f"{HDFS_WEBHDFS_BASE}/{path.strip('/')}"
+def _webhdfs_paths(path: str) -> list[str]:
+    return [f"{base}/{path.strip('/')}" for base in HDFS_WEBHDFS_BASES]
+
+
+def _hdfs_uri(path: str) -> str:
+    return f"{HDFS_NAMENODE}/{path.strip('/')}"
+
+
+def _is_standby_response(response: requests.Response) -> bool:
+    if response.status_code != 403:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    remote_exception = payload.get("RemoteException", {})
+    return remote_exception.get("exception") == "StandbyException"
+
+
+def _raise_last_webhdfs_error(last_response: requests.Response | None) -> None:
+    if last_response is not None:
+        last_response.raise_for_status()
+    raise RuntimeError("No WebHDFS endpoint configured")
 
 
 def webhdfs_exists(path: str) -> bool:
-    response = requests.get(
-        _webhdfs_path(path),
-        params={"op": "GETFILESTATUS"},
-        timeout=REQUEST_TIMEOUT_SEC,
-    )
-    if response.status_code == 200:
-        return True
-    if response.status_code == 404:
-        return False
-    response.raise_for_status()
+    last_response = None
+    for url in _webhdfs_paths(path):
+        response = requests.get(
+            url,
+            params={"op": "GETFILESTATUS", "user.name": os.getenv("HDFS_USER", "root")},
+            timeout=REQUEST_TIMEOUT_SEC,
+        )
+        last_response = response
+        if _is_standby_response(response):
+            logger.info("WebHDFS endpoint is standby, trying next endpoint: %s", url)
+            continue
+        if response.status_code == 200:
+            return True
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+    _raise_last_webhdfs_error(last_response)
     return False
 
 
 def webhdfs_mkdirs(path: str) -> None:
-    response = requests.put(
-        _webhdfs_path(path),
-        params={"op": "MKDIRS"},
-        timeout=REQUEST_TIMEOUT_SEC,
-    )
-    response.raise_for_status()
+    last_response = None
+    for url in _webhdfs_paths(path):
+        response = requests.put(
+            url,
+            params={"op": "MKDIRS", "user.name": os.getenv("HDFS_USER", "root")},
+            timeout=REQUEST_TIMEOUT_SEC,
+        )
+        last_response = response
+        if _is_standby_response(response):
+            logger.info("WebHDFS endpoint is standby, trying next endpoint: %s", url)
+            continue
+        response.raise_for_status()
+        return
+    _raise_last_webhdfs_error(last_response)
 
 
 def upload_file_to_hdfs(local_path: Path, hdfs_path: str) -> str:
     parent = str(Path(hdfs_path).parent).replace("\\", "/")
     webhdfs_mkdirs(parent)
 
-    create_response = requests.put(
-        _webhdfs_path(hdfs_path),
-        params={"op": "CREATE", "overwrite": "true"},
-        allow_redirects=False,
-        timeout=REQUEST_TIMEOUT_SEC,
-    )
-    if create_response.status_code not in {201, 307}:
-        create_response.raise_for_status()
+    create_response = None
+    for url in _webhdfs_paths(hdfs_path):
+        create_response = requests.put(
+            url,
+            params={"op": "CREATE", "overwrite": "true", "user.name": os.getenv("HDFS_USER", "root")},
+            allow_redirects=False,
+            timeout=REQUEST_TIMEOUT_SEC,
+        )
+        if _is_standby_response(create_response):
+            logger.info("WebHDFS endpoint is standby, trying next endpoint: %s", url)
+            continue
+        if create_response.status_code not in {201, 307}:
+            create_response.raise_for_status()
+        break
+    else:
+        _raise_last_webhdfs_error(create_response)
 
     upload_url = create_response.headers.get("Location")
     if not upload_url:
-        return f"hdfs://namenode:9000/{hdfs_path.strip('/')}"
+        return _hdfs_uri(hdfs_path)
 
     with local_path.open("rb") as handle:
         response = requests.put(upload_url, data=handle, timeout=DOWNLOAD_TIMEOUT_SEC)
     response.raise_for_status()
-    return f"hdfs://namenode:9000/{hdfs_path.strip('/')}"
+    return _hdfs_uri(hdfs_path)
 
 
 def download_product_to_file(download_url: str, token: str, local_path: Path, expected_size: int | None) -> None:
@@ -276,7 +330,7 @@ def maybe_download_raw_product(product_key: str, item: dict, token: str, content
         f"{RAW_HDFS_BASE_PATH}/product={product_key}/year={year:04d}/month={month:02d}/day={day:02d}/"
         f"{product_name}"
     )
-    result["raw_file_path"] = f"hdfs://namenode:9000/{hdfs_path.strip('/')}"
+    result["raw_file_path"] = _hdfs_uri(hdfs_path)
 
     try:
         if webhdfs_exists(hdfs_path):
