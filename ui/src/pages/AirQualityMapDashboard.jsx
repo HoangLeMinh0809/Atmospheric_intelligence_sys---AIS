@@ -62,6 +62,38 @@ function mergeLiveNowForecast(forecast, liveHeatmap) {
   };
 }
 
+const DEFAULT_RECEPTOR = { name: "Hoàn Kiếm", lon: 105.852, lat: 21.029 };
+const TRAJECTORY_RECEPTORS = [
+  { name: "Tây Hồ", lon: 105.817, lat: 21.068 },
+  { name: "Cầu Giấy", lon: 105.79, lat: 21.036 },
+  { name: "Ba Đình", lon: 105.828, lat: 21.035 },
+  DEFAULT_RECEPTOR,
+  { name: "Đống Đa", lon: 105.832, lat: 21.014 },
+  { name: "Hai Bà Trưng", lon: 105.859, lat: 21.0 },
+  { name: "Long Biên", lon: 105.886, lat: 21.038 },
+  { name: "Thanh Xuân", lon: 105.805, lat: 20.996 },
+];
+
+function locationIdFromName(name) {
+  return String(name || "hanoi")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function trajectoryRequest(date, receptor) {
+  return getBackwardTrajectoriesLatest({
+    date,
+    locationId: locationIdFromName(receptor?.name),
+    locationName: receptor?.name,
+    lon: receptor?.lon,
+    lat: receptor?.lat,
+  });
+}
+
 export default function AirQualityMapDashboard() {
   const [horizon, setHorizon] = useState(Number(import.meta.env.VITE_DEFAULT_HORIZON_H || 0));
   const [selectedDate, setSelectedDate] = useState(import.meta.env.VITE_DEFAULT_VIS_DATE || "");
@@ -75,6 +107,7 @@ export default function AirQualityMapDashboard() {
     stations: true,
   });
   const [selected, setSelected] = useState(null);
+  const [selectedReceptor, setSelectedReceptor] = useState(DEFAULT_RECEPTOR);
   const [status, setStatus] = useState({ loading: true, error: "" });
   const [mapStats, setMapStats] = useState({ avg: "-", max: "-", count: 0, source: "" });
   const [data, setData] = useState({
@@ -114,7 +147,7 @@ export default function AirQualityMapDashboard() {
       getManifestLatest(selectedDate),
       getHeatmapLatest(requestHorizon, selectedDate),
       selectedDate ? Promise.resolve(null) : getLiveHeatmapLatest("hanoi").catch(() => null),
-      getBackwardTrajectoriesLatest(selectedDate),
+      trajectoryRequest(selectedDate, selectedReceptor),
       getForwardPlumeLatest(plumeHorizon, selectedDate),
       getForecastLatest("hanoi", selectedDate),
       getPM25TimeseriesLatest("hanoi", selectedDate),
@@ -149,7 +182,7 @@ export default function AirQualityMapDashboard() {
     return () => {
       active = false;
     };
-  }, [selectedDate, refreshTick]);
+  }, [selectedDate, refreshTick, selectedReceptor]);
 
   const layerData = useMemo(
     () => ({
@@ -233,9 +266,29 @@ export default function AirQualityMapDashboard() {
     setSelectedDate(nextDate);
   }
 
+  function chooseTrajectoryReceptor(receptor) {
+    setSelectedReceptor(receptor);
+    setSelected({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [receptor.lon, receptor.lat] },
+      properties: {
+        layer_name: "Backward receptor",
+        location_name: receptor.name,
+        description: `Backward trajectory target: ${receptor.name}`,
+      },
+    });
+  }
+
   return (
     <div className="air-map-page windy-shell">
-      <MapCanvas layers={layerData} enabled={enabled} onSelect={setSelected} onStats={handleMapStats} />
+      <MapCanvas
+        layers={layerData}
+        enabled={enabled}
+        selectedReceptor={selectedReceptor}
+        onReceptorChange={setSelectedReceptor}
+        onSelect={setSelected}
+        onStats={handleMapStats}
+      />
 
       <header className="windy-topbar">
         <div className="windy-brand">
@@ -246,6 +299,7 @@ export default function AirQualityMapDashboard() {
           </div>
         </div>
         <div className="windy-top-controls">
+          <a className="dashboard-link" href="#/statistics">Thống kê</a>
           <DateSelector value={selectedDate} availableDates={data.manifest?.available_dates} onChange={changeDate} />
           <TimeSelector horizon={horizon} onChange={changeHorizon} />
           <FreshnessBadge forecast={displayForecast} />
@@ -260,15 +314,33 @@ export default function AirQualityMapDashboard() {
 
       <aside className="windy-right-panel">
         <LayerControl enabled={enabled} onToggle={toggleLayer} />
+        <section className="map-panel trajectory-target-panel">
+          <div className="panel-heading">
+            <h2>Backward trajectory</h2>
+            <span>{selectedReceptor.name}</span>
+          </div>
+          <div className="trajectory-target-grid">
+            {TRAJECTORY_RECEPTORS.map((receptor) => (
+              <button
+                type="button"
+                key={receptor.name}
+                className={selectedReceptor.name === receptor.name ? "active" : ""}
+                onClick={() => chooseTrajectoryReceptor(receptor)}
+              >
+                {receptor.name}
+              </button>
+            ))}
+          </div>
+        </section>
         <ForecastPanel forecast={displayForecast} />
         <SourceAttributionPanel sourceAttribution={data.sources} plume={data.plume} />
         <PM25ForecastChart timeseries={data.timeseries} />
       </aside>
 
       <div className="windy-legend" aria-label="PM2.5 color legend">
-        <span>PM2.5 absolute scale</span>
+        <span>PM2.5 adaptive scale</span>
         <div className="legend-ramp" />
-        <div className="legend-ticks"><b>0</b><b>20</b><b>30</b><b>40</b><b>55+</b></div>
+        <div className="legend-ticks"><b>Low</b><b>Mid</b><b>High</b><b>Peak</b></div>
       </div>
 
       <div className="windy-bottom-timeline">

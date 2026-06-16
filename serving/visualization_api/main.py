@@ -189,6 +189,82 @@ def float_or_none(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
+def normalize_text(value: Any) -> str:
+    text = str(value or "").lower()
+    replacements = {
+        "à": "a",
+        "á": "a",
+        "ả": "a",
+        "ã": "a",
+        "ạ": "a",
+        "ă": "a",
+        "ằ": "a",
+        "ắ": "a",
+        "ẳ": "a",
+        "ẵ": "a",
+        "ặ": "a",
+        "â": "a",
+        "ầ": "a",
+        "ấ": "a",
+        "ẩ": "a",
+        "ẫ": "a",
+        "ậ": "a",
+        "è": "e",
+        "é": "e",
+        "ẻ": "e",
+        "ẽ": "e",
+        "ẹ": "e",
+        "ê": "e",
+        "ề": "e",
+        "ế": "e",
+        "ể": "e",
+        "ễ": "e",
+        "ệ": "e",
+        "ì": "i",
+        "í": "i",
+        "ỉ": "i",
+        "ĩ": "i",
+        "ị": "i",
+        "ò": "o",
+        "ó": "o",
+        "ỏ": "o",
+        "õ": "o",
+        "ọ": "o",
+        "ô": "o",
+        "ồ": "o",
+        "ố": "o",
+        "ổ": "o",
+        "ỗ": "o",
+        "ộ": "o",
+        "ơ": "o",
+        "ờ": "o",
+        "ớ": "o",
+        "ở": "o",
+        "ỡ": "o",
+        "ợ": "o",
+        "ù": "u",
+        "ú": "u",
+        "ủ": "u",
+        "ũ": "u",
+        "ụ": "u",
+        "ư": "u",
+        "ừ": "u",
+        "ứ": "u",
+        "ử": "u",
+        "ữ": "u",
+        "ự": "u",
+        "ỳ": "y",
+        "ý": "y",
+        "ỷ": "y",
+        "ỹ": "y",
+        "ỵ": "y",
+        "đ": "d",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return "".join(ch if ch.isalnum() else "-" for ch in text).strip("-")
+
+
 def cassandra_forecast_enabled() -> bool:
     source = env("VIS_FORECAST_SOURCE") or env("FEATURE_SOURCE")
     return source.lower() == "cassandra"
@@ -407,9 +483,143 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
             "station_count": data.get("station_count"),
             "coverage_avg": float_or_none(data.get("coverage_avg")),
             "feature_version": data.get("feature_version"),
+            "temperature_2m_c": float_or_none(data.get("temperature_2m_c")),
+            "wind_speed": float_or_none(data.get("wind_speed")),
+            "wind_dir": float_or_none(data.get("wind_dir")),
+            "surface_pressure": float_or_none(data.get("surface_pressure")),
+            "total_precipitation_mm": float_or_none(data.get("total_precipitation_mm")),
         },
         "features": features,
     }
+
+
+def trajectory_time_key(feature: dict[str, Any]) -> str:
+    props = feature.get("properties") or {}
+    return str(props.get("base_time") or props.get("base_hour") or props.get("timestamp") or "")
+
+
+def trajectory_matches_location(feature: dict[str, Any], location_id: str | None, location_name: str | None) -> bool:
+    if not location_id and not location_name:
+        return True
+    props = feature.get("properties") or {}
+    needles = {normalize_text(location_id), normalize_text(location_name)}
+    needles.discard("")
+    if not needles:
+        return True
+    haystack = " ".join(
+        normalize_text(props.get(key))
+        for key in [
+            "endpoint",
+            "receptor_name",
+            "receptor_id",
+            "location_name",
+            "location_id",
+            "station_name",
+            "target_name",
+        ]
+    )
+    return any(needle in haystack for needle in needles)
+
+
+def latest_trajectory_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not features:
+        return []
+    latest_time = sorted([trajectory_time_key(feature) for feature in features if trajectory_time_key(feature)])[-1:]
+    if not latest_time:
+        return features
+    return [feature for feature in features if trajectory_time_key(feature) == latest_time[0]]
+
+
+def line_coordinates(feature: dict[str, Any]) -> list[list[float]]:
+    geometry = feature.get("geometry") or {}
+    coords = geometry.get("coordinates") or []
+    if geometry.get("type") == "LineString":
+        return coords
+    if geometry.get("type") == "MultiLineString" and coords:
+        return coords[0]
+    return []
+
+
+def translate_trajectory_feature(
+    feature: dict[str, Any],
+    *,
+    lon: float,
+    lat: float,
+    location_id: str | None,
+    location_name: str | None,
+    index: int,
+) -> dict[str, Any] | None:
+    coords = line_coordinates(feature)
+    if len(coords) < 2:
+        return None
+    # Backward trajectories are usually stored upwind -> receptor, so the
+    # receptor is the last point. Translate that endpoint onto the selected
+    # district instead of pinning every derived path near the cached receptor.
+    anchor_lon, anchor_lat = float(coords[-1][0]), float(coords[-1][1])
+    dx = lon - anchor_lon
+    dy = lat - anchor_lat
+    translated = [[round(float(x) + dx, 6), round(float(y) + dy, 6)] for x, y, *_ in coords]
+    props = dict(feature.get("properties") or {})
+    props.update(
+        {
+            "location_id": location_id or props.get("location_id"),
+            "location_name": location_name or props.get("location_name"),
+            "receptor_id": location_id or props.get("receptor_id"),
+            "receptor_name": location_name or props.get("receptor_name"),
+            "endpoint": location_name or location_id or props.get("endpoint"),
+            "derived_for_receptor": True,
+            "derived_from_receptor": props.get("receptor_name") or props.get("endpoint") or props.get("location_id") or "cached_trajectory",
+            "style_color": props.get("style_color") or ["#e0f2fe", "#bae6fd", "#67e8f9", "#a7f3d0"][index % 4],
+        }
+    )
+    return {
+        **feature,
+        "geometry": {"type": "LineString", "coordinates": translated},
+        "properties": props,
+    }
+
+
+def select_trajectory_payload(
+    payload: dict[str, Any],
+    *,
+    location_id: str | None = None,
+    location_name: str | None = None,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> dict[str, Any]:
+    if not location_id and not location_name and lon is None and lat is None:
+        return payload
+    features = [feature for feature in payload.get("features", []) if isinstance(feature, dict)]
+    latest = latest_trajectory_features(features)
+    matched = [feature for feature in latest if trajectory_matches_location(feature, location_id, location_name)]
+    selected = matched
+    if not selected and lon is not None and lat is not None:
+        selected = [
+            item
+            for item in (
+                translate_trajectory_feature(
+                    feature,
+                    lon=lon,
+                    lat=lat,
+                    location_id=location_id,
+                    location_name=location_name,
+                    index=index,
+                )
+                for index, feature in enumerate(latest[:8])
+            )
+            if item is not None
+        ]
+    result = dict(payload)
+    result["features"] = selected[:8] if selected else []
+    result["selected_location"] = {
+        "location_id": location_id,
+        "location_name": location_name,
+        "lon": lon,
+        "lat": lat,
+        "matched_cached_trajectory": bool(matched),
+    }
+    result["derived_for_receptor"] = bool(selected and not matched)
+    return result
 
 
 def required_layers() -> list[str]:
@@ -546,11 +756,18 @@ def pm25_heatmap_tile(z: int, x: int, y: int, horizon_h: int = 0, date: str | No
 
 
 @app.get("/api/v1/visualization/trajectories/backward/latest")
-def backward_trajectories_latest(date: str | None = None) -> JSONResponse:
+def backward_trajectories_latest(
+    date: str | None = None,
+    location_id: str | None = None,
+    location_name: str | None = None,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> JSONResponse:
     layer = find_layer(load_manifest(date), "backward_trajectories")
     if layer is None:
         raise HTTPException(status_code=404, detail={"error": "layer_not_found", "layer_name": "backward_trajectories"})
-    return JSONResponse(load_layer_payload(layer))
+    payload = load_layer_payload(layer)
+    return JSONResponse(select_trajectory_payload(payload, location_id=location_id, location_name=location_name, lon=lon, lat=lat))
 
 
 @app.get("/api/v1/visualization/plume/forward/latest")

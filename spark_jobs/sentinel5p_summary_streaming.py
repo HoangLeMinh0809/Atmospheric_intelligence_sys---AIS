@@ -29,8 +29,9 @@ from pyspark.sql.types import (
     StructType,
 )
 
-from hanoi_config import get_table_names
+from hanoi_config import SPARK_SQL_SESSION_TIMEZONE, get_table_names
 from runtime_utils import apply_stream_trigger, parse_streaming_runtime
+from streaming_bronze_utils import add_contract_columns, contract_schema_fields, start_bronze_streams
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "sentinel5p-summary")
@@ -78,7 +79,7 @@ SENTINEL5P_SCHEMA = StructType(
         StructField("window_now_utc", StringType(), True),
         StructField("event_id", StringType(), True),
         StructField("source", StringType(), True),
-    ]
+    ] + contract_schema_fields()
 )
 
 
@@ -88,6 +89,7 @@ def main() -> None:
     spark = (
         SparkSession.builder
         .appName("Sentinel5PSummary_Streaming")
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
@@ -112,11 +114,12 @@ def main() -> None:
     parsed_df = (
         kafka_df
         .selectExpr("CAST(value AS STRING) AS json_str")
-        .select(from_json(col("json_str"), SENTINEL5P_SCHEMA).alias("data"))
-        .select("data.*")
+        .select(col("json_str"), from_json(col("json_str"), SENTINEL5P_SCHEMA).alias("data"))
+        .select("json_str", "data.*")
+        .withColumnRenamed("json_str", "_raw_payload")
     )
 
-    final_df = (
+    final_df = add_contract_columns(
         parsed_df
         .withColumn("stats_min", col("stats.min"))
         .withColumn("stats_max", col("stats.max"))
@@ -133,39 +136,7 @@ def main() -> None:
         .withColumn("month", spark_month(col("event_time")))
         .withColumn("day", dayofmonth(col("event_time")))
         .withColumn("spark_processed_at", col("ingest_time").cast("timestamp"))
-        .select(
-            "product",
-            "collection",
-            "content_start",
-            "content_end",
-            "bbox",
-            "product_name",
-            "product_id",
-            "file_name",
-            "stats_min",
-            "stats_max",
-            "stats_mean",
-            "stats_valid_pct",
-            "unit",
-            "ingest_time",
-            "window_mode",
-            "window_start_utc",
-            "window_end_utc",
-            "window_now_utc",
-            "event_id",
-            "source",
-            "event_time",
-            "spark_processed_at",
-            "year",
-            "month",
-            "day",
-            "download_url",
-            "content_length",
-            "s3_path",
-            "raw_file_path",
-            "raw_downloaded",
-            "raw_download_error",
-        )
+        .select("*")
         .drop("content_start_ts")
     )
 
@@ -223,20 +194,17 @@ def main() -> None:
         if column_name not in existing_columns:
             spark.sql(f"ALTER TABLE {ICEBERG_TABLE} ADD COLUMN {column_name} {column_type}")
 
-    writer = (
-        final_df.writeStream
-        .format("iceberg")
-        .outputMode("append")
-        .option("checkpointLocation", CHECKPOINT_PATH)
-        .queryName("sentinel5p_summary_to_iceberg")
-    )
-
-    writer = apply_stream_trigger(writer, stop_after_batch=stop_after_batch, processing_time=processing_time)
-    query = writer.toTable(ICEBERG_TABLE)
-
     print(f"Sentinel-5P stream mode: {'availableNow' if stop_after_batch else processing_time}")
     print(f"Kafka startingOffsets: {KAFKA_STARTING_OFFSETS}")
-    query.awaitTermination()
+    start_bronze_streams(
+        final_df,
+        table_name=ICEBERG_TABLE,
+        topic=KAFKA_TOPIC,
+        checkpoint_path=CHECKPOINT_PATH,
+        catalog=ICEBERG_CATALOG,
+        stop_after_batch=stop_after_batch,
+        processing_time=processing_time,
+    )
 
 
 if __name__ == "__main__":

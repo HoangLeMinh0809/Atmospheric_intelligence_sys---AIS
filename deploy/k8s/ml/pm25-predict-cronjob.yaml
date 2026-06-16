@@ -10,12 +10,15 @@ spec:
   # Replaced by the sequential online-pm25-features cycle; keep suspended for manual fallback.
   schedule: "1-59/2 * * * *"
   suspend: true
+  startingDeadlineSeconds: 120
   concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 900
       backoffLimit: 1
+      ttlSecondsAfterFinished: 600
       template:
         metadata:
           labels:

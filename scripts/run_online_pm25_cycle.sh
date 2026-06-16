@@ -18,7 +18,7 @@ COMMON_ARGS=(
 
 "${SPARK_SUBMIT}" "${COMMON_ARGS[@]}" \
   /opt/spark-jobs/online_pm25_feature_builder.py \
-  --lookback-hours "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}" \
+  --lookback-hours "${ONLINE_FEATURE_LOOKBACK_HOURS:-30}" \
   --dry-run 0
 
 "${SPARK_SUBMIT}" "${COMMON_ARGS[@]}" \

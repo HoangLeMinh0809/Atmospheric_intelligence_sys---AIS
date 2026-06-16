@@ -8,12 +8,16 @@ metadata:
     app.kubernetes.io/part-of: atmospheric-intelligence-system
 spec:
   schedule: "12 * * * *"
+  suspend: true
+  startingDeadlineSeconds: 300
   concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 2700
       backoffLimit: 1
+      ttlSecondsAfterFinished: 900
       template:
         metadata:
           labels:
@@ -39,8 +43,8 @@ spec:
               command: ["bash", "/opt/ais/scripts/run_hourly_context_update.sh"]
               resources:
                 requests:
-                  cpu: "1"
-                  memory: 2Gi
+                  cpu: 50m
+                  memory: 128Mi
                 limits:
-                  cpu: "2"
-                  memory: 4Gi
+                  cpu: 200m
+                  memory: 256Mi

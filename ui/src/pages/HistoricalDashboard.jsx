@@ -37,6 +37,14 @@ function HistoricalDashboard() {
         setOpenaqRows(openaqData);
         setWeatherRows(weatherData);
         setSentinelRows(sentinelData);
+        const timestamps = [...openaqData, ...weatherData]
+          .map((row) => row.timestamp?.slice(0, 10))
+          .filter(Boolean)
+          .sort();
+        if (timestamps.length) {
+          setStartDate(timestamps[0]);
+          setEndDate(timestamps[timestamps.length - 1]);
+        }
       } catch (error) {
         console.error(error);
       }

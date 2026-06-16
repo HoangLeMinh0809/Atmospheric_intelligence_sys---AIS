@@ -27,8 +27,9 @@ from pyspark.sql.types import (
     StructType,
 )
 
-from hanoi_config import get_table_names
+from hanoi_config import SPARK_SQL_SESSION_TIMEZONE, get_table_names
 from runtime_utils import apply_stream_trigger, parse_streaming_runtime
+from streaming_bronze_utils import add_contract_columns, contract_schema_fields, start_bronze_streams
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "openaq-hourly")
@@ -68,7 +69,7 @@ OPENAQ_SCHEMA = StructType(
         StructField("window_end_utc", StringType(), True),
         StructField("window_now_utc", StringType(), True),
         StructField("event_id", StringType(), True),
-    ]
+    ] + contract_schema_fields()
 )
 
 
@@ -78,6 +79,7 @@ def main() -> None:
     spark = (
         SparkSession.builder
         .appName("OpenAQHourly_Streaming")
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
@@ -103,11 +105,12 @@ def main() -> None:
     parsed_df = (
         kafka_df
         .selectExpr("CAST(value AS STRING) AS json_str")
-        .select(from_json(col("json_str"), OPENAQ_SCHEMA).alias("data"))
-        .select("data.*")
+        .select(col("json_str"), from_json(col("json_str"), OPENAQ_SCHEMA).alias("data"))
+        .select("json_str", "data.*")
+        .withColumnRenamed("json_str", "_raw_payload")
     )
 
-    final_df = (
+    final_df = add_contract_columns(
         parsed_df
         .withColumn("event_time", to_timestamp(col("datetime_utc")))
         .withColumn("ingest_time", to_timestamp(col("ingest_time")))
@@ -119,13 +122,7 @@ def main() -> None:
         .withColumn("day", dayofmonth(col("event_time")))
         .withColumn("hour", hour(col("event_time")))
         .withColumn("spark_processed_at", col("ingest_time").cast("timestamp"))
-        .select(
-            "location_id", "location_name", "city", "latitude", "longitude", "provider",
-            "sensor_id", "parameter", "unit", "datetime_utc", "datetime_local", "value",
-            "min", "max", "sd", "expected_count", "observed_count", "coverage_pct", "source",
-            "ingest_time", "window_mode", "window_start_utc", "window_end_utc", "window_now_utc",
-            "event_id", "event_time", "spark_processed_at", "year", "month", "day", "hour"
-        )
+        .select("*")
     )
 
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.air_quality")
@@ -170,20 +167,17 @@ def main() -> None:
         """
     )
 
-    writer = (
-        final_df.writeStream
-        .format("iceberg")
-        .outputMode("append")
-        .option("checkpointLocation", CHECKPOINT_PATH)
-        .queryName("openaq_hourly_to_iceberg")
-    )
-
-    writer = apply_stream_trigger(writer, stop_after_batch=stop_after_batch, processing_time=processing_time)
-    query = writer.toTable(ICEBERG_TABLE)
-
     print(f"OpenAQ stream mode: {'availableNow' if stop_after_batch else processing_time}")
     print(f"Kafka startingOffsets: {KAFKA_STARTING_OFFSETS}")
-    query.awaitTermination()
+    start_bronze_streams(
+        final_df,
+        table_name=ICEBERG_TABLE,
+        topic=KAFKA_TOPIC,
+        checkpoint_path=CHECKPOINT_PATH,
+        catalog=ICEBERG_CATALOG,
+        stop_after_batch=stop_after_batch,
+        processing_time=processing_time,
+    )
 
 
 if __name__ == "__main__":

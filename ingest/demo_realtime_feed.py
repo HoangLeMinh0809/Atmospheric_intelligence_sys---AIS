@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LOGGER = logging.getLogger("demo_realtime_feed")
+VIETNAM_TIMEZONE = timezone(timedelta(hours=7))
 
 WEATHER_LOCATIONS = [
     {
@@ -134,7 +135,8 @@ def location_phase(*parts: object) -> float:
 def build_weather_events(ticks: list[datetime], noise_ratio: float, rng: random.Random, replay_id: str) -> list[dict]:
     events: list[dict] = []
     for tick_index, tick in enumerate(ticks):
-        hour_angle = (tick.hour + tick.minute / 60.0) / 24.0 * 2 * math.pi
+        local_tick = tick.astimezone(VIETNAM_TIMEZONE)
+        hour_angle = (local_tick.hour + local_tick.minute / 60.0) / 24.0 * 2 * math.pi
         for location in WEATHER_LOCATIONS:
             phase = location_phase(location["province"], replay_id)
             tick_pulse = tick_wave(tick_index, phase)
@@ -150,7 +152,7 @@ def build_weather_events(ticks: list[datetime], noise_ratio: float, rng: random.
             chance_of_rain = int(clamp((humidity - 55) * 1.2 + precip_mm * 20, 0, 95))
             condition_text = "Patchy rain nearby" if chance_of_rain >= 45 else "Partly cloudy"
             condition_code = 1063 if chance_of_rain >= 45 else 1003
-            event_time = tick.strftime("%Y-%m-%d %H:%M")
+            event_time = local_tick.strftime("%Y-%m-%d %H:%M")
             ingest_time = iso_z(datetime.now(timezone.utc))
             event_id = (
                 f"demo-weather-{replay_id}-{location['province'].lower().replace(' ', '-')}-"
@@ -167,10 +169,10 @@ def build_weather_events(ticks: list[datetime], noise_ratio: float, rng: random.
                     "lat": location["lat"],
                     "lon": location["lon"],
                     "tz_id": "Asia/Bangkok",
-                    "query_date": tick.strftime("%Y-%m-%d"),
+                    "query_date": local_tick.strftime("%Y-%m-%d"),
                     "time": event_time,
                     "time_epoch": int(tick.timestamp()),
-                    "is_day": 1 if 6 <= tick.hour < 18 else 0,
+                    "is_day": 1 if 6 <= local_tick.hour < 18 else 0,
                     "temp_c": round1(temp_c),
                     "temp_f": round1(temp_c * 9 / 5 + 32),
                     "feelslike_c": round1(temp_c + clamp((humidity - 65) / 20.0, -1.5, 2.5)),
@@ -277,11 +279,52 @@ def write_jsonl(path: Path, events: list[dict]) -> None:
             handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def read_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        LOGGER.warning("Demo feed file does not exist: %s", path)
+        return []
+
+    events: list[dict] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                LOGGER.warning("Skip invalid JSON in %s:%s: %s", path, line_no, exc)
+                continue
+            if "demo_tick_index" not in event:
+                event["demo_tick_index"] = len(events)
+            events.append(event)
+    return events
+
+
 def group_by_tick(events: list[dict]) -> dict[int, list[dict]]:
     grouped: dict[int, list[dict]] = {}
     for event in events:
         grouped.setdefault(int(event["demo_tick_index"]), []).append(event)
     return grouped
+
+
+def replay_interval_seconds() -> int:
+    requested = env_int("DEMO_FEED_BATCH_INTERVAL_SECONDS", 30)
+    minimum = env_int("DEMO_FEED_MIN_BATCH_INTERVAL_SECONDS", 30)
+    maximum = env_int("DEMO_FEED_MAX_BATCH_INTERVAL_SECONDS", 60)
+    if minimum > maximum:
+        minimum, maximum = maximum, minimum
+
+    interval = max(minimum, min(maximum, requested))
+    if interval != requested:
+        LOGGER.info(
+            "Adjusted demo feed interval from %ss to %ss to keep Kafka input cadence within %s-%ss",
+            requested,
+            interval,
+            minimum,
+            maximum,
+        )
+    return interval
 
 
 def replay_events(weather_events: list[dict], openaq_events: list[dict]) -> None:
@@ -290,42 +333,58 @@ def replay_events(weather_events: list[dict], openaq_events: list[dict]) -> None
     bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
     weather_topic = os.getenv("DEMO_FEED_WEATHER_TOPIC", os.getenv("KAFKA_WEATHER_TOPIC", "weather_history"))
     openaq_topic = os.getenv("DEMO_FEED_OPENAQ_TOPIC", os.getenv("KAFKA_OPENAQ_TOPIC", "openaq-hourly"))
-    batch_interval_sec = env_int("DEMO_FEED_BATCH_INTERVAL_SECONDS", 30)
+    batch_interval_sec = replay_interval_seconds()
     batch_size = max(1, env_int("DEMO_FEED_BATCH_SIZE", 24))
     send_delay_ms = max(0, env_int("DEMO_FEED_SEND_DELAY_MS", 0))
+    loop = os.getenv("DEMO_FEED_LOOP", "false").strip().lower() in {"1", "true", "yes", "y"}
 
     producer = create_kafka_producer(bootstrap, LOGGER, max_retries=120, retry_delay=5)
     weather_by_tick = group_by_tick(weather_events)
     openaq_by_tick = group_by_tick(openaq_events)
     tick_ids = sorted(set(weather_by_tick) | set(openaq_by_tick))
 
+    if not tick_ids:
+        LOGGER.warning("No demo events to replay")
+        producer.close()
+        return
+
     try:
-        for index, tick_id in enumerate(tick_ids, start=1):
-            sent_total = 0
-            weather_batch = weather_by_tick.get(tick_id, [])
-            openaq_batch = openaq_by_tick.get(tick_id, [])
+        cycle = 1
+        while True:
+            for index, tick_id in enumerate(tick_ids, start=1):
+                sent_total = 0
+                weather_batch = weather_by_tick.get(tick_id, [])
+                openaq_batch = openaq_by_tick.get(tick_id, [])
 
-            for offset in range(0, len(weather_batch), batch_size):
-                sent_total += send_events(
-                    producer,
-                    weather_topic,
-                    weather_batch[offset : offset + batch_size],
-                    LOGGER,
-                    send_delay_ms=send_delay_ms,
-                )
-            for offset in range(0, len(openaq_batch), batch_size):
-                sent_total += send_events(
-                    producer,
-                    openaq_topic,
-                    openaq_batch[offset : offset + batch_size],
-                    LOGGER,
-                    send_delay_ms=send_delay_ms,
-                )
+                for offset in range(0, len(weather_batch), batch_size):
+                    sent_total += send_events(
+                        producer,
+                        weather_topic,
+                        weather_batch[offset : offset + batch_size],
+                        LOGGER,
+                        send_delay_ms=send_delay_ms,
+                    )
+                for offset in range(0, len(openaq_batch), batch_size):
+                    sent_total += send_events(
+                        producer,
+                        openaq_topic,
+                        openaq_batch[offset : offset + batch_size],
+                        LOGGER,
+                        send_delay_ms=send_delay_ms,
+                    )
 
-            flush_producer(producer, LOGGER, timeout_sec=60)
-            LOGGER.info("Published demo tick %s/%s with %s event(s)", index, len(tick_ids), sent_total)
-            if index < len(tick_ids) and batch_interval_sec > 0:
+                flush_producer(producer, LOGGER, timeout_sec=60)
+                LOGGER.info(
+                    "Published demo tick %s/%s cycle=%s with %s event(s)",
+                    index,
+                    len(tick_ids),
+                    cycle,
+                    sent_total,
+                )
                 time.sleep(batch_interval_sec)
+            if not loop:
+                break
+            cycle += 1
     finally:
         producer.close()
 
@@ -358,15 +417,21 @@ def main() -> None:
         replay_id,
     )
 
-    weather_events = build_weather_events(ticks, noise_ratio, rng, replay_id) if "weather" in sources else []
-    openaq_events = build_openaq_events(ticks, noise_ratio, rng, replay_id) if "openaq" in sources else []
+    if mode in {"file-replay", "file-replay-loop"}:
+        weather_events = read_jsonl(output_dir / "weather_demo_feed.jsonl") if "weather" in sources else []
+        openaq_events = read_jsonl(output_dir / "openaq_demo_feed.jsonl") if "openaq" in sources else []
+        if mode == "file-replay-loop":
+            os.environ["DEMO_FEED_LOOP"] = "true"
+    else:
+        weather_events = build_weather_events(ticks, noise_ratio, rng, replay_id) if "weather" in sources else []
+        openaq_events = build_openaq_events(ticks, noise_ratio, rng, replay_id) if "openaq" in sources else []
 
     if mode in {"prepare", "prepare-and-replay"}:
         write_jsonl(output_dir / "weather_demo_feed.jsonl", weather_events)
         write_jsonl(output_dir / "openaq_demo_feed.jsonl", openaq_events)
         LOGGER.info("Prepared %s weather event(s) and %s OpenAQ event(s) in %s", len(weather_events), len(openaq_events), output_dir)
 
-    if mode in {"replay", "prepare-and-replay"}:
+    if mode in {"replay", "prepare-and-replay", "file-replay", "file-replay-loop"}:
         replay_events(weather_events, openaq_events)
 
 

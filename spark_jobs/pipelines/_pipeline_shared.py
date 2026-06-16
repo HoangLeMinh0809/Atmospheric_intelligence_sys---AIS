@@ -20,13 +20,14 @@ for path in (ROOT_DIR, SPARK_JOBS_DIR):
 
 
 def build_pipeline_spark(app_name: str) -> SparkSession:
-    from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE
+    from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, SPARK_SQL_SESSION_TIMEZONE
 
     packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     builder = (
         SparkSession.builder.appName(app_name)
         .config("spark.jars.ivy", ivy_dir)
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")

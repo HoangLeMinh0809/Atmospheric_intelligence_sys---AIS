@@ -1,0 +1,1847 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{vietnam}
+\usepackage[top=2cm, bottom=2cm, left=3cm, right=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{cite}
+\usepackage{setspace}
+\usepackage[colorlinks=true,
+            linkcolor=black,
+            citecolor=blue,
+            urlcolor=blue,
+            bookmarks=true,
+            bookmarksnumbered=true,
+            pdfborder={0 0 0}]{hyperref}
+\usepackage{microtype}
+\DisableLigatures{encoding = T5, family = tt}
+\microtypesetup{protrusion=false}
+\usepackage{ragged2e}
+\usepackage{enumitem}
+\usepackage{xurl}
+\urlstyle{tt}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\makeatletter
+\newenvironment{breakablealgorithm}
+    {\begin{center}
+     \refstepcounter{algorithm}
+     \hrule height .8pt depth 0pt \kern 2pt
+     \renewcommand{\caption}[2][\relax]{%
+         {\raggedright\textbf{\ALG@name~\thealgorithm} ##2\par}%
+         \ifx\relax##1\relax
+             \addcontentsline{loa}{algorithm}{\protect\numberline{\thealgorithm}##2}%
+         \else
+             \addcontentsline{loa}{algorithm}{\protect\numberline{\thealgorithm}##1}%
+         \fi
+         \kern 2pt \hrule \kern 2pt
+     }%
+    }
+    {\kern 2pt \hrule\end{center}}
+\makeatother
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{adjustbox}
+\usepackage{multirow}
+\usepackage{siunitx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{indentfirst}
+\usepackage{longtable}
+\usepackage[table]{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{listings}
+\usepackage{ltablex}
+\usepackage{calc}
+\usepackage{makecell}
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\},frame=single,rulecolor=\color{gray!40},bgcolor=gray!8}
+\DefineVerbatimEnvironment{verbatim}{Verbatim}{breaklines,breakanywhere,frame=single,rulecolor=\color{gray!40},bgcolor=gray!8}
+\newcommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\newcommand{\code}[1]{\begingroup\Urlmuskip=0mu plus 2mu\path{#1}\endgroup}
+\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X}
+\newcolumntype{P}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+\floatname{algorithm}{Thuật toán}
+\algrenewcommand\algorithmiccomment[1]{\hfill\(\triangleright\) #1}
+\emergencystretch=2em
+\onehalfspacing
+\setcounter{tocdepth}{2}
+\setcounter{secnumdepth}{3}
+
+
+
+% ==================================================
+% Màu sắc và style trình bày
+% ==================================================
+\definecolor{HUSTBlue}{HTML}{003B71}
+\definecolor{HUSTRed}{HTML}{C8102E}
+\definecolor{SoftBlue}{HTML}{DBEAFE}
+\definecolor{SoftRed}{HTML}{FEE2E2}
+\definecolor{SoftGreen}{HTML}{DCFCE7}
+\definecolor{SoftYellow}{HTML}{FEF3C7}
+\definecolor{SoftPurple}{HTML}{EDE9FE}
+\definecolor{SoftTeal}{HTML}{CCFBF1}
+\definecolor{DarkText}{HTML}{0F172A}
+\definecolor{MutedText}{HTML}{475569}
+
+\setlength{\parskip}{0.15cm}
+\setlist[itemize]{topsep=2pt,itemsep=2pt,parsep=0pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt,parsep=0pt}
+
+\renewcommand{\contentsname}{Mục lục}
+\renewcommand{\figurename}{Hình}
+\renewcommand{\tablename}{Bảng}
+\renewcommand{\refname}{Tài liệu tham khảo}
+
+\titleformat{\section}
+  {\Large\bfseries\color{HUSTBlue}}
+  {\thesection}{0.8em}{}
+\titleformat{\subsection}
+  {\large\bfseries\color{HUSTRed}}
+  {\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{HUSTBlue}}
+  {\thesubsubsection}{0.8em}{}
+
+\pagestyle{fancy}
+\setlength{\headheight}{26pt}
+\fancyhf{}
+\lhead{\textcolor{HUSTBlue}{IT4931 - Lưu trữ và xử lý dữ liệu lớn}}
+\rhead{\textcolor{HUSTRed}{Nhóm 13}}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.5pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{HUSTBlue}\leaders\hrule height \headrulewidth\hfill}}
+
+\captionsetup{labelfont={bf,color=HUSTBlue},textfont={it}}
+
+\lstdefinestyle{codeblock}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!8},
+  rulecolor=\color{gray!40},
+  columns=fullflexible
+}
+\lstset{style=codeblock}
+
+\newtcolorbox{keybox}[1]{
+  colback=SoftBlue,
+  colframe=HUSTBlue,
+  title=\textbf{#1},
+  fonttitle=\bfseries,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=2mm,
+  right=2mm,
+  top=1mm,
+  bottom=1mm
+}
+
+\newtcolorbox{warnbox}[1]{
+  colback=SoftYellow,
+  colframe=orange!80!black,
+  title=\textbf{#1},
+  fonttitle=\bfseries,
+  arc=2mm,
+  boxrule=0.8pt
+}
+
+\newtcolorbox{methodbox}[1]{
+  colback=SoftPurple,
+  colframe=purple!70!black,
+  title=\textbf{#1},
+  fonttitle=\bfseries,
+  arc=2mm,
+  boxrule=0.8pt
+}
+
+\AtBeginEnvironment{longtable}{\rowcolors{2}{SoftBlue!22}{white}}
+\arrayrulecolor{HUSTBlue}
+
+\begin{document}
+
+% ==================================================
+% TRANG BÌA
+% ==================================================
+\begin{center}
+    \textbf{\large ĐẠI HỌC BÁCH KHOA HÀ NỘI} \\
+    \textbf{\large TRƯỜNG CÔNG NGHỆ THÔNG TIN VÀ TRUYỀN THÔNG} \\
+    
+    \vspace{1cm}
+    
+    \IfFileExists{hust-logo.png}{%
+        \includegraphics[width=0.2\textwidth]{hust-logo.png}
+    }{%
+        \fbox{\parbox[c][3cm][c]{0.25\textwidth}{\centering Logo HUST}}
+    }
+    
+    \vspace{0.5cm}
+    
+    \textcolor{HUSTBlue}{\textbf{\Large BÁO CÁO BÀI TẬP LỚN}} \\
+    \vspace{0.5cm}
+    \textcolor{HUSTRed}{\textbf{\LARGE HỆ THỐNG DỰ BÁO VÀ TRUY VẾT NGUỒN Ô NHIỄM KHÔNG KHÍ THEO THỜI GIAN THỰC}} \\
+    
+    \vspace{0.5cm}
+    
+    \large Học phần: \textbf{Lưu trữ và xử lý dữ liệu lớn} \\
+    Mã học phần: IT4931 \hspace{1cm} Mã lớp: 168482 \\
+    
+    \vspace{0.5cm}
+    
+    \large Giảng viên hướng dẫn: \textbf{TS. Trần Việt Trung} \\
+    \large Nhóm sinh viên thực hiện: \textbf{Nhóm 13}
+    
+    \vspace{0.5cm}
+    
+    \begin{table}[H]
+        \centering
+        \renewcommand{\arraystretch}{1.8}
+        \begin{tabular}{|c|l|c|}
+            \hline
+            \rowcolor{HUSTBlue}\textcolor{white}{\textbf{STT}} & \multicolumn{1}{c|}{\textcolor{white}{\textbf{HỌ VÀ TÊN}}} & \textcolor{white}{\textbf{MSSV}} \\
+            \hline
+            1 & Lê Minh Hoàng & 20230028 \\
+            \hline
+            2 & Nguyễn Ngọc Ánh & 20235013 \\
+            \hline
+            3 & Nguyễn Minh Tùng & 20235239 \\
+            \hline
+            4 & Nguyễn Ngọc Ánh & 20235012 \\
+            \hline
+            5 & Phạm Hoàng Tiến & 20230071 \\
+            \hline
+        \end{tabular}
+    \end{table}
+
+    \vfill
+    \textbf{Hà Nội, 06/2026}
+\end{center}
+
+\newpage
+\begingroup
+\normalsize
+\setstretch{1.2}
+\setlength{\parskip}{0pt}
+\tableofcontents
+\endgroup
+\newpage
+
+\section{Lời nói đầu}\label{lux1eddi-nuxf3i-ux111ux1ea7u}
+
+Dự án \textbf{Atmospheric Intelligence System -- AIS} là một hệ thống dữ liệu lớn được xây dựng để thu thập, xử lý, lưu trữ, phân tích, dự báo và trực quan hóa chất lượng không khí tại khu vực Hà Nội. Hệ thống tập trung vào chỉ số \textbf{PM2.5}, đồng thời tích hợp dữ liệu khí tượng, vệ tinh, tái phân tích khí quyển và feature trajectory sinh từ HYSPLIT để phục vụ phân tích nguyên nhân, bối cảnh khí tượng và khả năng vận chuyển ô nhiễm theo hướng gió.
+
+AIS được thiết kế theo \textbf{kiến trúc Lambda đã hiệu chỉnh cho bài toán dữ liệu khí quyển}, triển khai trên nền lakehouse nhiều tầng. Batch layer xây dựng tầng Bronze/Silver/Gold, training dataset, lưu model artifact tại HDFS và quản lý production pointer bằng Iceberg. Speed layer được hiệu chỉnh thành hai đường chạy đồng thời: đường audit ghi Kafka event vào Iceberg Bronze, còn đường online kết hợp PM2.5/thời tiết mới nhất để cập nhật các đặc trưng trên Cassandra, và ghi lên API/UI.
+
+Hệ thống sử dụng các thành phần cốt lõi của một dự án Big Data hiện đại, gồm Kafka cho message queue, Spark/Spark Structured Streaming cho xử lý batch và streaming, HDFS và Iceberg cho lakehouse storage, Cassandra/API/cache cho serving, Airflow cho orchestration, Docker Compose/Kubernetes cho triển khai, cùng monitoring và testing để theo dõi vận hành, chất lượng dữ liệu và khả năng phục hồi.
+
+Sản phẩm cuối cùng là một pipeline hoàn chỉnh có khả năng:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Thu thập nhiều nguồn dữ liệu khí quyển.
+\item
+  Xử lý dữ liệu streaming và batch theo chuẩn lakehouse.
+\item
+  Tạo feature phục vụ dự báo PM2.5.
+\item
+  Huấn luyện, suy diễn cho mô hình dự báo.
+\item
+  Ghi dữ liệu phục vụ truy vấn nhanh vào Cassandra và cache visualization.
+\item
+  Cung cấp API và dashboard cho người dùng cuối.
+\item
+  Theo dõi trạng thái vận hành và phục hồi khi có lỗi.
+\end{enumerate}
+
+Nhóm xin gửi lời cảm ơn chân thành tới \textbf{TS. Trần Việt Trung} đã hướng dẫn, góp ý và định hướng kỹ thuật trong quá trình thực hiện dự án. Những góp ý của thầy giúp nhóm hoàn thiện hơn về kiến trúc hệ thống, cách xử lý dữ liệu lớn, tư duy vận hành pipeline và cách trình bày một dự án Big Data hiện đại hoàn chỉnh.
+
+\newpage
+\section{Bài toán và dữ liệu}\label{buxe0i-touxe1n-vuxe0-dux1eef-liux1ec7u}
+
+\subsection{Bài toán nghiệp vụ}\label{ux111ux1ecbnh-nghux129a-buxe0i-touxe1n}
+
+Bụi mịn PM2.5 là các hạt lơ lửng có đường kính khí động học không quá 2,5 micromet. Chúng có thể đi sâu vào phế nang, xâm nhập vào máu và gây hại cho hệ hô hấp, tim mạch. Năm 2021, Tổ chức Y tế Thế giới (WHO) khuyến nghị nồng độ PM2.5 trung bình 24 giờ không vượt quá 15 \si{\micro\gram\per\meter\cubed} và trung bình năm không vượt quá 5 \si{\micro\gram\per\meter\cubed} {[}11{]}.
+
+Tại Hà Nội, nồng độ PM2.5 thường vượt các ngưỡng trên, đặc biệt trong mùa gió mùa Đông Bắc từ tháng 10 đến tháng 3. Ô nhiễm hình thành từ sự kết hợp giữa phát thải giao thông, công nghiệp, đốt sinh khối với điều kiện khí tượng bất lợi và quá trình vận chuyển ô nhiễm từ xa. Vì vậy, dự báo PM2.5 ngắn hạn là bài toán phức tạp nhưng có giá trị thực tiễn cao.
+
+Các nguồn dữ liệu mở như OpenAQ, ERA5, Sentinel-5P và MAIAC MODIS cung cấp thông tin bổ trợ về quan trắc mặt đất, khí tượng và khí quyển từ vệ tinh. Tuy nhiên, chúng khác nhau về định dạng, độ phân giải, chu kỳ cập nhật và yêu cầu kiểm soát chất lượng. Để hợp nhất dữ liệu đa nguồn, xử lý lịch sử và cập nhật gần thời gian thực, hệ thống cần sử dụng các công nghệ dữ liệu lớn phân tán.
+
+Từ bối cảnh trên, dự án AIS đặt mục tiêu xây dựng hệ thống dữ liệu lớn có khả năng thu thập, xử lý, hợp nhất, phân tích, dự báo và giải thích diễn biến PM2.5 tại Hà Nội. Hệ thống tập trung giải quyết bốn thách thức kỹ thuật chính:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\item
+  \textbf{Thu thập đa nguồn và mở rộng lưu trữ:} Thu thập ổn định, chuẩn hóa và lưu trữ dữ liệu khí quyển từ năm nguồn có schema, độ trễ và nhịp cập nhật khác nhau, đáp ứng cả xử lý dữ liệu lịch sử và gần thời gian thực.
+\item
+  \textbf{Đồng bộ theo thời gian và không gian:} Căn chỉnh dữ liệu khác múi giờ, độ phân giải, hệ tọa độ và cờ chất lượng thành không gian đặc trưng thống nhất, sẵn sàng cho phép nối dữ liệu và không làm lẫn thông tin tương lai.
+\item
+  \textbf{Dự báo theo nhiều khoảng thời gian:} Huấn luyện mô hình dự báo PM2.5 cho các mốc 6 giờ, 12 giờ và 24 giờ, đồng thời ngăn rò rỉ dữ liệu và bảo đảm mỗi đặc trưng chỉ được sử dụng khi đã thực sự khả dụng tại thời điểm huấn luyện hoặc suy diễn.
+\item
+  \textbf{Giải thích và truy nguyên bối cảnh ô nhiễm:} Bổ sung cho kết quả dự báo các bằng chứng khí tượng có thể diễn giải, gồm đường vận chuyển của khối khí đến Hà Nội và tín hiệu khí quyển quan sát được dọc theo đường đi đó.
+\end{enumerate}
+
+\subsection{Cơ sở dữ liệu khí quyển}\label{cux1a1-sux1edf-dux1eef-liux1ec7u-khuxed-quyux1ec3n}
+
+\subsubsection{Các nguồn dữ liệu khí quyển chính}\label{cuxe1c-nguux1ed3n-dux1eef-liux1ec7u-khuxed-quyux1ec3n-chuxednh}
+
+AIS tích hợp các nguồn dữ liệu sau:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.2}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.8}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nguồn}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò trong hệ thống}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+OpenAQ & Nguồn quan trắc mặt đất chính cho PM2.5, dùng làm target và dữ liệu hiện trạng \\
+WeatherAPI & Dữ liệu thời tiết bề mặt gần thời gian thực, dùng cho serving/inference khi ERA5 có độ trễ \\
+ERA5 & Dữ liệu tái phân tích khí quyển, cung cấp trường khí tượng ổn định cho batch feature và HYSPLIT \\
+Sentinel-5P & Tín hiệu vệ tinh về NO2, CO, SO2, O3, aerosol index, hỗ trợ nhận diện bối cảnh ô nhiễm \\
+MAIAC MODIS & AOD độ phân giải cao, bổ sung tín hiệu aerosol cột khí quyển \\
+\end{longtable}
+
+\paragraph{OpenAQ.}
+OpenAQ tổng hợp dữ liệu quan trắc chất lượng không khí mở từ các mạng lưới của cơ quan quản lý và tổ chức nghiên cứu. Adapter ingestion của AIS truy vấn OpenAQ v3 REST API để lấy số đo PM2.5 theo giờ từ các trạm trong và xung quanh khu vực Hà Nội. Mỗi bản ghi gồm mã trạm, tọa độ, tên thông số, giá trị đo, đơn vị và thời điểm quan trắc. Hệ thống gán \texttt{event\_id} ổn định (mã định danh duy nhất của sự kiện) từ \texttt{station\_id} và \texttt{observed\_at}, nhờ đó có thể gửi lại dữ liệu lên Kafka mà không tạo bản ghi trùng. Do số trạm trong nội thành chưa dày, AIS sử dụng thêm các trạm lân cận để xây dựng đặc trưng gradient không gian, phản ánh mức chênh lệch PM2.5 giữa các khu vực.
+
+\paragraph{WeatherAPI.}
+WeatherAPI cung cấp dữ liệu thời tiết bề mặt theo giờ cho danh sách địa điểm được cấu hình quanh Hà Nội, gồm nhiệt độ, điểm sương, độ ẩm tương đối, tốc độ và hướng gió, lượng mưa, tầm nhìn, chỉ số UV, độ che phủ mây và xác suất mưa. Nguồn này bổ sung cho ERA5 và đặc biệt hữu ích khi dự báo gần thời gian thực, do dữ liệu tái phân tích ERA5 thường được công bố chậm hơn vài ngày.
+
+\paragraph{ERA5 tái phân tích khí quyển.}
+ERA5 là bộ dữ liệu tái phân tích khí quyển toàn cầu do ECMWF xây dựng, cung cấp trạng thái khí quyển nhất quán về mặt vật lý từ năm 1940 đến gần hiện tại với độ phân giải ngang khoảng 31 km {[}6{]}. AIS thu thập hai nhóm sản phẩm. Nhóm bề mặt gồm độ cao lớp biên hành tinh, thành phần gió ở độ cao 10 m, nhiệt độ ở độ cao 2 m, áp suất bề mặt, tổng lượng mưa và tiêu tán lớp biên; các biến này được dùng trực tiếp làm đặc trưng khí tượng. Nhóm theo mực áp suất gồm gió, nhiệt độ và địa thế vị tại nhiều mực chuẩn từ 1000 hPa đến 50 hPa; dữ liệu được chuyển sang định dạng nhị phân NOAA ARL để làm đầu vào khí tượng cho HYSPLIT.
+
+\paragraph{Sentinel-5P.}
+Vệ tinh Sentinel-5P thuộc chương trình Copernicus mang theo thiết bị TROPOMI, cung cấp quan trắc toàn cầu hằng ngày về NO2, CO, SO2, O3 và chỉ số aerosol {[}8{]}. Với mỗi granule (mảnh dữ liệu vệ tinh thu được trong một lần quét) đi qua khu vực Hà Nội, AIS tính trung bình có trọng số theo diện tích, độ lệch chuẩn và tỷ lệ điểm ảnh hợp lệ. Trước khi tính toán, dữ liệu được lọc theo ngưỡng đảm bảo chất lượng riêng của từng sản phẩm; ảnh hưởng của mây và các granule không phủ đúng khu vực được xử lý thông qua tỷ lệ điểm ảnh hợp lệ.
+
+\paragraph{MAIAC MODIS (MCD19A2).}
+Sản phẩm MAIAC MODIS cung cấp độ dày quang học aerosol (AOD, đại lượng biểu thị tổng lượng aerosol trong cột khí quyển) ở độ phân giải 1 km tại bước sóng 0,47 \si{\micro\meter} và 0,55 \si{\micro\meter} {[}9{]}. Trong điều kiện hòa trộn lớp biên phù hợp, AOD có tương quan với nồng độ PM2.5 gần mặt đất. AIS xử lý các granule HDF5, áp dụng bitmask chất lượng (các bit mã hóa trạng thái chất lượng phép đo) của MCD19A2 để chọn dữ liệu đáng tin cậy và tính AOD trung bình trên khu vực Hà Nội. Do dữ liệu gần như cập nhật hằng ngày nhưng nhạy với mây, pipeline sử dụng chính sách thời hạn hiệu lực (TTL) để nhận biết và xử lý dữ liệu thiếu hoặc đã cũ.
+
+Các nguồn trên có định dạng, độ phân giải và độ trễ khác nhau, ví dụ JSON/API cho OpenAQ và WeatherAPI, NetCDF cho ERA5/Sentinel-5P và HDF5 cho MAIAC. Vì vậy, AIS cần các adapter ingestion, data contract và tầng Bronze/Silver/Gold để chuẩn hóa dữ liệu trước khi dùng cho ML và dashboard.
+
+\subsubsection{HYSPLIT và source attribution}\label{hysplit-vuxe0-source-attribution-trong-phux1ea1m-vi-ais}
+
+HYSPLIT là mô hình được dùng để chạy \textbf{backward trajectory} từ khu vực Hà Nội, giúp phân tích đường đi của khối khí trong khoảng thời gian trước khi quan trắc PM2.5. Từ kết quả mô phỏng trajectory, AIS tạo các feature như cluster đường đi, vùng centroid, hướng vận chuyển chính và tín hiệu vệ tinh dọc theo đường đi.
+
+\textbf{Source attribution} được hiểu là phân tích hành lang vận chuyển tiềm năng. Hệ thống không khẳng định tuyệt đối một khu vực là nguồn phát thải gây ô nhiễm, vì để định lượng đóng góp phát thải cần thêm emission inventory hoặc mô hình hóa hóa học khí quyển như WRF-Chem/CMAQ. AIS sử dụng trajectory để tăng khả năng giải thích và cung cấp bối cảnh khí tượng cho dự báo PM2.5.
+
+\subsection{Các tính chất Big Data}\label{phuxf9-hux1ee3p-big-data}
+
+\subsubsection{Volume}
+
+AIS lưu trữ đồng thời các lưới tái phân tích ERA5 dạng NetCDF ở nhiều mực áp suất, granule MAIAC dạng HDF5, sản phẩm Sentinel-5P dạng NetCDF và dữ liệu lịch sử nhiều năm từ OpenAQ, WeatherAPI. Tổng khối lượng dữ liệu vượt khả năng xử lý hiệu quả của cơ sở dữ liệu quan hệ hoặc hệ thống lưu trữ đơn nút. Apache Iceberg trên HDFS cung cấp khả năng lưu trữ phân tán, quản lý snapshot và phân vùng dữ liệu, giúp truy vấn các khoảng lịch sử dài mà không phải quét toàn bộ bảng.
+
+\subsubsection{Velocity}
+
+OpenAQ và WeatherAPI liên tục cung cấp số đo mới theo giờ. Các adapter ingestion xuất bản sự kiện lên Kafka theo lịch cấu hình; Spark Structured Streaming tiêu thụ dữ liệu theo micro-batch và cập nhật bảng Bronze trong vài phút. Kafka tách tốc độ thu thập khỏi tốc độ xử lý của Spark, giúp hấp thụ các đợt dữ liệu tăng đột biến và cho phép phát lại dữ liệu khi cần backfill.
+
+\subsubsection{Variety}
+
+AIS xử lý sáu định dạng dữ liệu chính: JSON từ API, CSV từ các bản xuất lịch sử, GeoJSON cho lớp dữ liệu không gian, NetCDF4 cho ERA5 và Sentinel-5P, HDF5 cho MAIAC, cùng định dạng nhị phân NOAA ARL làm đầu vào khí tượng cho HYSPLIT. Mỗi định dạng cần parser hoặc bộ chuyển đổi riêng; các tầng ingestion và feature engineering che giấu sự khác biệt này, cung cấp giao diện dữ liệu dạng bảng thống nhất cho ML và trực quan hóa.
+
+\subsubsection{Veracity}
+
+AIS áp dụng kiểm soát chất lượng theo nhiều tầng và phù hợp với đặc điểm của từng nguồn: kiểm tra khoảng giá trị PM2.5 và độ phủ trạm cho OpenAQ; chuẩn hóa quy ước tích lũy lượng mưa của ERA5; áp dụng bitmask chất lượng cho MAIAC; lọc tỷ lệ điểm ảnh hợp lệ và ảnh hưởng của mây đối với Sentinel-5P; kiểm tra thời hạn hiệu lực của dữ liệu vệ tinh. Các bản ghi không đạt yêu cầu được gắn cờ chất lượng thay vì âm thầm loại bỏ, nhờ đó vẫn giữ được dấu vết phục vụ kiểm tra và truy vết.
+
+\subsubsection{Value}
+
+AIS tạo ra các giá trị vận hành chính sau:
+
+\begin{itemize}
+\tightlist
+\item
+  Cung cấp thông tin hiện trạng PM2.5 gần thời gian thực tại Hà Nội từ mạng lưới trạm quan trắc.
+\item
+  Dự báo PM2.5 ngắn hạn tại các mốc 6 giờ, 12 giờ và 24 giờ.
+\item
+  Phân tích mối liên hệ giữa PM2.5 với độ cao lớp biên, lượng mưa và chế độ gió.
+\item
+  Phân tích nguồn gốc khối khí và hành lang vận chuyển tiềm năng bằng backward trajectory từ HYSPLIT.
+\item
+  Cung cấp dashboard hỗ trợ theo dõi chất lượng không khí và ra quyết định trong y tế công cộng, quy hoạch đô thị.
+\end{itemize}
+
+Dự án phù hợp với bản chất của một dự án Big Data hiện đại vì không chỉ xử lý dữ liệu bằng batch script đơn lẻ, mà xây dựng đầy đủ pipeline phân tán từ ingestion, message queue, processing, lakehouse storage, serving database đến monitoring và deployment.
+
+\subsection{Cấu trúc dự án}\label{cux1ea5u-truxfac-dux1ef1-uxe1n}
+
+Cấu trúc dự án được tổ chức theo module chức năng:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.3000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.7000}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Folder/File}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{ingest/} & Adapter thu thập dữ liệu từ WeatherAPI, OpenAQ, Sentinel-5P, MAIAC, ERA5 và producer Kafka \\
+\texttt{spark\_jobs/} & Spark batch, Spark Structured Streaming, silver/gold/visualization/maintenance jobs \\
+\texttt{ml/} & Train, promote, predict mô hình PM2.5 \\
+\texttt{serving/} & FastAPI PM2.5 API và visualization API \\
+\texttt{ui/} & React/Vite dashboard \\
+\texttt{airflow/dags/} & DAG điều phối toàn bộ pipeline \\
+\texttt{scripts/} & Script bootstrap, check, submit job, sync Cassandra \\
+\texttt{deploy/k8s/} & Kubernetes manifests, Spark-on-K8s templates, API/UI/ML jobs \\
+\texttt{monitoring/} & Monitoring UI/app và health checks \\
+\texttt{config/} & Runtime config, pipeline config, source config \\
+\texttt{docker-compose.yml} & Môi trường local full-stack \\
+\texttt{Dockerfile} & Build image runtime cho job/API \\
+\texttt{requirements.txt} & Python dependencies \\
+\texttt{.env} & Biến môi trường \\
+\end{longtable}
+
+\newpage
+\section{Kiến trúc và thiết kế}\label{kiux1ebfn-truxfac-vuxe0-thiux1ebft-kux1ebf}
+
+\subsection{Kiến trúc tổng thể}\label{kiux1ebfn-truxfac-tux1ed5ng-thux1ec3}
+
+\subsubsection{Mô hình kiến trúc}\label{muxf4-huxecnh-kiux1ebfn-truxfac}
+
+AIS lấy cảm hứng theo kiến trúc Lambda, gồm batch layer, speed layer và serving layer, nhưng được hiệu chỉnh để phù hợp với đặc trưng đa tốc độ và độ trễ khác nhau của dữ liệu khí quyển. Batch layer xây dựng Bronze/Silver/Gold, training dataset và model. Speed layer không chỉ có một luồng xử lý tuần tự mà được tách thành hai đường gần thời gian thực chạy song song: Một luồng là streaming sink từ Kafka vào Iceberg Bronze để audit, lineage và replay; Luồng còn lại là online feature builder (thành phần tạo vector đặc trưng phục vụ dự báo từ dữ liệu mới nhất), kết hợp PM2.5/thời tiết mới nhất, lag/rolling và context as-of (bộ dữ liệu bối cảnh mới nhất đã khả dụng tại thời điểm dự báo, không sử dụng thông tin tương lai) từ vệ tinh, ERA5, HYSPLIT. Serving layer sử dụng Cassandra Feature State (kho lưu vector đặc trưng hiện hành theo địa điểm và thời điểm dự báo) và Cassandra Latest Forecast (kho lưu kết quả dự báo mới nhất theo địa điểm và thời hạn dự báo) để cung cấp dữ liệu độ trễ thấp cho API/UI. Như vậy, hệ thống sử dụng nguyên lý Lambda là kết hợp xử lý lịch sử đầy đủ với xử lý dữ liệu mới có độ trễ thấp, đồng thời bổ sung dual-path và context as-of để đáp ứng bài toán AIS.
+
+\subsubsection{Sơ đồ kiến trúc tổng thể}\label{sux1a1-ux111ux1ed3-kiux1ebfn-truxfac-tux1ed5ng-thux1ec3}
+
+\begin{figure}[H]
+    \centering
+    \IfFileExists{img/Architecture.png}{%
+        \includegraphics[width=\textwidth]{img/Architecture.png}
+    }{%
+        \fbox{\parbox[c][7cm][c]{0.95\textwidth}{\centering Chưa có ảnh. Export trang ``Architecture Overview'' từ file Draw.io sang \texttt{img/architecture\_overview.png}.}}
+    }
+    \caption{Kiến trúc tổng thể của hệ thống AIS}
+    \label{fig:architecture-overview}
+\end{figure}
+
+\subsubsection{Vai trò các layer}\label{vai-truxf2-cuxe1c-layer}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Layer}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Thành phần}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+External Data Sources & OpenAQ, WeatherAPI, ERA5, HYSPLIT, Sentinel-5P, MAIAC & Cung cấp dữ liệu theo cadence gần realtime, hourly và daily \\
+Ingestion \& Messaging & Kafka event buffer + HDFS raw & Nhận live event, metadata topic và raw file lớn \\
+Data Platform & HDFS/Object Storage + Iceberg & Lưu raw, model artifact, visualization cache và Bronze/Silver/Gold lịch sử \\
+Online Store & Cassandra Feature State + Latest Forecast & Lưu online feature vector và forecast mới nhất theo location \\
+Model Registry & Iceberg production pointer & Quản lý metrics, schema version và con trỏ model production \\
+Compute Runtime & Spark batch/streaming, context jobs, online feature builder & Backfill, Bronze audit append, refresh context as-of và tạo online features \\
+ML & LightGBM + prediction job & Train model và dự báo PM2.5 6h/12h/24h \\
+Serving \& UI & Visualization API, PM2.5 Forecast API, React + D3.js & Đọc Cassandra cho latest, cache cho lịch sử và hiển thị dashboard \\
+Orchestration & Airflow & Điều phối DAG, retry, backfill, dependency \\
+Deployment & Docker/Kubernetes & Local dev và production-like runtime \\
+Monitoring & Observability + Airflow maintenance & Theo dõi job, API readiness, log, Kafka lag và data quality \\
+\end{longtable}
+
+\subsection{Pipeline dữ liệu}\label{pipeline-dux1eef-liux1ec7u}
+
+\subsubsection{Luồng dữ liệu chính}\label{luux1ed3ng-dux1eef-liux1ec7u-chuxednh}
+
+\begin{figure}[H]
+    \centering
+    \IfFileExists{img/Pipeline.png}{%
+        \includegraphics[width=\textwidth]{img/Pipeline.png}
+    }{%
+        \fbox{\parbox[c][7cm][c]{0.95\textwidth}{\centering Chưa có ảnh. Export trang ``Pipeline End-to-End'' từ file Draw.io sang \texttt{img/pipeline.png}.}}
+    }
+    \caption{Pipeline dữ liệu end-to-end của hệ thống AIS}
+    \label{fig:pipeline-end-to-end}
+\end{figure}
+
+\subsubsection{Luồng batch}\label{luong-batch}
+
+Luồng batch lấy historical sources trong closed past window, thực hiện batch ingest qua Kafka/HDFS raw rồi ghi Iceberg Bronze. Spark batch xử lý Bronze thành Silver, tạo Gold PM2.5 master features và training dataset. Job train LightGBM lưu model artifact tại \texttt{HDFS /models}, đồng thời đăng ký metadata và production pointer trong Iceberg Model Registry.
+
+\subsubsection{Luồng speed}\label{luong-speed}
+
+Luồng gần thời gian thực nhận OpenAQ và WeatherAPI theo cadence rồi tách thành hai đường chạy đồng thời. Một luồng đưa Kafka live topics vào Bronze Iceberg để audit, lineage và replayable history. Luồng còn lại đưa live PM2.5/thời tiết trực tiếp vào Online Feature Builder, kết hợp lag/rolling, validated latest Bronze và context có thời điểm không vượt quá \texttt{base\_time}. Feature vector được ghi vào Cassandra Feature State; Prediction Job tải model artifact production, dự báo 6h/12h/24h và ghi thẳng vào Cassandra Latest Forecast. Visualization API đọc Cassandra cho dữ liệu latest và đọc cache cho lịch sử; React UI không chạy Spark hoặc ML tại request time.
+
+\subsubsection{Pipeline theo từng bước}\label{pipeline-theo-tux1eebng-bux1b0ux1edbc}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.15000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.25000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Bước}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Thành phần thực hiện}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Input}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Xử lý}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+1. Thu thập dữ liệu & \code{ingest/*.py} & API/file nguồn & Gọi API, download file, parse sơ bộ & Event JSON hoặc raw file \\
+2. Publish queue & \code{ingest/kafka_utils.py} & Event chuẩn hóa & Serialize JSON, gán key \code{event_id}, retry/DLQ & Kafka topics \\
+3. Raw storage & \code{ingest/era5_ingest.py}, Sentinel/MAIAC adapters & File lớn & Upload WebHDFS/HDFS & HDFS raw zone \\
+4. Streaming Bronze & \code{spark_jobs/*_streaming.py} & Kafka topics & Parse schema, watermark, dedup, foreachBatch MERGE & Iceberg Bronze \\
+5. Silver processing & \code{spark_jobs/*_silver.py} & Bronze/raw & Clean, QC, normalize, spatial/time align & Iceberg Silver \\
+6. Trajectory tier & \code{hysplit_*}, \code{trajectory_*} & ERA5 pressure, satellite grid & ERA5$\rightarrow$ARL, HYSPLIT, parse, cluster, sample path & Trajectory Silver/Features \\
+7. Gold features & \code{hanoi_pm25_master_features_gold.py} & Silver datasets & Join, lag, rolling, calendar, satellite, trajectory & Master feature Gold \\
+8. Training dataset & \code{hanoi_pm25_training_dataset_gold.py} & Master Gold & Point-in-time filter, split train/val/test, target shift & Training dataset Gold \\
+9. ML training & \code{ml/train/promote} & Training dataset Gold & Train, evaluate, promote model & Model registry \\
+10. Context refresh & Context jobs & ERA5, HYSPLIT, S5P/\allowbreak MAIAC & Cập nhật latest context và staleness theo as-of & As-of Context Store \\
+11. Online features & Online Feature Builder & Live PM2.5/\allowbreak weather + Bronze + context as-of & Tạo lag/rolling và feature vector tại \code{base_time} & Cassandra Feature State \\
+12. Online prediction & Prediction Job & Cassandra Feature State + production model artifact & Dự báo PM2.5 6h/12h/24h & Cassandra Latest Forecast \\
+13. API/UI & Visualization API, Forecast API, React + D3 & Cassandra latest + selected-date cache & Trả latest API, forecast, heatmap và historical view & Dashboard/\allowbreak API response \\
+14. Monitoring & Airflow + monitoring & Logs, metrics, state & Health, lag, freshness, DQ, alert & Ops dashboard \\
+\end{longtable}
+
+Pipeline đảm bảo tính idempotency ở các điểm ghi chính. Streaming Bronze dùng \texttt{foreachBatch\ +\ MERGE\ INTO} theo \texttt{event\_id} hoặc natural key. Silver/Gold batch job ghi theo partition hoặc MERGE. Cassandra Feature State và Cassandra Latest Forecast dùng UPSERT theo location, base time và horizon. Nhờ đó cả luồng batch và hai near-realtime path đều có thể rerun/retry/backfill mà không tạo duplicate ngoài ý muốn.
+
+\subsection{Data contract và lakehouse}\label{data-contract-vuxe0-lakehouse}
+
+\subsubsection{Event envelope và data contract}\label{event-envelope-vuxe0-data-contract}
+
+AIS sử dụng event envelope thống nhất cho dữ liệu Kafka:
+
+\begin{verbatim}
+{
+  "event_id": "source-natural-key-hash",
+  "source": "openaq|weather|sentinel5p|maiac|era5",
+  "event_time": "2026-05-31T10:00:00Z",
+  "ingest_time": "2026-05-31T10:02:15Z",
+  "schema_version": "v1",
+  "available_at": "2026-05-31T10:02:15Z",
+  "payload": {},
+  "quality_flags": [],
+  "trace": {
+    "request_id": "...",
+    "producer": "...",
+    "retry_count": 0
+  }
+}
+\end{verbatim}
+
+Mỗi bản ghi trong AIS mang theo một nhóm metadata thống nhất để hỗ trợ nối dữ liệu chính xác, kiểm soát chất lượng, truy vết và tái lập kết quả:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.22}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.48}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.30}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nhóm metadata}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Các trường chính}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Mục đích}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Định danh nguồn & \texttt{source}, \texttt{event\_id}, \texttt{location\_id}, \texttt{sensor\_id} & Loại trùng và truy vết nguồn dữ liệu \\
+Thời gian & \texttt{observed\_at}, \texttt{published\_at}, \texttt{ingested\_at}, \texttt{available\_at} & Nối dữ liệu đúng thời điểm \\
+Chất lượng & \texttt{unit}, \texttt{coverage\_pct}, \texttt{valid\_pixel\_pct}, \texttt{qa\_status}, \texttt{qa\_flags} & Chỉ chọn dữ liệu đạt yêu cầu chất lượng \\
+Phiên bản & \texttt{dataset\_version}, \texttt{feature\_version}, \texttt{schema\_hash}, \texttt{model\_version} & Tái lập kết quả và phát hiện thay đổi \\
+Truy vết & \texttt{request\_id}, \texttt{producer}, \texttt{job\_run\_id}, \texttt{input\_snapshot\_id} & Debug và audit pipeline \\
+\end{longtable}
+
+\subsubsection{Point-in-time correctness}\label{point-in-time-correctness}
+
+Trong bài toán dự báo, hệ thống không được sử dụng dữ liệu tương lai. Một đặc trưng từ nguồn \(S\) chỉ được dùng để dự báo tại thời điểm \(T\) khi thỏa mãn:
+
+\begin{verbatim}
+S.available_at <= T
+\end{verbatim}
+
+Quy tắc này đặc biệt quan trọng với ERA5 có độ trễ nhiều ngày, Sentinel-5P và MAIAC có thể trễ từ một đến hai ngày, cùng các đặc trưng trajectory được tạo từ ERA5 theo mực áp suất. Bảng Gold phục vụ huấn luyện chỉ lưu các đặc trưng thỏa mãn điều kiện trên tại từng thời điểm bắt đầu dự báo; bảng đặc trưng serving cũng kiểm tra điều kiện này trong job feature engineering trước khi suy diễn.
+
+\subsubsection{Bronze/Silver/Gold}\label{bronzesilvergold}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.35}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.55}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Tầng}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Ý nghĩa}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Đặc điểm}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Bronze & Dữ liệu gần thô sau ingestion & Giữ trace nguồn, event\_id, ingest timestamp, payload chuẩn hóa tối thiểu \\
+Silver & Dữ liệu sạch và chuẩn hóa & Schema validation, dedup, null handling, unit/time/coordinate normalization \\
+Gold & Dữ liệu phục vụ ML/serving/visualization & Feature, forecast, dashboard products, model registry, cache manifest \\
+\end{longtable}
+
+\subsubsection{HDFS raw zone}\label{hdfs-raw-zone}
+
+HDFS raw zone lưu các dữ liệu file lớn hoặc cần preserve bản gốc:
+
+\begin{verbatim}
+/raw/
+|-- era5/
+|   |-- surface/year=YYYY/month=MM/
+|   `-- pressure/year=YYYY/month=MM/
+|-- sentinel5p/
+|   `-- product_date=YYYY-MM-DD/
+|-- maiac/
+|   `-- tile=.../date=YYYY-MM-DD/
+`-- hysplit/
+    `-- run_date=YYYY-MM-DD/
+\end{verbatim}
+
+Raw zone giúp hệ thống tái xử lý dữ liệu khi thay đổi logic Silver/Gold, lưu bằng chứng nguồn dữ liệu, hỗ trợ backfill theo partition thời gian và tách dữ liệu file lớn khỏi Kafka.
+
+\subsubsection{Iceberg warehouse}\label{iceberg-warehouse}
+
+Iceberg warehouse trên HDFS được tổ chức theo namespace:
+
+\begin{verbatim}
+warehouse/iceberg/
+|-- ais.weather
+|-- ais.air_quality
+|-- ais.satellite
+|-- ais.trajectory
+|-- ais.features
+|-- ais.models
+|-- ais.predictions
+`-- ais.visualization
+\end{verbatim}
+
+\subsubsection{Partitioning}\label{partitioning}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nhóm bảng}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Partition chính}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Lý do}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Bronze event & \texttt{event\_date}, \texttt{source} & Đọc theo ngày/nguồn, cleanup retention \\
+OpenAQ silver & \texttt{date}, \texttt{location\_id} & Truy vấn PM2.5 theo ngày/trạm \\
+Weather silver & \texttt{date}, \texttt{location\_id} & Join theo giờ và vị trí \\
+ERA5 silver & \texttt{year}, \texttt{month}, \texttt{variable} & Dữ liệu file lớn theo tháng/biến \\
+Gold features & \texttt{feature\_date}, \texttt{location\_id} & Train/predict theo thời gian/khu vực \\
+Forecast & \texttt{forecast\_date}, \texttt{horizon} & API query forecast nhanh \\
+Visualization & \texttt{product\_date}, \texttt{product\_type} & Dashboard query theo sản phẩm \\
+\end{longtable}
+
+\newpage
+\section{Triển khai hệ thống}\label{triux1ec3n-khai-hux1ec7-thux1ed1ng}
+
+\subsection{Ingestion và Kafka}\label{ingestion-vuxe0-kafka}
+
+\subsubsection{Tổng quan ingestion layer}\label{tux1ed5ng-quan-ingestion-layer}
+
+Ingestion layer chịu trách nhiệm kết nối dữ liệu bên ngoài, chuẩn hóa event, quản lý trạng thái window, retry khi lỗi và gửi dữ liệu vào Kafka/HDFS.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{File}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nguồn dữ liệu}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output chính}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{ingest/ingest_weather.py} & WeatherAPI/local weather payload & Kafka \code{weather} \\
+\code{ingest/openaq_ingest.py} & OpenAQ API & Kafka \code{openaq} \\
+\code{ingest/sentinel5p_ingest.py} & Copernicus/CDSE OData + NetCDF product & Kafka \code{sentinel5p-summary}, HDFS raw \\
+\code{ingest/maiac_ingest.py} & NASA CMR/MAIAC HDF5 granule & Kafka \code{maiac-summary}, HDFS raw \\
+\code{ingest/era5_ingest.py} & CDS ERA5 & HDFS raw + Kafka \code{era5-files} \\
+\code{ingest/kafka_utils.py} & Kafka helper & Producer config, schema envelope, retry, DLQ \\
+\code{ingest/window_utils.py} & Incremental state & Quản lý cửa sổ ingest theo nguồn \\
+\end{longtable}
+
+\subsubsection{Adapter design}\label{adapter-design}
+
+Mỗi ingestion adapter có cùng cấu trúc xử lý:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Đọc config nguồn dữ liệu, bbox, time window và credentials từ environment.
+\item
+  Gọi API hoặc download file với timeout/retry.
+\item
+  Chuẩn hóa timestamp về UTC.
+\item
+  Gán \texttt{event\_id} ổn định từ natural key.
+\item
+  Gắn \texttt{schema\_version}, \texttt{ingest\_time}, \texttt{available\_at}, \texttt{quality\_flags}.
+\item
+  Publish Kafka hoặc upload HDFS raw.
+\item
+  Ghi runtime state để incremental run tiếp tục từ mốc cuối.
+\end{enumerate}
+
+\subsubsection{Kafka topics}\label{kafka-topics}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Topic}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Producer}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Consumer}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Message}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{weather} & \code{ingest_weather.py} & \code{weather_streaming.py} & Weather hourly event \\
+\code{openaq} & \code{openaq_ingest.py} & \code{openaq_streaming.py} & PM2.5 measurement \\
+\code{sentinel5p-summary} & \code{sentinel5p_ingest.py} & \code{sentinel5p_summary_streaming.py} & Sentinel product metadata \\
+\code{maiac-summary} & \code{maiac_ingest.py} & \code{maiac_summary_streaming.py} & MAIAC granule metadata \\
+\code{era5-files} & \code{era5_ingest.py} & \code{era5_files_streaming.py} & ERA5 file metadata \\
+\end{longtable}
+
+\subsubsection{Kafka deployment scale}\label{kafka-deployment-scale}
+
+Thiết kế production đúng của hệ thống sử dụng \textbf{3 Kafka brokers} với replication factor 2--3, retention tối thiểu 7 ngày và partition count đủ để Spark consumer song song. Tuy nhiên, trong môi trường triển khai hiện tại của nhóm, hệ thống chạy cấu hình rút gọn \textbf{1 Kafka broker} để giảm RAM/CPU và phù hợp với giới hạn phần cứng máy cá nhân.
+
+\subsubsection{Message schema và offset handling}\label{message-schema-vuxe0-offset-handling}
+
+Message Kafka được validate theo schema version. Spark streaming định nghĩa schema rõ ràng bằng StructType trước khi parse JSON. Event không hợp lệ được ghi vào DLQ kèm raw payload và lý do lỗi. Offset Kafka được quản lý bằng Spark checkpoint trên HDFS, mỗi streaming job có checkpoint riêng dưới \texttt{/checkpoints/spark\_streaming/\textless{}job\_name\textgreater{}}.
+
+\subsection{Spark Streaming, Batch và Speed}\label{spark-streaming-batch-va-speed}
+
+\subsubsection{Các streaming job chính}\label{cuxe1c-streaming-job-chuxednh}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{File}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Topic input}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Chức năng}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{weather_streaming.py} & \code{weather} & \code{ais.weather.weather_bronze} & Parse weather event, watermark, dedup \\
+\code{openaq_streaming.py} & \code{openaq} & \code{ais.air_quality.openaq_bronze} & Parse PM2.5 event, validate station/time/value \\
+\code{sentinel5p_summary_streaming.py} & \code{sentinel5p-summary} & \code{ais.satellite.sentinel5p_summary_bronze} & Parse product metadata, validate coverage/QA \\
+\code{maiac_summary_streaming.py} & \code{maiac-summary} & \code{ais.satellite.maiac_summary_bronze} & Parse granule metadata, validate AOD QA \\
+\code{era5_files_streaming.py} & \code{era5-files} & \code{ais.weather.era5_files_bronze} & Register ERA5 files by URI/checksum \\
+\end{longtable}
+
+\subsubsection{Streaming read từ Kafka}\label{streaming-read-tux1eeb-kafka}
+
+Mỗi job đọc Kafka theo cấu hình:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{subscribe}: topic tương ứng.
+\item
+  \texttt{startingOffsets}: \texttt{latest} cho realtime, \texttt{earliest} cho backfill có kiểm soát.
+\item
+  \texttt{failOnDataLoss}: cấu hình an toàn theo môi trường.
+\item
+  \texttt{maxOffsetsPerTrigger}: giới hạn tốc độ đọc để tránh overload.
+\item
+  \texttt{kafka.bootstrap.servers}: lấy từ config/environment.
+\end{itemize}
+
+\subsubsection{Schema parsing và validation}\label{schema-parsing-vuxe0-validation}
+
+Mỗi message Kafka ban đầu là một chuỗi JSON. Spark Structured Streaming ánh xạ chuỗi này vào schema được khai báo trước để xác định rõ tên trường, kiểu dữ liệu và cấu trúc lồng nhau. Cách làm này giúp phát hiện sớm các lỗi như thiếu trường bắt buộc, sai kiểu thời gian, giá trị không đúng định dạng hoặc phiên bản schema không được hỗ trợ.
+
+Sau khi parse, job tách các trường metadata chung gồm \texttt{event\_id}, \texttt{source}, \texttt{event\_time}, \texttt{ingest\_time}, \texttt{schema\_version}, \texttt{available\_at}, đồng thời đọc phần dữ liệu nghiệp vụ trong \texttt{payload} và các cờ chất lượng. Bản ghi hợp lệ được chuyển sang các bước watermark, loại trùng và ghi Bronze. Bản ghi không hợp lệ không làm dừng toàn bộ luồng mà được đưa vào DLQ kèm dữ liệu gốc và lý do lỗi để có thể kiểm tra, sửa và phát lại sau.
+
+\subsubsection{Watermark, deduplication và late data}\label{watermark-deduplication-vuxe0-late-data}
+
+Streaming job sử dụng watermark theo \texttt{event\_time}, ví dụ:
+
+\begin{verbatim}
+withWatermark("event_time", "24 hours")
+\end{verbatim}
+
+Deduplication được thực hiện theo \texttt{event\_id} hoặc natural key tương ứng với từng nguồn. Watermark giúp xử lý dữ liệu đến trễ trong ngưỡng cho phép, giới hạn state store và đưa event quá trễ vào late-event table/DLQ thay vì làm hỏng toàn bộ stream.
+
+\subsubsection{Các batch job chính}\label{cuxe1c-batch-job-chuxednh}
+
+
+Spark batch được dùng cho xử lý file raw lớn, làm sạch dữ liệu Bronze thành Silver, tạo Gold feature, backfill dữ liệu lịch sử, recompute khi thay đổi logic và maintenance Iceberg.
+
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{File}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Input}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{ensure_iceberg_tables.py} & Tạo namespace/table Iceberg & Config schema & Iceberg metadata \\
+\code{hanoi_openaq_silver.py} & Chuẩn hóa PM2.5 OpenAQ & Bronze OpenAQ & Silver OpenAQ \\
+\code{hanoi_weather_surface_proxy_silver.py} & Chuẩn hóa weather & Bronze weather & Silver weather \\
+\code{era5_surface_hanoi_silver.py} & Parse ERA5 surface & HDFS raw ERA5 & Silver ERA5 \\
+\code{sentinel5p_hanoi_silver.py} & Chuẩn hóa Sentinel-5P & Bronze/raw Sentinel & Silver Sentinel \\
+\code{maiac_hanoi_silver.py} & Chuẩn hóa MAIAC/AOD & Bronze/raw MAIAC & Silver MAIAC \\
+\code{openaq_spatial_gradient_silver.py} & Tính gradient không gian PM2.5 & Silver OpenAQ & Silver spatial gradient \\
+\code{hanoi_pm25_master_features_gold.py} & Tạo master features & Silver datasets & Gold master features \\
+\code{hanoi_pm25_training_dataset_gold.py} & Tạo training dataset & Gold master & Gold training dataset \\
+\code{visualization_*_gold.py} & Tạo sản phẩm trực quan & Silver/gold & Visualization gold/cache \\
+\code{iceberg_maintenance.py} & Optimize/expire snapshots & Iceberg tables & Optimized tables \\
+\end{longtable}
+
+
+Các batch job silver/gold sử dụng logic idempotent: recompute theo partition thời gian, MERGE INTO theo natural key, dynamic partition overwrite cho bảng aggregate và ghi audit metadata gồm \texttt{job\_run\_id}, \texttt{processing\_time}, \texttt{input\_snapshot\_id}, \texttt{output\_snapshot\_id}. Điều này giúp rerun job không tạo duplicate và hỗ trợ lineage.
+
+\subsubsection{Các speed job chính}\label{cuxe1c-speed-job-chuxednh}
+
+Near-realtime layer tách dữ liệu mới thành audit path và online path. Audit path duy trì Bronze replayable; online path kết hợp live event với context as-of để cập nhật state và forecast phục vụ API:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{File}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Input}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{hanoi_pm25_serving_features_gold.py} & Online Feature Builder & Live PM2.5/weather + latest Bronze + context as-of & Cassandra Feature State \\
+\code{ml/predict_hanoi_pm25.py} & Chạy online prediction & Cassandra Feature State + production model artifact & Cassandra Latest Forecast \\
+\code{pm25_serving_features_to_cassandra.py} & Đồng bộ online state/read model & Latest features theo location/hour & Cassandra Feature State \\
+\end{longtable}
+
+\subsection{Feature engineering}\label{feature-engineering}
+
+\subsubsection{Cleaning và validation}\label{cleaning-vuxe0-validation}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.8000}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nguồn}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Kiểm tra chất lượng}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+OpenAQ & PM2.5 \textgreater= 0, ngưỡng trên hợp lý, unit normalization, station/location validation, duplicate measurement \\
+WeatherAPI & Timestamp hourly alignment, null interpolation giới hạn, wind direction/speed range, precipitation non-negative \\
+ERA5 & Kiểm tra file checksum, variable availability, spatial interpolation, precipitation accumulation convention \\
+Sentinel-5P & QA threshold, valid pixel percentage, bbox intersection, cloud/coverage filtering \\
+MAIAC & QA bitmask, valid AOD range, cloud-free pixel, tile/date validation \\
+HYSPLIT output & Run completeness, trajectory age sequence, lat/lon range, missing waypoint handling \\
+\end{longtable}
+
+\subsubsection{Join logic}\label{join-logic}
+
+Các join chính trong hệ thống:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Join}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Input}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Key}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+PM2.5 + Weather & OpenAQ + weather hourly & \texttt{event\_hour}, \texttt{location\_id} & Weather-enriched PM2.5 \\
+PM2.5 + ERA5 & OpenAQ + ERA5 hourly & \texttt{event\_hour}, nearest grid/Hanoi center & Meteorological features \\
+PM2.5 + Satellite & Hourly PM2.5 + daily satellite & \texttt{event\_date}, point-in-time \texttt{available\_at} & Daily satellite features \\
+PM2.5 + Transport features & Hourly PM2.5 + features sinh từ HYSPLIT output & \texttt{event\_hour}, \texttt{location\_id} & Transport-enriched features \\
+Serving features + Model registry & Serving feature table + production model & \texttt{feature\_version}, \texttt{schema\_hash}, \texttt{horizon} & Forecast output \\
+\end{longtable}
+
+Broadcast join được dùng cho dimension nhỏ như station metadata, grid metadata, location config. Join dữ liệu lớn được repartition theo time/location và tận dụng partition pruning trên Iceberg.
+
+\subsubsection{Master feature table}\label{master-feature-table}
+
+\texttt{hanoi\_pm25\_master\_hourly\_gold} là feature store trung tâm của AIS. Bảng này join tất cả nguồn Silver tại grain hourly cho Hà Nội.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.25000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.75000}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nhóm feature}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Ví dụ}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+PM2.5 observed & median, mean, station\_count, coverage\_pct, valid\_station\_count \\
+Lag features & \texttt{pm25\_lag\_1h}, \texttt{pm25\_lag\_3h}, \texttt{pm25\_lag\_6h}, \texttt{pm25\_lag\_12h}, \texttt{pm25\_lag\_24h} \\
+Rolling statistics & rolling mean/std/max 3h/6h/24h \\
+Weather & temperature, humidity, pressure, wind speed, wind direction, precipitation, visibility \\
+ERA5 & pbl\_height, wind\_u\_10m, wind\_v\_10m, surface pressure, total precipitation \\
+Sentinel-5P & NO2, CO, SO2, O3, aerosol index, valid\_pct, freshness \\
+MAIAC & AOD\_047, AOD\_055, valid\_pct, freshness \\
+Spatial gradient & north/south/east/west gradient, gradient\_magnitude \\
+Transport/HYSPLIT output & cluster\_id, centroid, path NO2/AER mean, residence signal \\
+Calendar & hour, day\_of\_week, month, season, weekend, rush hour, cyclical encoding \\
+\end{longtable}
+
+\code{hanoi_pm25_training_dataset_gold} và \code{hanoi_pm25_serving_features_gold} dùng cùng feature set và \code{schema_hash}. Training dataset có thêm target labels; serving feature table không chứa target tương lai và chỉ sử dụng feature thỏa mãn \code{available_at <= prediction_origin}. Nếu \code{schema_hash} không khớp model registry, inference bị chặn và sinh alert.
+
+\subsubsection{UDF tùy biến cho logic nghiệp vụ}\label{udf-tuxf9y-biux1ebfn-cho-logic-nghiux1ec7p-vux1ee5}
+
+Bên cạnh các hàm built-in của Spark SQL, AIS sử dụng UDF cho một số logic nghiệp vụ khó biểu diễn gọn bằng biểu thức SQL chuẩn:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.3000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.7000}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{UDF/logic}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Mục đích}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Chuẩn hóa hướng gió & Chuyển wind direction dạng độ sang nhóm hướng Bắc/Đông/Nam/Tây hoặc sector 8 hướng để phục vụ phân tích vận chuyển ô nhiễm \\
+QA bitmask cho MAIAC & Giải mã bitmask chất lượng pixel AOD, chỉ giữ pixel đạt chất lượng đủ tốt \\
+Phân loại vùng trajectory & Gán waypoint/endpoint vào nhóm vùng địa lý tương đối so với Hà Nội để phục vụ source attribution \\
+Sinh quality flags & Gắn cờ \texttt{missing\_value}, \texttt{out\_of\_range}, \texttt{low\_coverage}, \texttt{late\_event}, \texttt{stale\_feature} theo quy tắc từng nguồn \\
+\end{longtable}
+
+UDF chỉ được dùng cho logic đặc thù khó thay bằng hàm Spark có sẵn. Với các thao tác phổ biến như lọc null, chuẩn hóa timestamp, tính lag/rolling, join và aggregate, hệ thống ưu tiên Spark SQL/DataFrame built-in để Catalyst Optimizer có thể tối ưu kế hoạch thực thi tốt hơn.
+
+\subsection{Trajectory và source attribution}\label{trajectory-vuxe0-source-attribution}
+
+\subsubsection{Motivation}\label{ux111ux1ed9ng-cux1a1-khoa-hux1ecdc}
+
+PM2.5 tại Hà Nội không chỉ phụ thuộc vào phát thải cục bộ và điều kiện khí tượng tại chỗ. Quá trình vận chuyển xa của aerosol và các khí tiền chất từ hoạt động đốt sinh khối ở Đông Nam Á, khu vực công nghiệp phía nam Trung Quốc hoặc các đợt bụi từ sa mạc Gobi có thể làm nồng độ PM2.5 tăng đáng kể. Ảnh hưởng này rõ hơn trong mùa khô, khi gió mùa Đông Bắc tạo điều kiện đưa các khối khí từ phía bắc về Hà Nội.
+
+Phân tích backward trajectory bằng HYSPLIT cung cấp cơ sở vật lý để xác định đường đi của khối khí trước khi đến Hà Nội. Từ đó, hệ thống có thể bổ sung tín hiệu vận chuyển ô nhiễm vào dữ liệu dự báo, đồng thời hỗ trợ giải thích liệu một đợt PM2.5 cao có liên quan đến nguồn phát thải tại chỗ hay các hành lang vận chuyển từ xa.
+
+\subsubsection{HYSPLIT trajectory}\label{era5-pressure-levels-arl}
+
+HYSPLIT yêu cầu trường khí tượng ở định dạng nhị phân NOAA ARL. Trước khi chạy mô hình, job \code{era5_pressure_levels_to_arl.py} đọc dữ liệu ERA5 NetCDF theo nhiều mực áp suất, lấy các thành phần gió, nhiệt độ và địa thế vị, sau đó chuyển đổi sang ARL. File đầu ra được lưu trên HDFS và metadata được ghi vào Iceberg để hỗ trợ truy vết và chạy lại.
+
+Các tham số vận hành như điểm tiếp nhận, thời gian truy ngược, độ cao khởi phát và lịch chạy được quản lý tập trung trong cấu hình pipeline. Cách tổ chức này cho phép điều chỉnh phạm vi phân tích theo từng kịch bản mà không phải thay đổi mã nguồn của job.
+
+Job \code{hysplit_trajectory_run.py} chạy HYSPLIT ở chế độ backward từ khu vực Hà Nội để xác định đường đi của khối khí trước khi đến điểm tiếp nhận. Mỗi lần chạy tạo một file trajectory ghi lại vị trí và các điều kiện khí tượng liên quan tại từng bước thời gian trong quá khứ. Metadata của lần chạy và đường dẫn file đầu ra được lưu tại bảng \code{ais.trajectory.hysplit_runs_bronze}, phục vụ xử lý tiếp theo, truy vết và chạy lại khi cần.
+
+\subsubsection{Trajectory processing}\label{trajectory-processing}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.28}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.30}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.42}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Job}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Chức năng}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{hysplit_trajectory_parse_silver.py} & \code{ais.trajectory.hysplit_trajectories_silver} & Chuyển file trajectory thành các bản ghi gồm \code{run_id}, \code{age_h}, tọa độ, độ cao, áp suất và nhiệt độ. \\
+\code{hysplit_trajectory_cluster_silver.py} & \code{ais.trajectory.hysplit_trajectories_clustered_silver} & Áp dụng k-means lên hình học đường đi để gom trajectory thành \(k\) cụm. \\
+\code{openaq_spatial_gradient_silver.py} & \code{ais.features.openaq_spatial_gradient_silver} & Tính gradient PM2.5 theo các hướng Bắc, Nam, Đông và Tây từ mạng lưới trạm quanh Hà Nội. \\
+\code{sentinel5p_grid_silver.py} & \code{ais.satellite.sentinel5p_grid_silver} & Chuyển sản phẩm Sentinel-5P hằng ngày thành lưới không gian để lấy mẫu dọc theo đường đi của khối khí. \\
+\code{trajectory_path_sampling_silver.py} & \code{ais.features.trajectory_path_satellite_silver} & Lấy mẫu cột NO2 và chỉ số aerosol từ lưới Sentinel-5P dọc trajectory, tạo tín hiệu thành phần khí quyển tích hợp theo đường đi. \\
+\code{trajectory_hourly_features_silver.py} & \code{ais.features.trajectory_hourly_features_silver} & Tổng hợp theo giờ các đặc trưng của cụm trajectory, vị trí điểm cuối, centroid vùng nguồn, trung bình NO2/AER. \\
+\end{longtable}
+
+\subsection{Machine learning}\label{machine-learning}
+
+\subsubsection{Mục tiêu ML}\label{mux1ee5c-tiuxeau-ml}
+
+ML layer dự báo PM2.5 trong các horizon 6 giờ, 12 giờ và 24 giờ. Bài toán được mô hình hóa là hồi quy có giám sát:
+
+\begin{verbatim}
+Input: features tại thời điểm t
+Output: PM2.5 tại thời điểm t + horizon
+\end{verbatim}
+
+\subsubsection{Training dataset}\label{training-dataset}
+
+\code{hanoi_pm25_training_dataset_gold.py} tạo training dataset từ gold master features:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Lọc bản ghi có đủ feature quan trọng.
+\item
+  Sinh nhãn \code{target_pm25_horizon_6h}, \code{target_pm25_horizon_12h}, \code{target_pm25_horizon_24h}.
+\item
+  Chia train/validation/test theo thời gian, có purge gap để tránh leakage.
+\item
+  Ghi dataset vào Iceberg features namespace kèm \code{dataset_version}, \code{feature_version}, \code{schema_hash}.
+\end{enumerate}
+
+\subsubsection{Model architecture}\label{model-architecture}
+
+AIS sử dụng LightGBM. Gradient boosting được chọn vì phù hợp với dữ liệu tabular, xử lý missing value tốt, huấn luyện nhanh, dễ giải thích bằng feature importance và không yêu cầu lượng dữ liệu cực lớn như deep learning.
+
+\subsubsection{Training, promotion và prediction}\label{training-promotion-vuxe0-prediction}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.15}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.15}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.15}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.35}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Phase}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Script}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Input}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Output}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Key action}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Training & \code{ml/train_hanoi_pm25.py} & Training dataset Gold & Model artifact + run metadata & Train candidate model, log metrics, feature importance \\
+Promotion & \code{ml/promote_hanoi_pm25_model.py} & Model runs Gold & Model registry Gold & Chọn model đạt criteria, cập nhật production pointer \\
+Prediction & \code{ml/predict_hanoi_pm25.py} & Cassandra Feature State + registry/artifact & Cassandra Latest Forecast & Load production model đúng \code{feature_version/schema_hash}, ghi forecast mới nhất \\
+\end{longtable}
+
+\subsection{Storage, API và dashboard}\label{storage-api-vuxe0-dashboard}
+
+\subsubsection{HDFS}\label{hdfs}
+
+HDFS đảm nhiệm lưu raw file lớn, warehouse Iceberg, Spark checkpoint, intermediate/cache output và hỗ trợ distributed read/write cho Spark.
+
+\subsubsection{Iceberg}\label{iceberg}
+
+Iceberg là historical source of truth của hệ thống. Dữ liệu Bronze, Silver, Gold, historical features, audit/history tables và model registry metadata được quản lý dưới dạng Iceberg tables trên HDFS. Model artifact và visualization cache nằm trong HDFS/Object Storage; online feature state và latest forecast nằm trong Cassandra.
+
+\begin{longtable}[]{@{}ll@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\textcolor{white}{\textbf{Tính năng Iceberg}} & \textcolor{white}{\textbf{Ứng dụng trong AIS}} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+ACID commit & Ghi table an toàn từ Spark batch/streaming \\
+Snapshot/time travel & Debug, rollback, lineage \\
+MERGE INTO & Idempotent upsert/deduplication \\
+Partition pruning & Tối ưu đọc theo ngày, nguồn, horizon \\
+Schema evolution & Thêm feature/field mới không phá pipeline \\
+Metadata tables & Theo dõi file, snapshot, history \\
+Compaction & Gom file nhỏ sau streaming \\
+\end{longtable}
+
+\subsubsection{Hybrid serving design}\label{cassandra-hybrid-serving-design}
+
+AIS sử dụng thiết kế hybrid rõ ràng:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{Iceberg} là source of truth.
+\item
+  \textbf{Cassandra} phục vụ truy vấn realtime/low-latency có pattern rõ ràng.
+\item
+  \textbf{JSON/GeoJSON cache trên HDFS/object storage} phục vụ layer visualization nặng như heatmap, trajectory và source attribution map.
+\end{itemize}
+
+Cassandra không thay thế Iceberg và không lưu mọi thứ. Nó chỉ lưu các read model cần API truy vấn nhanh.
+
+Nhóm bảng serving:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Bảng}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Query pattern}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Partition key}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Clustering key}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{pm25_latest_by_location} & Lấy PM2.5/latest forecast mới nhất & \code{location_id} & \code{event_time DESC} \\
+\code{pm25_timeseries_by_location} & Time series ngắn theo location/time range & \code{location_id}, \code{date_bucket} & \code{event_time ASC} \\
+\code{pm25_forecast_by_location} & Forecast theo location/horizon/date & \code{location_id}, \code{forecast_date} & \code{horizon}, \code{target_time} \\
+\code{station_observations_latest} & Quan trắc mới nhất theo trạm & \code{station_id} & \code{event_time DESC} \\
+\code{weather_hourly_by_location_day} & Weather hourly theo ngày & \code{location_id}, \code{date} & \code{hour ASC} \\
+\code{openaq_by_location_parameter_day} & OpenAQ theo station/parameter/day & \code{location_id}, \code{parameter}, \code{date} & \code{hour ASC} \\
+\end{longtable}
+
+Các sản phẩm nặng hơn được phục vụ bằng cache:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Sản phẩm}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Storage serving}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Lý do}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+PM2.5 heatmap GeoJSON & Cache JSON/GeoJSON & Payload lớn, ít cần query row-level \\
+Backward trajectory paths & Cache GeoJSON & Dữ liệu đường/geometry, phù hợp file cache \\
+Source attribution panel & Cache JSON + Cassandra latest metadata & Vừa cần map layer vừa cần summary nhanh \\
+Visualization manifest & Cache JSON & API kiểm tra freshness/layer availability \\
+\end{longtable}
+
+\subsubsection{API serving design}\label{api-serving-design}
+
+FastAPI services đọc từ Cassandra và cache đã materialize. API không tạo Spark session, không chạy ML inference trực tiếp tại request time và không gọi HYSPLIT online. Thiết kế này giúp request latency ổn định và tách serving khỏi compute workload.
+
+AIS chuẩn hóa endpoint theo dạng \texttt{/api/v1/...}, dùng \texttt{/health} và \texttt{/ready}.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4200}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1200}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4200}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Endpoint}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Method}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Chức năng}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\code{/health} & GET & Liveness check, kiểm tra process API \\
+\code{/ready} & GET & Readiness check, kiểm tra Cassandra/cache/freshness \\
+\code{/metrics} & GET & Metrics phục vụ monitoring \\
+\code{/api/v1/hanoi/pm25/latest} & GET & PM2.5 mới nhất và metadata freshness \\
+\code{/api/v1/hanoi/pm25/forecast/latest} & GET & Forecast 6h/12h/24h mới nhất \\
+\code{/api/v1/hanoi/pm25/timeseries} & GET & Time series quan trắc và forecast \\
+\code{/api/v1/visualization/manifest/latest} & GET & Manifest cache và trạng thái layer \\
+\code{/api/v1/visualization/trajectories/backward/latest} & GET & GeoJSON backward trajectories \\
+\code{/api/v1/visualization/source-attribution/latest} & GET & Summary source attribution \\
+\code{/api/v1/visualization/stations/latest} & GET & Station observation GeoJSON/latest \\
+\end{longtable}
+
+API được thiết kế theo query rõ ràng cho location/time/horizon, validate đầy đủ query parameter và trả response JSON kèm metadata như \texttt{generated\_at}, \texttt{feature\_version}, \texttt{model\_version}, \texttt{freshness}. Các endpoint dùng cache header cho dữ liệu ít thay đổi, timeout/error handling thống nhất, và \texttt{/ready} trả lỗi khi cache quá stale hoặc dependency chính chưa sẵn sàng.
+
+\subsubsection{Dashboard UI}\label{dashboard-ui}
+
+Dashboard React/Vite hiển thị realtime KPI cards cho PM2.5 hiện tại, forecast cards 6h/12h/24h, time series observed/forecast, PM2.5 heatmap layer, station observation markers, backward trajectory overlay, source attribution panel, data freshness indicator và trạng thái API/pipeline. UI kết nối API qua biến môi trường runtime, phù hợp cả Docker Compose và Kubernetes.
+
+\subsection{Airflow, Docker và Kubernetes}\label{airflow-docker-vuxe0-kubernetes}
+
+\subsubsection{Vai trò Airflow}\label{vai-truxf2-airflow}
+
+Airflow điều phối ingestion, batch, ML, serving và monitoring. Hệ thống giữ \textbf{8 DAG}.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.5000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.5000}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{DAG}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{ais\_pipeline\_dag.py} & Pipeline tổng thể/bootstrap/backfill \\
+\texttt{ais\_era5\_ingestion\_dag.py} & Ingest ERA5 surface/pressure định kỳ \\
+\texttt{ais\_hanoi\_silver\_gold\_dag.py} & Tạo Silver/Gold cho Hà Nội \\
+\texttt{ais\_pm25\_k8s\_compute\_dag.py} & Chạy compute/ML trên Kubernetes \\
+\texttt{ais\_streaming\_supervision\_dag.py} & Giám sát streaming jobs, lag, restart condition \\
+\texttt{ais\_visualization\_product\_dag.py} & Tạo visualization Gold và export cache \\
+\texttt{ais\_trajectory\_tier2\_dag.py} & ERA5$\rightarrow$ARL$\rightarrow$HYSPLIT$\rightarrow$trajectory features \\
+\texttt{ais\_maintenance\_dag.py} & Maintenance Iceberg, cleanup, compaction, reconciliation \\
+\end{longtable}
+
+Airflow quản lý dependency theo thứ tự từ kiểm tra infrastructure, đảm bảo Kafka topics, HDFS layout, Iceberg tables và Cassandra schema, sau đó ingest dữ liệu, giám sát streaming, chạy Silver/Gold jobs và refresh context khi có ERA5 pressure, HYSPLIT hoặc satellite mới. 
+
+Ở nhánh batch, DAG tạo training dataset, lưu model artifact và cập nhật production pointer; ở nhánh near-realtime, DAG giám sát audit path, Online Feature Builder, Prediction Job, Cassandra latest state, serving/API và metrics/alert.
+
+DAG cấu hình retry theo từng task, timeout, SLA/freshness check, cảnh báo khi task fail, backfill theo khoảng thời gian và idempotent rerun theo partition. Các task ghi output đều có khóa nghiệp vụ và MERGE/UPSERT nên Airflow retry không tạo duplicate.
+
+\subsubsection{Docker Compose local development}\label{docker-compose-local-development}
+
+\texttt{docker-compose.yml} cung cấp môi trường local full-stack để nhóm phát triển.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Service}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Công nghệ}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{namenode} & Hadoop HDFS & HDFS NameNode và WebHDFS UI \\
+\texttt{datanode} & Hadoop HDFS & HDFS DataNode \\
+\texttt{kafka} & Apache Kafka & Broker message queue \\
+\texttt{zookeeper} & Kafka & Quản lý cluster metadata \\
+\texttt{spark-master} & Apache Spark & Spark standalone master/UI cho local \\
+\texttt{spark-worker} & Apache Spark & Spark worker/executor local \\
+\texttt{cassandra} & Apache Cassandra & Serving database local \\
+\texttt{airflow-webserver} & Apache Airflow & Airflow UI \\
+\texttt{airflow-scheduler} & Apache Airflow & DAG scheduler \\
+\texttt{pm25-api} & FastAPI/Uvicorn & PM2.5 API \\
+\texttt{visualization-api} & FastAPI/Uvicorn & Visualization API \\
+\texttt{ais-ui} & React/Vite/Nginx & Dashboard \\
+\texttt{monitoring} & Streamlit/custom app & Pipeline monitoring UI \\
+\end{longtable}
+
+\subsubsection{Kubernetes deployment}\label{kubernetes-production-like-deployment}
+
+Kubernetes manifests trong \texttt{deploy/k8s/} triển khai:
+
+\begin{longtable}[]{@{}ll@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\textcolor{white}{\textbf{Thành phần}} & \textcolor{white}{\textbf{File/folder}} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Namespace & \texttt{deploy/k8s/namespace.yaml} \\
+ConfigMap & \texttt{deploy/k8s/configmap.yaml} \\
+Secret & \texttt{deploy/k8s/secret.example.yaml} và secret runtime \\
+ServiceAccount/RBAC & \texttt{deploy/k8s/serviceaccount.yaml}, \texttt{rbac.yaml} \\
+Spark submit & \texttt{deploy/k8s/spark/} \\
+PM2.5 API & \texttt{deploy/k8s/api/} \\
+UI & \texttt{deploy/k8s/ui/} \\
+ML jobs & \texttt{deploy/k8s/ml/} \\
+Checks & \texttt{deploy/k8s/checks/} \\
+Kustomize & \texttt{deploy/k8s/kustomization.yaml} \\
+\end{longtable}
+
+Kubernetes được dùng để tách cấu hình vận hành khỏi code. Các service chạy trong namespace riêng, endpoint nội bộ được truy cập qua Kubernetes Service DNS, còn cấu hình môi trường như Kafka bootstrap servers, Iceberg warehouse, HDFS endpoint, Cassandra contact points và API base URL được inject qua ConfigMap. Secret tách riêng các giá trị nhạy cảm như database password, token và API key để container image không chứa credential.
+
+Các workload được chia theo bản chất chạy: API/UI là Deployment có Service, readiness/liveness probe và rolling update; Spark/Silver/Gold/backfill/predict là Job hoặc task do Airflow submit; tác vụ định kỳ như maintenance, predict hoặc health check có thể chạy bằng CronJob. Resource request/limit được đặt theo profile của từng workload: API/UI cần CPU/RAM ổn định nhưng nhỏ, Spark driver cần đủ memory cho plan và metadata, executor cần memory/cores theo kích thước job, còn các check job dùng cấu hình nhẹ để không tranh tài nguyên với pipeline chính.
+
+RBAC giới hạn quyền của service account theo namespace. Spark driver chỉ cần quyền tạo/xóa executor pod, đọc ConfigMap/Secret cần thiết và ghi log; API/UI không có quyền thao tác pod. Điều này giúp giảm rủi ro khi một container lỗi hoặc bị cấu hình sai.
+
+\subsubsection{Spark-on-Kubernetes}\label{spark-on-kubernetes}
+
+Spark jobs được submit lên Kubernetes. Cấu hình gồm:
+
+\begin{itemize}
+\tightlist
+\item
+  Driver pod.
+\item
+  Executor pods.
+\item
+  ServiceAccount/RBAC.
+\item
+  ConfigMap environment.
+\item
+  Resource request/limit.
+\item
+  Image pull policy.
+\item
+  Volume mount cho config.
+\item
+  HDFS/Iceberg/Kafka/Cassandra connection config.
+\item
+  Dynamic executor instances cho job lớn.
+\end{itemize}
+
+Khi chạy trên Kubernetes, mỗi Spark application có driver pod riêng và executor pods được tạo động theo cấu hình job. Driver nhận cấu hình qua ConfigMap/Secret, mount file cấu hình cần thiết, ghi log ra stdout để Kubernetes/Airflow thu thập, đồng thời kết nối tới Kafka, HDFS/Iceberg và Cassandra bằng service DNS hoặc endpoint được inject từ môi trường. Các tham số được đặt trong template submit để cùng một code có thể chạy ở local, staging hoặc cụm production-like.
+
+Với các job lớn, nhóm ưu tiên submit theo cụm job liên quan thay vì tách quá nhỏ từng Spark application. Cách này giảm overhead tạo driver/executor nhiều lần, tận dụng lại Spark session/config/dependency và cho phép một số bước độc lập trong cùng application chạy song song khi không phụ thuộc dữ liệu lẫn nhau.
+
+\newpage
+\section{Vận hành và kiểm thử}\label{vux1eadn-huxe0nh-vuxe0-kiux1ec3m-thux1eed}
+
+\subsection{Monitoring}\label{monitoring}
+
+\subsubsection{Monitoring scope}\label{monitoring-scope}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.2}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.8}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nhóm metric}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Ví dụ}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Kafka & Lag theo topic/consumer group, throughput, error rate \\
+Spark & Batch duration, input rows, processed rows/sec, state size, checkpoint health \\
+Iceberg & Số file nhỏ, snapshot count, commit duration, table freshness \\
+HDFS & Dung lượng, replication, path availability \\
+Cassandra & Read/write latency, timeout, unavailable exception, table count \\
+API & Request latency, status code, error rate, dependency health \\
+ML & Prediction freshness, model version, feature drift, error after ground truth \\
+Data quality & Null ratio, invalid count, duplicate count, late event count \\
+\end{longtable}
+
+\subsubsection{Logging}\label{logging}
+
+Mỗi job ghi structured logs gồm \code{job_name}, \code{job_run_id}, \code{input_window}, \code{output_window}, \code{input_count}, \code{output_count}, \code{invalid_count}, \code{duplicate_count}, \code{duration}, \code{status}, \code{error_message}. Log giúp truy vết từ Airflow task đến Spark job và Iceberg snapshot.
+
+\subsubsection{Alerting}\label{alerting}
+
+Alert được sinh khi Kafka lag vượt ngưỡng, Spark streaming batch duration vượt trigger interval, checkpoint lỗi hoặc không cập nhật, Iceberg table quá stale, API \texttt{/ready} trả lỗi, Cassandra timeout tăng, data quality vượt threshold hoặc model inference không có output mới.
+
+\subsection{Testing và data quality}\label{testing-vuxe0-data-quality}
+
+\subsubsection{Testing strategy}\label{testing-strategy}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.5}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Test type}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Scope}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Implementation}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Unit tests & Schema parsing, timezone normalization, unit conversion, QA bitmask logic & \texttt{pytest} cho function trong \texttt{ingest/} và \texttt{spark\_jobs/} \\
+Data quality tests & Range checks, coverage thresholds, freshness, null ratio, duplicate detection & Validation trong Silver/Gold jobs và \texttt{quality\_checks.py} \\
+Spark transform tests & Input DataFrame nhỏ $\rightarrow$ output kỳ vọng & Local Spark session hoặc test container \\
+Streaming integration tests & Kafka publish $\rightarrow$ Spark streaming $\rightarrow$ Iceberg Bronze & Docker Compose test environment \\
+Incremental parity tests & Full refresh output == incremental output & So sánh snapshot/output theo date window \\
+Point-in-time tests & Không feature nào có \texttt{available\_at\ \textgreater{}\ prediction\_origin} & Assertion trong training/serving feature job \\
+Model regression tests & Candidate model vượt baseline và không tệ hơn threshold & Promotion step kiểm tra metric \\
+API tests & Health, ready, schema, freshness, error cases & \texttt{pytest} + HTTP client \\
+Deployment & Docker Compose up, topic tồn tại, HDFS layout, Iceberg namespace & \texttt{scripts/check\_*.sh}, \texttt{scripts/check\_*.py} \\
+\end{longtable}
+
+\subsubsection{Data quality rules}\label{data-quality-rules}
+
+Data quality checks được chia theo nguồn:
+
+\begin{itemize}
+\tightlist
+\item
+  OpenAQ: PM2.5 range, unit, station\_id, duplicate, coverage.
+\item
+  Weather: null rate, wind range, temperature range, precipitation non-negative.
+\item
+  ERA5: file availability, variable list, checksum, spatial bounds.
+\item
+  Sentinel-5P: QA flag, valid pixel percentage, cloud/coverage.
+\item
+  MAIAC: QA bitmask, AOD range, tile coverage.
+\item
+  Feature Gold: missing feature ratio, schema hash, target availability, leakage check.
+\item
+  Forecast: horizon completeness, model version, prediction range, freshness.
+\end{itemize}
+
+\subsection{Security và governance}\label{security-vuxe0-governance}
+
+\subsubsection{Secret management}\label{secret-management}
+
+Credential, API key, database password và token không được hard-code trong source code. Hệ thống dùng \texttt{.env.example} cho local template, Docker Compose env file cho dev, Kubernetes Secret cho runtime và biến môi trường để inject config vào container.
+
+\subsubsection{Access control}\label{access-control}
+
+\begin{longtable}[]{@{}ll@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\textcolor{white}{\textbf{Thành phần}} & \textcolor{white}{\textbf{Cơ chế}} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+API & Token/API key hoặc gateway auth nếu public \\
+Cassandra & Username/password, role theo keyspace \\
+Kafka & Có thể bật SASL/SSL trong production \\
+HDFS/Iceberg & Phân quyền theo user/service account trong cluster \\
+Kubernetes & RBAC theo namespace/service account \\
+Airflow & User/role, connection secret, DAG permission \\
+\end{longtable}
+
+\subsubsection{Data governance}\label{data-governance}
+
+AIS ghi metadata phục vụ lineage và audit như \texttt{dataset\_version}, \texttt{feature\_version}, \texttt{schema\_hash}, \texttt{model\_version}, \texttt{job\_run\_id}, \texttt{source}, \texttt{event\_id}, \texttt{input\_snapshot\_id} và \texttt{output\_snapshot\_id}. Nhờ đó một forecast có thể truy vết về model, feature set, dataset version và snapshot dữ liệu đầu vào.
+
+\subsection{Tối ưu hiệu năng}\label{tux1ed1i-ux1b0u-hiux1ec7u-nux103ng}
+
+\subsubsection{Spark config}\label{spark-config}
+
+AIS bật Adaptive Query Execution, điều chỉnh shuffle partition theo workload, dùng broadcast join cho dimension nhỏ và tận dụng Parquet vectorized reader, predicate pushdown, column pruning, dynamic partition pruning. Executor memory/cores được đặt theo từng job profile; streaming job dùng \code{maxOffsetsPerTrigger} để giới hạn tốc độ đọc Kafka.
+
+\subsubsection{Tối ưu dữ liệu và join}\label{tux1ed1i-ux1b0u-dux1eef-liux1ec7u-vuxe0-join}
+
+AIS partition bảng Iceberg theo ngày/nguồn/horizon, pre-aggregate PM2.5 theo giờ trước khi join, broadcast station/grid metadata và repartition theo key lớn khi cần. Feature lag/lead dùng window functions thay vì self-join; khi có skew có thể dùng salting key, còn small files sau streaming được xử lý bằng Iceberg compaction định kỳ.
+
+\subsubsection{Tối ưu streaming}\label{tux1ed1i-ux1b0u-streaming}
+
+Streaming job dùng watermark để giới hạn state size, deduplicate theo key phù hợp, checkpoint riêng cho từng job và DLQ cho record lỗi. Hệ thống theo dõi batch duration so với trigger interval; Iceberg compaction được chạy off-peak để giảm small files mà không ảnh hưởng luồng streaming chính.
+
+\subsubsection{Cache và persistence trong Spark}\label{cache-vuxe0-persistence-trong-spark}
+
+Cache/persistence được dùng có chọn lọc, không cache toàn bộ pipeline. Nguyên tắc của AIS là chỉ persist DataFrame khi cùng một kết quả trung gian được tái sử dụng nhiều lần trong cùng job và chi phí tính lại lớn hơn chi phí giữ trong bộ nhớ/đĩa.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{DataFrame có thể cache/persist}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Khi nào dùng}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Khi nào không dùng}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+OpenAQ sau cleaning & Được dùng nhiều lần để tính lag, rolling statistics, coverage và spatial gradient & Không cache nếu chỉ ghi một lần sang Silver \\
+Master feature intermediate & Được reuse cho training dataset, serving feature và visualization aggregate trong cùng batch run & Không cache nếu job tách riêng và đọc lại từ Iceberg đã partition tốt \\
+Station/grid metadata & Có thể broadcast/cache vì nhỏ và được join lặp lại & Không cần persist nếu Spark tự broadcast hiệu quả \\
+Trajectory waypoint sau parse & Dùng khi vừa cluster, vừa sample satellite, vừa aggregate residence signal & Không cache nếu chỉ chạy một bước parse $\rightarrow$ write \\
+\end{longtable}
+
+Với dữ liệu vừa phải, AIS ưu tiên \texttt{MEMORY\_AND\_DISK} thay vì chỉ \texttt{MEMORY\_ONLY} để tránh executor bị thiếu RAM. Sau khi hoàn thành các action cần thiết, job gọi \texttt{unpersist()} để giải phóng bộ nhớ, tránh ảnh hưởng các stage sau.
+
+\newpage
+\section{Kết quả}\label{kux1ebft-quux1ea3}
+
+\subsection{Kết quả triển khai}\label{kux1ebft-quux1ea3-triux1ec3n-khai}
+
+\subsubsection{Kết quả chức năng}\label{kux1ebft-quux1ea3-chux1ee9c-nux103ng}
+
+Hệ thống đã hoàn thiện luồng xử lý chính từ ingestion đến dashboard:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.4}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.6}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Mục tiêu}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Kết quả}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Multi-source ingestion & Hoàn thành adapters cho OpenAQ, WeatherAPI, ERA5, Sentinel-5P, MAIAC \\
+Kafka-based ingestion & Hoàn thành topics và producer/consumer contract \\
+Spark Structured Streaming & Hoàn thành 5 streaming jobs với checkpoint, watermark, dedup, MERGE \\
+Bronze/Silver/Gold lakehouse & Hoàn thành phân tầng Iceberg trên HDFS \\
+Hanoi feature engineering & Hoàn thành master feature table và serving feature table \\
+Trajectory/source attribution & Hoàn thành pipeline ERA5$\rightarrow$ARL$\rightarrow$HYSPLIT$\rightarrow$trajectory features \\
+ML forecast & Hoàn thành train/promote/predict cho 6h/12h/24h \\
+Serving/API & Hoàn thành API versioned, Cassandra serving và cache visualization \\
+Dashboard & Hoàn thành realtime, historical và map dashboard \\
+Orchestration & Hoàn thành 8 Airflow DAG \\
+Deployment & Hoàn thành Docker Compose và Kubernetes manifests production-like \\
+Observability/testing/security & Hoàn thành các cơ chế cốt lõi trong phạm vi project \\
+\end{longtable}
+
+\subsubsection{Kết quả thực nghiệm ở mức project}\label{kux1ebft-quux1ea3-thux1ef1c-nghiux1ec7m-ux1edf-mux1ee9c-project}
+
+Trong môi trường triển khai rút gọn, hệ thống chứng minh được các năng lực quan trọng:
+
+\begin{itemize}
+\tightlist
+\item
+  Ingestion adapters có thể publish event theo schema contract vào Kafka.
+\item
+  Spark streaming đọc Kafka, xử lý late/duplicate event và ghi Bronze idempotent.
+\item
+  Silver/Gold jobs tạo được bảng feature phục vụ ML và visualization.
+\item
+  Model lifecycle tách training, promotion và inference.
+\item
+  API đọc dữ liệu đã materialize thay vì chạy Spark/ML tại request time.
+\item
+  Dashboard hiển thị được PM2.5, forecast, heatmap, trajectory và freshness.
+\item
+  Airflow điều phối dependency và hỗ trợ retry/backfill.
+\item
+  Monitoring kiểm tra được lag, freshness, job state, API readiness và data quality.
+\end{itemize}
+
+\subsubsection{Điểm mạnh}\label{ux111iux1ec3m-mux1ea1nh}
+
+\begin{itemize}
+\tightlist
+\item
+  Kiến trúc lakehouse rõ ràng, tách source of truth khỏi serving layer.
+\item
+  Kiến trúc Lambda được hiệu chỉnh với historical batch và hai near-realtime path chạy đồng thời, phù hợp với dữ liệu khí quyển nhiều tốc độ.
+\item
+  Feature engineering dựa trên nền tảng khí tượng, không chỉ thống kê đơn giản.
+\item
+  Point-in-time correctness giúp tránh leakage trong ML.
+\item
+  Serving materialized giúp API nhanh và ổn định.
+\item
+  Idempotency cho phép rerun/backfill an toàn.
+\item
+  HYSPLIT giúp tăng khả năng giải thích hướng vận chuyển ô nhiễm.
+\end{itemize}
+
+\subsubsection{Điểm cần cải thiện chính}\label{giux1edbi-hux1ea1n-trong-phux1ea1m-vi-muxf4n-hux1ecdc}
+
+\begin{itemize}
+\tightlist
+\item
+  Cấu hình triển khai hiện tại dùng 1 Kafka broker và 1 Cassandra node để phù hợp phần cứng.
+\item
+  Một số kiểm thử tải lớn và chaos testing cần cluster/cloud thật.
+\item
+  ERA5/Sentinel/MAIAC có độ trễ nguồn tự nhiên, nên near-real-time inference phải dùng proxy feature.
+\end{itemize}
+
+\subsection{Công nghệ sử dụng}\label{cuxf4ng-nghux1ec7-sux1eed-dux1ee5ng}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.35}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Công nghệ}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Nhiệm vụ}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{File/module liên quan}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Apache Spark / PySpark & Batch processing & \code{spark_jobs/*_silver.py}, \code{spark_jobs/*_gold.py} & Làm sạch, transform, join, aggregate \\
+Spark Structured Streaming & Streaming processing & \code{spark_jobs/*_streaming.py} & Đọc Kafka và ghi Bronze idempotent \\
+Apache Kafka & Message queue & \code{ingest/kafka_utils.py}, \code{scripts/create_topics.sh} & Buffer/replay event streaming \\
+HDFS & Distributed storage & \code{hadoop/}, \code{scripts/init_hdfs_layout.sh} & Raw zone, checkpoint, warehouse \\
+Apache Iceberg & Lakehouse table & \code{ensure_iceberg_tables.py}, Spark jobs & Bronze/silver/gold tables \\
+Cassandra & Serving database & \code{scripts/ensure_cassandra_online_schema.sh}, \code{pm25_serving_features_to_cassandra.py} & Query nhanh cho API \\
+LightGBM & ML & \code{ml/*.py} & Dự báo PM2.5 \\
+FastAPI & API & \code{serving/pm25_api/main.py}, visualization API & REST endpoint \\
+React/Vite & UI & \code{ui/} & Dashboard \\
+Airflow & Orchestration & \code{airflow/dags/*.py} & Lập lịch, dependency, retry \\
+Docker & Containerization & \code{Dockerfile}, \code{docker-compose.yml} & Local/runtime packaging \\
+Kubernetes & Orchestration platform & \code{deploy/k8s/} & Production-like deployment \\
+\end{longtable}
+
+\newpage
+\section{Bài học kinh nghiệm}\label{bai-hoc-kinh-nghiem}
+
+\subsubsection{Bài học 1: Dữ liệu đến muộn cần được tách luồng xử lý}\label{bai-hoc-1-du-lieu-den-muon-can-duoc-tach-luong}
+
+\paragraph{Vấn đề}\label{van-de-du-lieu-den-muon}
+
+Dữ liệu khí quyển từ nhiều nguồn không đến cùng thời điểm. Một số nguồn gần thời gian thực như OpenAQ và WeatherAPI có thể ingest nhanh, trong khi ERA5, Sentinel-5P, MAIAC hoặc kết quả trajectory thường có độ trễ lớn hơn. Nếu đưa tất cả vào một luồng xử lý duy nhất, pipeline dễ bị chờ dữ liệu, sai freshness hoặc làm chậm serving.
+
+\paragraph{Giải pháp}\label{giai-phap-tach-luong-du-lieu-den-muon}
+
+Nhóm tách luồng dữ liệu theo độ trễ và mục đích sử dụng: dữ liệu realtime/gần realtime đi qua Kafka và Spark Streaming để cập nhật Bronze nhanh; dữ liệu chậm hơn được xử lý bằng batch/backfill và cập nhật Silver/Gold khi đủ điều kiện. Các trường thời gian như \code{event_time}, \code{ingest_time}, \code{available_at} được dùng để đảm bảo point-in-time correctness.
+
+\paragraph{Điểm rút ra}\label{diem-rut-ra-du-lieu-den-muon}
+
+Với Big Data pipeline, không nên ép mọi nguồn vào cùng một tốc độ xử lý. Dữ liệu đến muộn cần có luồng riêng, cơ chế backfill và logic cập nhật rõ ràng.
+
+\subsubsection{Bài học 2: Lỗi runtime cần data lineage để truy vết}\label{bai-hoc-2-loi-runtime-can-data-lineage-de-truy-vet}
+
+\paragraph{Vấn đề}\label{van-de-loi-runtime-lineage}
+
+Khi hệ thống chạy nhiều job liên tiếp, lỗi runtime có thể xuất hiện ở ingestion, Spark, Iceberg, Cassandra hoặc API. Nếu chỉ nhìn log lỗi tại job cuối, nhóm khó biết dữ liệu đầu vào đến từ nguồn nào, được xử lý bởi job nào, dùng schema/version nào và lỗi bắt đầu từ bước nào.
+
+\paragraph{Giải pháp}\label{giai-phap-data-lineage-runtime}
+
+Nhóm bổ sung data lineage vào pipeline thông qua các metadata như \code{source}, \code{event_id}, \code{job_run_id}, \code{dataset_version}, \code{schema_hash}, \code{input_snapshot_id} và \code{output_snapshot_id}. Mỗi job log input/output count, thời gian xử lý và trạng thái ghi dữ liệu để có thể truy vết từ API/Gold ngược về Silver, Bronze và nguồn dữ liệu ban đầu.
+
+\paragraph{Điểm rút ra}\label{diem-rut-ra-data-lineage-runtime}
+
+Trong hệ thống dữ liệu lớn, lineage không chỉ phục vụ audit mà còn là công cụ debug chính khi lỗi runtime xảy ra liên tục.
+
+\subsubsection{Bài học 3: Deploy trên Docker Compose trước K8s là một con dao hai lưỡi}\label{bai-hoc-3-docker-compose-truoc-kubernetes}
+
+\paragraph{Vấn đề}\label{van-de-docker-compose-kubernetes}
+
+Docker Compose giúp dựng nhanh toàn bộ hệ thống trên máy cá nhân, thuận tiện để kiểm tra luồng dữ liệu end-to-end và phân biệt lỗi code với lỗi tích hợp. Tuy nhiên, sự đơn giản này cũng dễ tạo cảm giác rằng hệ thống đã sẵn sàng để triển khai. Khi chuyển sang Kubernetes, nhóm phải xử lý thêm service discovery, ConfigMap/Secret, resource request/limit, volume, readiness/liveness probe, network policy và vòng đời riêng của từng workload. Một cấu hình chạy ổn định trên Docker Compose vì vậy chưa chắc hoạt động đúng hoặc mở rộng tốt trên Kubernetes.
+
+\paragraph{Giải pháp}\label{giai-phap-docker-compose-kubernetes}
+
+Nhóm vẫn sử dụng Docker Compose để phát triển nhanh, xác nhận dependency và kiểm thử tích hợp ban đầu, nhưng đồng thời thiết kế ứng dụng theo hướng không phụ thuộc môi trường local. Cấu hình được tách khỏi code, dữ liệu bền vững không phụ thuộc container, các service có health check rõ ràng và tài nguyên được khai báo riêng.
+
+\paragraph{Điểm rút ra}\label{diem-rut-ra-docker-compose-kubernetes}
+
+Docker Compose là con dao hai lưỡi: nó rút ngắn đáng kể thời gian phát triển và debug, nhưng có thể che giấu các vấn đề chỉ xuất hiện trong môi trường phân tán. Vì vậy, Docker Compose nên được dùng để kiểm chứng chức năng, còn các yêu cầu về triển khai, khả năng phục hồi và mở rộng cần được kiểm tra trên Kubernetes từ sớm.
+
+\subsubsection{Bài học 4: Truy vấn lake chậm cần tối ưu tổ chức Iceberg table}\label{bai-hoc-4-truy-van-lake-cham-can-toi-uu-iceberg-table}
+
+\paragraph{Vấn đề}\label{van-de-truy-van-lake-cham}
+
+Khi dữ liệu trong lake tăng lên, truy vấn trực tiếp trên Iceberg có thể chậm nếu bảng tổ chức chưa tốt: partition chưa phù hợp, nhiều small files, đọc thừa cột, hoặc truy vấn không tận dụng được pruning. Điều này ảnh hưởng đến batch job downstream và các bước export dữ liệu serving.
+
+\paragraph{Giải pháp}\label{giai-phap-toi-uu-iceberg-table}
+
+Nhóm tối ưu cách tổ chức Iceberg table theo đặc điểm truy vấn: partition theo ngày/nguồn/horizon, dùng schema rõ ràng cho Bronze/Silver/Gold, hạn chế đọc thừa cột, và chạy maintenance/compaction để giảm small files. Các bảng phục vụ API được materialize sang Cassandra/cache thay vì truy vấn lake trực tiếp tại request time.
+
+\paragraph{Điểm rút ra}\label{diem-rut-ra-toi-uu-iceberg-table}
+
+Lakehouse không chỉ là nơi lưu dữ liệu. Hiệu năng phụ thuộc lớn vào cách thiết kế partition, file layout, schema và chiến lược materialize dữ liệu.
+
+\subsubsection{Bài học 5: Không nên tách quá nhỏ Spark app khi có nhiều job liên quan}\label{bai-hoc-5-khong-nen-tach-qua-nho-spark-app}
+
+\paragraph{Vấn đề}\label{van-de-nhieu-spark-app}
+
+Ban đầu mỗi Spark job được triển khai như một Spark application riêng. Cách này dễ quản lý từng job nhưng làm tăng overhead khởi tạo Spark session, submit job, load dependency và đọc lại dữ liệu trung gian. Khi nhiều job nhỏ chạy nối tiếp, tổng thời gian pipeline bị kéo dài.
+
+\paragraph{Giải pháp}\label{giai-phap-gom-spark-job}
+
+Nhóm gom các Spark job có cùng ngữ cảnh xử lý vào cùng một Spark application để chạy theo cụm và tận dụng lại Spark session, config, dependency và dữ liệu trung gian. Một số bước độc lập trong cùng app có thể chạy song song khi không phụ thuộc dữ liệu lẫn nhau, giúp giảm overhead và cải thiện thời gian pipeline.
+
+\paragraph{Điểm rút ra}\label{diem-rut-ra-gom-spark-job}
+
+Thiết kế Spark application cần cân bằng giữa modularity và overhead vận hành. Với nhiều job nhỏ liên quan chặt chẽ, gom cụm và chạy song song hợp lý sẽ hiệu quả hơn tách thành quá nhiều app riêng.
+\newpage
+\section{Phân công công việc}\label{phuxe2n-cuxf4ng-cuxf4ng-viux1ec7c}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.1500}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.1100}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.1200}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.6200}}@{}}
+\arrayrulecolor{HUSTBlue}\toprule\noalign{}
+\rowcolor{HUSTBlue}
+\begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Thành viên}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+\textcolor{white}{\textbf{MSSV}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Vai trò}}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textcolor{white}{\textbf{Chi tiết công việc}}
+\end{minipage} \\
+\arrayrulecolor{HUSTBlue}\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Lê Minh Hoàng & 20230028 & Trưởng nhóm & Điều phối nhóm, phân chia task và theo dõi tiến độ \\
+& & & Xây dựng Airflow DAG, dependency, retry/backfill; merge code, debug và kiểm tra end-to-end \\
+& & & Triển khai Spark-on-Kubernetes, PM2.5 API, hỗ trợ visualization và demo \\
+\midrule
+Nguyễn Ngọc Ánh & 20235013 & Thành viên & Join Silver để tạo Gold layer cho training/serving \\
+& & & Xây dựng master features, training dataset và online features cho PM2.5. Chạy HYSPLIT, parse output và clustering trajectory \\
+& & & Xây dựng Kubernetes base manifests; hỗ trợ báo cáo và slide \\
+\midrule
+Nguyễn Minh Tùng & 20235239 & Thành viên & Tạo cấu hình pipeline, Iceberg schema và bootstrap table \\
+& & & Xây dựng pipeline ERA5 từ ingestion đến Bronze/Silver \\
+& & & Triển khai Spark-on-Kubernetes runtime, serving feature job, model registry và API deployment \\
+& & & Hỗ trợ visualization/dashboard, báo cáo và slide \\
+\midrule
+Nguyễn Ngọc Ánh & 20235012 & Thành viên & Xây dựng Silver layer cho WeatherAPI và MAIAC \\
+& & & Tính OpenAQ spatial gradient, Sentinel-5P grid; migration Spark jobs sang Kubernetes \\
+& & & Cập nhật schema/table serving, xây dựng station observations, backward trajectory và forward plume \\
+\midrule
+Phạm Hoàng Tiến & 20230071 & Thành viên & Xây dựng Silver layer cho OpenAQ và Sentinel-5P \\
+& & & Tạo Iceberg tables cho trajectory/HYSPLIT; ingest ERA5 pressure-level sang ARL \\
+& & & Thiết kế target data flow, Config/Iceberg schema và forecast dashboard \\
+\end{longtable}
+
+\newpage
+\section{Kết luận}\label{kux1ebft-luux1eadn}
+
+Dự án \textbf{Atmospheric Intelligence System -- AIS} đã xây dựng được một nền tảng dữ liệu lớn hoàn chỉnh và có khả năng vận hành cho bài toán giám sát, dự báo PM2.5 tại Hà Nội. Kiến trúc giải quyết đầy đủ năm đặc trưng 5V: lưu trữ lịch sử trên Iceberg và HDFS có khả năng mở rộng tới quy mô petabyte; tiếp nhận dữ liệu liên tục qua Kafka và Spark Structured Streaming; xử lý sáu định dạng gồm JSON, CSV, GeoJSON, NetCDF4, HDF5 và NOAA ARL; kiểm soát chất lượng qua nhiều tầng; đồng thời tạo ra giá trị thực tế thông qua giám sát gần thời gian thực, dự báo tại nhiều mốc, phân tích trajectory và dashboard sẵn sàng phục vụ vận hành.
+
+Sự kết hợp giữa Apache Kafka, Spark, Iceberg, Cassandra, Airflow, HYSPLIT và Kubernetes tạo nên một kiến trúc có thể mở rộng theo chiều ngang và bảo trì độc lập ở từng lớp. Việc tách rõ ingestion, lưu trữ lịch sử, feature engineering, huấn luyện mô hình, suy diễn và serving giúp giảm phụ thuộc chặt giữa các thành phần. Nhờ đó, vấn đề chất lượng dữ liệu từ nguồn hoặc sự cạnh tranh tài nguyên tính toán ít có khả năng làm gián đoạn toàn bộ hệ thống. Cấu hình demo hiện tại được rút gọn để phù hợp với phần cứng, nhưng thiết kế có thể mở rộng sang cụm nhiều nút khi có đủ tài nguyên.
+
+Không chỉ minh họa cách xây dựng một hệ thống Big Data hiện đại, AIS còn hướng đến một vấn đề sức khỏe cộng đồng thực tế. Các dự báo PM2.5 dễ tiếp cận, có độ chính xác được đánh giá rõ ràng, cùng phân tích hành lang vận chuyển tiềm năng có thể hỗ trợ người dân, cơ quan y tế và đơn vị quy hoạch đô thị đưa ra quyết định phù hợp trong các đợt ô nhiễm không khí. Kiến trúc của hệ thống cũng là nền tảng có thể tái sử dụng để mở rộng sang các đô thị khác tại Việt Nam, theo dõi thêm các chất ô nhiễm và phát triển những ứng dụng cảnh báo sớm.
+
+\newpage
+\section{Tài liệu tham khảo}\label{tuxe0i-liux1ec7u-tham-khux1ea3o}
+
+{[}1{]} Apache Software Foundation. \emph{Apache Kafka Documentation}. \url{https://kafka.apache.org/documentation/}, 2024.
+
+{[}2{]} Apache Software Foundation. \emph{Apache Spark Documentation}. \url{https://spark.apache.org/docs/latest/}, 2024.
+
+{[}3{]} Apache Iceberg Project. \emph{Apache Iceberg Documentation}. \url{https://iceberg.apache.org/docs/latest/}, 2024.
+
+{[}4{]} Apache Software Foundation. \emph{Apache Airflow Documentation}. \url{https://airflow.apache.org/docs/}, 2024.
+
+{[}5{]} OpenAQ Platform. \emph{OpenAQ API v3 Documentation}. \url{https://docs.openaq.org/}, 2024.
+
+{[}6{]} H. Hersbach et al.~``The ERA5 global reanalysis.'' \emph{Quarterly Journal of the Royal Meteorological Society}, 146(730):1999--2049, 2020.
+
+{[}7{]} NOAA Air Resources Laboratory. \emph{HYSPLIT User's Guide}. \url{https://www.ready.noaa.gov/hysplit.php}, 2024.
+
+{[}8{]} European Space Agency. \emph{Sentinel-5P Mission and TROPOMI Products}. \url{https://sentinel.esa.int/web/sentinel/missions/sentinel-5p}, 2024.
+
+{[}9{]} NASA LP DAAC. \emph{MCD19A2 MODIS/Terra+Aqua Land Aerosol Optical Depth Daily L2G Global 1km SIN Grid}. \url{https://doi.org/10.5067/MODIS/MCD19A2.006}, 2024.
+
+{[}10{]} G. Ke et al.~``LightGBM: A Highly Efficient Gradient Boosting Decision Tree.'' \emph{Advances in Neural Information Processing Systems 30 (NeurIPS)}, 2017.
+
+{[}11{]} World Health Organization. \emph{WHO Global Air Quality Guidelines: Particulate Matter (PM2.5 and PM10), Ozone, Nitrogen Dioxide, Sulfur Dioxide and Carbon Monoxide}. WHO, Geneva, 2021.
+
+
+\end{document}

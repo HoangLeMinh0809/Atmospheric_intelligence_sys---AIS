@@ -1,9 +1,65 @@
 import json
 import os
 import time
+import uuid
+from datetime import datetime, timezone
 
 from kafka import KafkaProducer
 from kafka.errors import NoBrokersAvailable
+
+
+CONTRACT_METADATA_FIELDS = {
+    "schema_version",
+    "available_at",
+    "quality_flags",
+    "trace",
+    "payload",
+}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _event_time(event: dict, ingest_time: str) -> str:
+    for field in (
+        "event_time",
+        "datetime_utc",
+        "content_start",
+        "time_start",
+        "start_time",
+        "window_end_utc",
+        "ingest_time",
+    ):
+        value = event.get(field)
+        if value not in (None, ""):
+            return str(value)
+    return ingest_time
+
+
+def apply_event_contract(event: dict) -> dict:
+    """Attach the shared AIS event envelope without changing flat source fields."""
+    enriched = dict(event)
+    ingest_time = str(enriched.get("ingest_time") or _utc_now_iso())
+    source = str(enriched.get("source") or "unknown")
+    producer = str(enriched.get("producer") or os.getenv("AIS_PRODUCER", source))
+    trace = dict(enriched.get("trace") or {})
+
+    enriched["ingest_time"] = ingest_time
+    enriched.setdefault("event_time", _event_time(enriched, ingest_time))
+    enriched.setdefault("available_at", ingest_time)
+    enriched.setdefault("schema_version", os.getenv("AIS_SCHEMA_VERSION", "v1"))
+    enriched.setdefault("quality_flags", [])
+    enriched["trace"] = {
+        "request_id": trace.get("request_id") or str(uuid.uuid4()),
+        "producer": trace.get("producer") or producer,
+        "retry_count": int(trace.get("retry_count") or 0),
+    }
+    enriched.setdefault(
+        "payload",
+        {key: value for key, value in event.items() if key not in CONTRACT_METADATA_FIELDS},
+    )
+    return enriched
 
 
 def create_kafka_producer(
@@ -48,14 +104,34 @@ def send_event(
 ) -> bool:
     """Send one event and return True when the producer accepted it."""
     try:
-        key = event.get(key_field) if key_field else None
-        future = producer.send(topic, key=key, value=event)
+        contracted_event = apply_event_contract(event)
+        key = contracted_event.get(key_field) if key_field else None
+        future = producer.send(topic, key=key, value=contracted_event)
         if wait_for_ack:
             future.get(timeout=ack_timeout_sec)
         return True
     except Exception as exc:
         event_id = event.get(key_field) if key_field else None
         logger.error(f"Failed to send message: {exc} | event_id={event_id}")
+        dlq_topic = os.getenv("KAFKA_DLQ_TOPIC", "ais-dlq").strip()
+        if dlq_topic and topic != dlq_topic:
+            try:
+                producer.send(
+                    dlq_topic,
+                    key=str(event_id) if event_id else None,
+                    value=apply_event_contract(
+                        {
+                            "event_id": str(event_id or uuid.uuid4()),
+                            "source": "kafka_producer_dlq",
+                            "failed_topic": topic,
+                            "failure_reason": str(exc),
+                            "failed_event": event,
+                            "quality_flags": ["producer_send_failed"],
+                        }
+                    ),
+                )
+            except Exception as dlq_exc:
+                logger.error(f"Failed to send DLQ message: {dlq_exc} | event_id={event_id}")
         return False
 
 

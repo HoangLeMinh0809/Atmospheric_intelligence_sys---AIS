@@ -38,8 +38,9 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from hanoi_config import get_table_names
+from hanoi_config import SPARK_SQL_SESSION_TIMEZONE, get_table_names
 from runtime_utils import apply_stream_trigger, parse_streaming_runtime
+from streaming_bronze_utils import add_contract_columns, contract_schema_fields, start_bronze_streams
 
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
@@ -70,7 +71,7 @@ ERA5_SCHEMA = StructType(
         StructField("surface_checksum", StringType(), True),
         StructField("source", StringType(), True),
         StructField("ingest_time", StringType(), True),
-    ]
+    ] + contract_schema_fields()
 )
 
 
@@ -137,6 +138,7 @@ def main() -> None:
     spark = (
         SparkSession.builder
         .appName("ERA5Files_Streaming")
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
@@ -159,47 +161,32 @@ def main() -> None:
 
     parsed_df = (
         kafka_df.selectExpr("CAST(key AS STRING) AS kafka_key", "CAST(value AS STRING) AS json_str")
-        .select(from_json(col("json_str"), ERA5_SCHEMA).alias("data"))
-        .select("data.*")
+        .select(col("json_str"), from_json(col("json_str"), ERA5_SCHEMA).alias("data"))
+        .select("json_str", "data.*")
+        .withColumnRenamed("json_str", "_raw_payload")
     )
 
-    final_df = (
+    final_df = add_contract_columns(
         parsed_df
         .withColumn("start_time", to_timestamp(col("start_time")))
         .withColumn("end_time", to_timestamp(col("end_time")))
         .withColumn("ingest_time", to_timestamp(col("ingest_time")))
         .withColumn("spark_processed_at", current_timestamp().cast(TimestampType()))
-        .select(
-            "event_id",
-            "dataset_type",
-            "year",
-            "month",
-            "start_time",
-            "end_time",
-            "bbox",
-            "file_path",
-            "file_size",
-            "checksum",
-            "source",
-            "ingest_time",
-            "spark_processed_at",
-            "surface_file_path",
-            "surface_file_size",
-            "surface_checksum",
-        )
+        .withColumn("event_time", to_timestamp(col("event_time")))
+        .select("*")
     )
 
     ensure_table(spark)
 
-    writer = (
-        final_df.writeStream
-        .foreachBatch(upsert_batch)
-        .option("checkpointLocation", CHECKPOINT_PATH)
-        .queryName("era5_files_to_iceberg")
+    start_bronze_streams(
+        final_df,
+        table_name=ICEBERG_TABLE,
+        topic=KAFKA_TOPIC,
+        checkpoint_path=CHECKPOINT_PATH,
+        catalog=ICEBERG_CATALOG,
+        stop_after_batch=stop_after_batch,
+        processing_time=processing_time,
     )
-
-    query = apply_stream_trigger(writer, stop_after_batch=stop_after_batch, processing_time=processing_time).start()
-    query.awaitTermination()
 
 
 if __name__ == "__main__":

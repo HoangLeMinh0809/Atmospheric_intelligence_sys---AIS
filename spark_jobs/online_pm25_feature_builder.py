@@ -15,6 +15,7 @@ from pyspark.sql.types import (
     BooleanType,
     DoubleType,
     IntegerType,
+    LongType,
     StringType,
     StructField,
     StructType,
@@ -29,7 +30,7 @@ for candidate in [
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_table_names  # noqa: E402
+from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, SPARK_SQL_SESSION_TIMEZONE, get_table_names  # noqa: E402
 from train_hanoi_pm25 import BOOLEAN_FEATURES, FEATURE_COLUMNS, FEATURE_SCHEMA_HASH, INTEGER_FEATURES  # noqa: E402
 
 ONLINE_INTEGER_FEATURES = set(INTEGER_FEATURES) | {"chance_of_rain"}
@@ -61,7 +62,9 @@ WEATHER_SCHEMA = StructType(
         StructField("event_id", StringType(), True),
         StructField("province", StringType(), True),
         StructField("location_name", StringType(), True),
+        StructField("tz_id", StringType(), True),
         StructField("time", StringType(), True),
+        StructField("time_epoch", LongType(), True),
         StructField("is_day", IntegerType(), True),
         StructField("temp_c", DoubleType(), True),
         StructField("dewpoint_c", DoubleType(), True),
@@ -82,7 +85,7 @@ WEATHER_SCHEMA = StructType(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build latest online PM2.5 feature state from realtime Bronze")
     parser.add_argument("--base-time", default=os.getenv("BASE_TIME", os.getenv("BASE_HOUR", "")))
-    parser.add_argument("--lookback-hours", type=int, default=int(os.getenv("ONLINE_FEATURE_LOOKBACK_HOURS", "72")))
+    parser.add_argument("--lookback-hours", type=int, default=int(os.getenv("ONLINE_FEATURE_LOOKBACK_HOURS", "30")))
     parser.add_argument("--location-id", default=os.getenv("LOCATION_ID", "hanoi"))
     parser.add_argument("--location-name", default=os.getenv("LOCATION_NAME", "Hanoi"))
     parser.add_argument("--feature-version", default=os.getenv("FEATURE_VERSION", "hanoi_pm25_core_v1"))
@@ -134,6 +137,7 @@ def build_spark() -> SparkSession:
     builder = (
         SparkSession.builder.appName("OnlinePM25FeatureBuilder")
         .config("spark.jars.ivy", os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2"))
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
@@ -439,7 +443,13 @@ def latest_weather_stats(spark: SparkSession, base_time: datetime) -> dict[str, 
         if df is None:
             return {}
         from_kafka = True
-        df = df.withColumn("event_time", F.to_timestamp("time", "yyyy-MM-dd HH:mm"))
+        df = df.withColumn(
+            "event_time",
+            F.coalesce(
+                F.expr("timestamp_seconds(time_epoch)"),
+                F.expr("to_utc_timestamp(to_timestamp(time, 'yyyy-MM-dd HH:mm'), tz_id)"),
+            ),
+        )
     rows = (
         df.filter(F.col("event_time") <= F.lit(base_time.replace(tzinfo=None)))
         .orderBy(F.col("event_time").desc())
@@ -450,7 +460,13 @@ def latest_weather_stats(spark: SparkSession, base_time: datetime) -> dict[str, 
         df = kafka_batch(spark, os.getenv("WEATHER_KAFKA_TOPIC", "weather_history"), WEATHER_SCHEMA)
         if df is not None:
             rows = (
-                df.withColumn("event_time", F.to_timestamp("time", "yyyy-MM-dd HH:mm"))
+                df.withColumn(
+                    "event_time",
+                    F.coalesce(
+                        F.expr("timestamp_seconds(time_epoch)"),
+                        F.expr("to_utc_timestamp(to_timestamp(time, 'yyyy-MM-dd HH:mm'), tz_id)"),
+                    ),
+                )
                 .filter(F.col("event_time") <= F.lit(base_time.replace(tzinfo=None)))
                 .orderBy(F.col("event_time").desc())
                 .limit(1)

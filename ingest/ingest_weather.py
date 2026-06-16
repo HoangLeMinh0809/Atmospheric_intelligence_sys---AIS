@@ -3,8 +3,9 @@ import json
 import glob
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -18,7 +19,7 @@ except ModuleNotFoundError:
 from kafka_utils import create_kafka_producer as create_shared_kafka_producer, flush_producer, send_events
 from window_utils import (
     build_default_window_config,
-    day_strings_from_window,
+    parse_iso_datetime,
     parse_bool,
     resolve_window,
     to_utc_iso,
@@ -58,6 +59,7 @@ WEATHER_START_DATE = os.getenv("WEATHER_START_DATE", "")
 WEATHER_END_DATE = os.getenv("WEATHER_END_DATE", "")
 WEATHER_TIMEOUT_SEC = int(os.getenv("WEATHER_TIMEOUT_SEC", "30"))
 WEATHER_API_DELAY_MS = int(os.getenv("WEATHER_API_DELAY_MS", "200"))
+WEATHER_SOURCE_TIMEZONE = ZoneInfo(os.getenv("WEATHER_SOURCE_TIMEZONE", "Asia/Ho_Chi_Minh"))
 
 WINDOW_CONFIG = build_default_window_config(
     mode=os.getenv("WINDOW_MODE", "batch"),
@@ -142,7 +144,9 @@ def resolve_weather_dates(window) -> list[str]:
     # Backward-compatible override for legacy env names.
     if WEATHER_START_DATE and WEATHER_END_DATE:
         return build_date_range(WEATHER_START_DATE, WEATHER_END_DATE)
-    return day_strings_from_window(window)
+    local_start = window.start_utc.astimezone(WEATHER_SOURCE_TIMEZONE).date().isoformat()
+    local_end = window.end_utc.astimezone(WEATHER_SOURCE_TIMEZONE).date().isoformat()
+    return build_date_range(local_start, local_end)
 
 
 def safe_get(d: dict, *keys, default=None):
@@ -215,8 +219,7 @@ def load_local_payloads(window) -> list[tuple[str, str, dict, str]]:
         json_files = json_files[:MAX_FILES]
         logger.info(f"Giới hạn xử lý {MAX_FILES} file đầu tiên")
 
-    start_date = window.start_utc.date().isoformat()
-    end_date = window.end_utc.date().isoformat()
+    requested_dates = set(resolve_weather_dates(window))
 
     payloads = []
     for filepath in json_files:
@@ -224,7 +227,7 @@ def load_local_payloads(window) -> list[tuple[str, str, dict, str]]:
         province = extract_province_from_path(filepath)
         query_date = extract_query_date_from_filename(filepath)
 
-        if query_date < start_date or query_date > end_date:
+        if query_date not in requested_dates:
             continue
 
         logger.info(f"--- Đang xử lý file local: {filename} (province={province}, date={query_date}) ---")
@@ -269,6 +272,8 @@ def normalize_weather_history(
     events = []
     location = data.get("location", {})
     forecastday_list = safe_get(data, "forecast", "forecastday", default=[])
+    window_start = parse_iso_datetime(window_start_utc)
+    window_end = parse_iso_datetime(window_end_utc)
 
     if not forecastday_list:
         logger.warning(f"Không có forecastday trong file: {source_file}")
@@ -286,6 +291,12 @@ def normalize_weather_history(
             try:
                 event_time = hour.get("time")
                 time_epoch = hour.get("time_epoch")
+                if time_epoch is None:
+                    logger.warning(f"Bỏ qua weather record thiếu time_epoch: time={event_time}")
+                    continue
+                event_time_utc = datetime.fromtimestamp(int(time_epoch), tz=timezone.utc)
+                if event_time_utc < window_start or event_time_utc > window_end:
+                    continue
 
                 event = {
                     "event_id": f"{province}_{event_time}",

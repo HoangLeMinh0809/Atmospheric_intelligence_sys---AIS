@@ -39,3 +39,6 @@ Thumbs.db
 logs/
 
 .env
+
+# Local backfill snapshots
+cache/

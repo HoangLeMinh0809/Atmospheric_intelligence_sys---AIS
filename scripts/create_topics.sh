@@ -11,6 +11,7 @@ TOPICS=(
   "sentinel5p-summary"
   "maiac-summary"
   "era5-files"
+  "ais-dlq"
 )
 PARTITIONS=3
 
