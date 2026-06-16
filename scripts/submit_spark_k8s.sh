@@ -34,6 +34,7 @@ _AIS_ENV_PIPELINE_CONTINUE_ON_ERROR="${PIPELINE_CONTINUE_ON_ERROR-}"
 _AIS_ENV_PIPELINE_STEPS="${PIPELINE_STEPS-}"
 _AIS_ENV_PIPELINE_LAYERS="${PIPELINE_LAYERS-}"
 _AIS_ENV_EXPORT_CACHE="${EXPORT_CACHE-}"
+_AIS_ENV_BRONZE_CHECKPOINT_RUN_ID="${BRONZE_CHECKPOINT_RUN_ID-}"
 _AIS_ENV_BASE_TIME="${BASE_TIME-}"
 _AIS_ENV_ERA5_CONVERT_TIMEOUT_SEC="${ERA5_CONVERT_TIMEOUT_SEC-}"
 _AIS_ENV_HDFS_CMD_TIMEOUT_SEC="${HDFS_CMD_TIMEOUT_SEC-}"
@@ -79,6 +80,7 @@ fi
 [ -n "$_AIS_ENV_PIPELINE_STEPS" ] && PIPELINE_STEPS="$_AIS_ENV_PIPELINE_STEPS"
 [ -n "$_AIS_ENV_PIPELINE_LAYERS" ] && PIPELINE_LAYERS="$_AIS_ENV_PIPELINE_LAYERS"
 [ -n "$_AIS_ENV_EXPORT_CACHE" ] && EXPORT_CACHE="$_AIS_ENV_EXPORT_CACHE"
+[ -n "$_AIS_ENV_BRONZE_CHECKPOINT_RUN_ID" ] && BRONZE_CHECKPOINT_RUN_ID="$_AIS_ENV_BRONZE_CHECKPOINT_RUN_ID"
 [ -n "$_AIS_ENV_BASE_TIME" ] && BASE_TIME="$_AIS_ENV_BASE_TIME"
 [ -n "$_AIS_ENV_ERA5_CONVERT_TIMEOUT_SEC" ] && ERA5_CONVERT_TIMEOUT_SEC="$_AIS_ENV_ERA5_CONVERT_TIMEOUT_SEC"
 [ -n "$_AIS_ENV_HDFS_CMD_TIMEOUT_SEC" ] && HDFS_CMD_TIMEOUT_SEC="$_AIS_ENV_HDFS_CMD_TIMEOUT_SEC"
@@ -128,6 +130,7 @@ PIPELINE_CONTINUE_ON_ERROR="${PIPELINE_CONTINUE_ON_ERROR:-}"
 PIPELINE_STEPS="${PIPELINE_STEPS:-}"
 PIPELINE_LAYERS="${PIPELINE_LAYERS:-}"
 EXPORT_CACHE="${EXPORT_CACHE:-}"
+BRONZE_CHECKPOINT_RUN_ID="${BRONZE_CHECKPOINT_RUN_ID:-}"
 ERA5_CONVERT_TIMEOUT_SEC="${ERA5_CONVERT_TIMEOUT_SEC:-}"
 HDFS_CMD_TIMEOUT_SEC="${HDFS_CMD_TIMEOUT_SEC:-}"
 HDFS_NAMENODE="${HDFS_NAMENODE:-${HDFS_DEFAULT_FS:-${HADOOP_DEFAULT_FS:-hdfs://namenode:9000}}}"
@@ -135,7 +138,7 @@ HDFS_DEFAULT_FS="${HDFS_DEFAULT_FS:-$HDFS_NAMENODE}"
 HADOOP_DEFAULT_FS="${HADOOP_DEFAULT_FS:-$HDFS_DEFAULT_FS}"
 ICEBERG_WAREHOUSE="${ICEBERG_WAREHOUSE:-${HDFS_NAMENODE%/}/warehouse/iceberg}"
 CASSANDRA_FEATURE_LATEST_ONLY="${CASSANDRA_FEATURE_LATEST_ONLY:-0}"
-ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
+ONLINE_FEATURE_LOOKBACK_HOURS="${ONLINE_FEATURE_LOOKBACK_HOURS:-30}"
 ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK="${ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK:-1}"
 FEATURE_SOURCE="${FEATURE_SOURCE:-iceberg}"
 WRITE_CASSANDRA_FORECAST="${WRITE_CASSANDRA_FORECAST:-0}"
@@ -336,7 +339,7 @@ case "$JOB_TYPE" in
   online-pm25-features)
     APP_NAME="OnlinePM25FeatureBuilder"
     JOB_FILE="/opt/spark-jobs/online_pm25_feature_builder.py"
-    JOB_ARGS=("--base-time" "${BASE_TIME:-${BASE_HOUR:-}}" "--lookback-hours" "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}" "--dry-run" "$DRY_RUN")
+    JOB_ARGS=("--base-time" "${BASE_TIME:-${BASE_HOUR:-}}" "--lookback-hours" "${ONLINE_FEATURE_LOOKBACK_HOURS:-30}" "--dry-run" "$DRY_RUN")
     PACKAGES="${CASSANDRA_PACKAGES}"
     ;;
   cassandra-weather)
@@ -535,6 +538,8 @@ SPARK_SUBMIT_IMAGE="${SPARK_SUBMIT_IMAGE:-${SPARK_IMAGE:-ais-spark-runtime:local
 SPARK_SUBMIT_IMAGE_PULL_POLICY="${SPARK_SUBMIT_IMAGE_PULL_POLICY:-IfNotPresent}"
 SPARK_SUBMIT_SERVICE_ACCOUNT="${SPARK_SUBMIT_SERVICE_ACCOUNT:-spark}"
 KUBECTL_TIMEOUT="${KUBECTL_TIMEOUT:-1800s}"
+JOB_ACTIVE_DEADLINE_SECONDS="${JOB_ACTIVE_DEADLINE_SECONDS:-3600}"
+JOB_TTL_SECONDS_AFTER_FINISHED="${JOB_TTL_SECONDS_AFTER_FINISHED:-600}"
 WAIT_FOR_COMPLETION="${WAIT_FOR_COMPLETION:-true}"
 FOLLOW_LOGS="${FOLLOW_LOGS:-true}"
 DELETE_EXISTING="${DELETE_EXISTING:-false}"
@@ -562,7 +567,9 @@ metadata:
     app.kubernetes.io/part-of: atmospheric-intelligence-system
     ais/job-type: ${JOB_TYPE}
 spec:
+  activeDeadlineSeconds: ${JOB_ACTIVE_DEADLINE_SECONDS}
   backoffLimit: 0
+  ttlSecondsAfterFinished: ${JOB_TTL_SECONDS_AFTER_FINISHED}
   template:
     metadata:
       labels:
@@ -664,6 +671,8 @@ spec:
               value: "$(printf "%s" "${PIPELINE_LAYERS:-}")"
             - name: EXPORT_CACHE
               value: "$(printf "%s" "${EXPORT_CACHE:-}")"
+            - name: BRONZE_CHECKPOINT_RUN_ID
+              value: "$(printf "%s" "${BRONZE_CHECKPOINT_RUN_ID:-}")"
             - name: ERA5_CONVERT_TIMEOUT_SEC
               value: "$(printf "%s" "${ERA5_CONVERT_TIMEOUT_SEC:-}")"
             - name: HDFS_CMD_TIMEOUT_SEC
@@ -681,7 +690,7 @@ spec:
             - name: BASE_HOUR
               value: "$(printf "%s" "${BASE_HOUR:-}")"
             - name: ONLINE_FEATURE_LOOKBACK_HOURS
-              value: "$(printf "%s" "${ONLINE_FEATURE_LOOKBACK_HOURS:-72}")"
+              value: "$(printf "%s" "${ONLINE_FEATURE_LOOKBACK_HOURS:-30}")"
             - name: ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK
               value: "$(printf "%s" "${ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK:-1}")"
           resources:
@@ -716,6 +725,7 @@ spec:
                 --conf "spark.sql.adaptive.coalescePartitions.enabled=\${SPARK_SQL_ADAPTIVE_COALESCE_PARTITIONS_ENABLED:-true}"
                 --conf "spark.sql.shuffle.partitions=\${SPARK_SQL_SHUFFLE_PARTITIONS:-16}"
                 --conf "spark.default.parallelism=\${SPARK_DEFAULT_PARALLELISM:-16}"
+                --conf "spark.sql.session.timeZone=\${SPARK_SQL_SESSION_TIMEZONE:-UTC}"
                 --conf "spark.kubernetes.driver.request.cores=\${SPARK_DRIVER_REQUEST_CORES:-500m}"
                 --conf "spark.kubernetes.driver.limit.cores=\${SPARK_DRIVER_LIMIT_CORES:-1}"
                 --conf "spark.kubernetes.executor.request.cores=\${SPARK_EXECUTOR_REQUEST_CORES:-500m}"
@@ -772,6 +782,7 @@ spec:
                 --conf "spark.kubernetes.driverEnv.PIPELINE_STEPS=\${PIPELINE_STEPS:-}"
                 --conf "spark.kubernetes.driverEnv.PIPELINE_LAYERS=\${PIPELINE_LAYERS:-}"
                 --conf "spark.kubernetes.driverEnv.EXPORT_CACHE=\${EXPORT_CACHE:-}"
+                --conf "spark.kubernetes.driverEnv.BRONZE_CHECKPOINT_RUN_ID=\${BRONZE_CHECKPOINT_RUN_ID:-}"
                 --conf "spark.kubernetes.driverEnv.ERA5_CONVERT_TIMEOUT_SEC=\${ERA5_CONVERT_TIMEOUT_SEC:-}"
                 --conf "spark.kubernetes.driverEnv.HDFS_CMD_TIMEOUT_SEC=\${HDFS_CMD_TIMEOUT_SEC:-}"
                 --conf "spark.kubernetes.driverEnv.DIRECTION=\${DIRECTION:-}"
@@ -780,7 +791,7 @@ spec:
                 --conf "spark.kubernetes.driverEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
                 --conf "spark.kubernetes.driverEnv.BASE_TIME=\${BASE_TIME:-}"
                 --conf "spark.kubernetes.driverEnv.BASE_HOUR=\${BASE_HOUR:-}"
-                --conf "spark.kubernetes.driverEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
+                --conf "spark.kubernetes.driverEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-30}"
                 --conf "spark.kubernetes.driverEnv.ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK=\${ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK:-1}"
                 --conf "spark.kubernetes.driverEnv.DRY_RUN=\${DRY_RUN:-0}"
                 --conf "spark.kubernetes.driverEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"
@@ -841,6 +852,7 @@ spec:
                 --conf "spark.executorEnv.PIPELINE_STEPS=\${PIPELINE_STEPS:-}"
                 --conf "spark.executorEnv.PIPELINE_LAYERS=\${PIPELINE_LAYERS:-}"
                 --conf "spark.executorEnv.EXPORT_CACHE=\${EXPORT_CACHE:-}"
+                --conf "spark.executorEnv.BRONZE_CHECKPOINT_RUN_ID=\${BRONZE_CHECKPOINT_RUN_ID:-}"
                 --conf "spark.executorEnv.ERA5_CONVERT_TIMEOUT_SEC=\${ERA5_CONVERT_TIMEOUT_SEC:-}"
                 --conf "spark.executorEnv.HDFS_CMD_TIMEOUT_SEC=\${HDFS_CMD_TIMEOUT_SEC:-}"
                 --conf "spark.executorEnv.DIRECTION=\${DIRECTION:-}"
@@ -849,7 +861,7 @@ spec:
                 --conf "spark.executorEnv.SPARK_SMOKE_CHECK_ICEBERG=\${SPARK_SMOKE_CHECK_ICEBERG:-1}"
                 --conf "spark.executorEnv.BASE_TIME=\${BASE_TIME:-}"
                 --conf "spark.executorEnv.BASE_HOUR=\${BASE_HOUR:-}"
-                --conf "spark.executorEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-72}"
+                --conf "spark.executorEnv.ONLINE_FEATURE_LOOKBACK_HOURS=\${ONLINE_FEATURE_LOOKBACK_HOURS:-30}"
                 --conf "spark.executorEnv.ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK=\${ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK:-1}"
                 --conf "spark.executorEnv.DRY_RUN=\${DRY_RUN:-0}"
                 --conf "spark.executorEnv.VIS_PRODUCT_VERSION=\${VIS_PRODUCT_VERSION:-windy_v1}"

@@ -16,6 +16,7 @@ from hanoi_config import (
     ICEBERG_CATALOG,
     ICEBERG_WAREHOUSE,
     TABLES,
+    SPARK_SQL_SESSION_TIMEZONE,
     get_visualization_cache_base_uri,
     get_visualization_cluster_labels,
     get_visualization_config,
@@ -29,6 +30,7 @@ def build_spark(app_name: str) -> SparkSession:
     builder = (
         SparkSession.builder.appName(app_name)
         .config("spark.jars.ivy", os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2"))
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")

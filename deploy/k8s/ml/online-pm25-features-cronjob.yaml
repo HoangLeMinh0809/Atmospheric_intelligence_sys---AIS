@@ -7,13 +7,17 @@ metadata:
     app.kubernetes.io/name: online-pm25-features
     app.kubernetes.io/part-of: atmospheric-intelligence-system
 spec:
-  schedule: "*/2 * * * *"
+  schedule: "*/10 * * * *"
+  suspend: true
+  startingDeadlineSeconds: 120
   concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 1800
       backoffLimit: 1
+      ttlSecondsAfterFinished: 600
       template:
         metadata:
           labels:

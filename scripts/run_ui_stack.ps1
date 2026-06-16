@@ -3,6 +3,7 @@ param(
     [switch]$SkipVisualizationApi,
     [switch]$SkipPortForward,
     [switch]$KeepExistingPortForward,
+    [switch]$UseK8sCassandra,
     [int]$UiLocalPort = 3000,
     [int]$WaitTimeoutSeconds = 180
 )
@@ -130,6 +131,15 @@ Step "2) Ensure namespace and shared runtime config" {
     kubectl apply -f deploy/k8s/serviceaccount.yaml | Out-Host
     kubectl apply -f deploy/k8s/rbac.yaml | Out-Host
     kubectl apply -f deploy/k8s/configmap.yaml | Out-Host
+    if ($UseK8sCassandra) {
+        kubectl apply -f deploy/k8s/cassandra/cassandra-statefulset.yaml | Out-Host
+        kubectl -n ais rollout status statefulset/cassandra --timeout="${WaitTimeoutSeconds}s" | Out-Host
+    }
+    else {
+        docker compose up -d cassandra | Out-Host
+        $runtimeOverrides["CASSANDRA_HOST"] = "192.168.65.254"
+        $runtimeOverrides["CASSANDRA_PORT"] = "9042"
+    }
     kubectl apply -f deploy/k8s/compose-bridge-services.yaml | Out-Host
     Patch-RuntimeConfig $runtimeOverrides
 }

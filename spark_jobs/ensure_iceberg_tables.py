@@ -39,6 +39,7 @@ def create_namespaces(spark: SparkSession) -> None:
         "trajectory",
         "predictions",
         "visualization",
+        "audit",
     ]:
         spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.{namespace}")
 
@@ -52,6 +53,34 @@ def ensure_columns(spark: SparkSession, table_name: str, columns: dict[str, str]
 
 def ensure_tables(spark: SparkSession) -> None:
     create_namespaces(spark)
+
+    audit_columns = """
+        source_topic STRING,
+        event_id STRING,
+        source STRING,
+        event_time TIMESTAMP,
+        ingest_time TIMESTAMP,
+        schema_version STRING,
+        available_at TIMESTAMP,
+        request_id STRING,
+        producer STRING,
+        retry_count INT,
+        reason STRING,
+        raw_payload STRING,
+        recorded_at TIMESTAMP,
+        year INT,
+        month INT,
+        day INT
+    """
+    for audit_table in ("invalid_events_bronze", "late_events_bronze"):
+        spark.sql(
+            f"""
+            CREATE TABLE IF NOT EXISTS {ICEBERG_CATALOG}.audit.{audit_table} ({audit_columns})
+            USING ICEBERG
+            PARTITIONED BY (source_topic, year, month, day)
+            TBLPROPERTIES ('format-version'='2')
+            """
+        )
 
     spark.sql(
         f"""
@@ -118,6 +147,18 @@ def ensure_tables(spark: SparkSession) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    bronze_lineage_columns = {
+        "schema_version": "STRING",
+        "available_at": "TIMESTAMP",
+        "quality_flags": "ARRAY<STRING>",
+        "request_id": "STRING",
+        "producer": "STRING",
+        "retry_count": "INT",
+        "job_run_id": "STRING",
+        "input_snapshot_id": "STRING",
+        "output_snapshot_id": "STRING",
+    }
+    ensure_columns(spark, TABLES["weather_bronze"], bronze_lineage_columns)
 
     spark.sql(
         f"""
@@ -159,6 +200,7 @@ def ensure_tables(spark: SparkSession) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    ensure_columns(spark, TABLES["openaq_bronze"], bronze_lineage_columns)
 
     spark.sql(
         f"""
@@ -200,6 +242,7 @@ def ensure_tables(spark: SparkSession) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    ensure_columns(spark, TABLES["sentinel5p_bronze"], bronze_lineage_columns)
     existing_s5p_columns = set(spark.table(TABLES["sentinel5p_bronze"]).columns)
     for column_name, column_type in [
         ("download_url", "STRING"),
@@ -245,6 +288,7 @@ def ensure_tables(spark: SparkSession) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    ensure_columns(spark, TABLES["maiac_bronze"], bronze_lineage_columns)
 
     spark.sql(
         f"""
@@ -271,6 +315,7 @@ def ensure_tables(spark: SparkSession) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    ensure_columns(spark, TABLES["era5_files_bronze"], bronze_lineage_columns)
     for column_name, column_type in [
         ("surface_file_path", "STRING"),
         ("surface_file_size", "BIGINT"),

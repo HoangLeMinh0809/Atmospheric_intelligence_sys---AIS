@@ -152,7 +152,15 @@ function percentile(values, p) {
   return sorted[lo] * (1 - frac) + sorted[hi] * frac;
 }
 
-function colorScale() {
+function colorScale(values = []) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (finite.length >= 6) {
+    const min = Math.max(0, percentile(finite, 0.05));
+    const p50 = percentile(finite, 0.5);
+    const p80 = percentile(finite, 0.8);
+    const max = Math.max(percentile(finite, 0.96), p80 + 4, p50 + 8);
+    return { min, p50, p80, max };
+  }
   return {
     min: 0,
     p50: 30,
@@ -171,13 +179,18 @@ function rgbaBetween(left, right, t, alpha) {
 
 function pm25Color(value, scale, alpha = 0.9) {
   if (value == null || Number.isNaN(value)) return `rgba(148,163,184,${alpha * 0.25})`;
+  const min = Number.isFinite(scale?.min) ? scale.min : 0;
+  const p50 = Number.isFinite(scale?.p50) ? scale.p50 : 30;
+  const p80 = Number.isFinite(scale?.p80) ? scale.p80 : 40;
+  const max = Number.isFinite(scale?.max) ? scale.max : 55;
+  const span = Math.max(8, max - min);
   const stops = [
-    [0, [45, 212, 191]],
-    [20, [34, 197, 94]],
-    [30, [250, 204, 21]],
-    [40, [249, 115, 22]],
-    [55, [239, 68, 68]],
-    [80, [126, 34, 206]],
+    [min, [56, 189, 248]],
+    [Math.min(p50, min + span * 0.35), [20, 184, 166]],
+    [p50, [132, 204, 22]],
+    [p80, [217, 119, 6]],
+    [max, [190, 18, 60]],
+    [max + span * 0.65, [136, 19, 55]],
   ];
   for (let i = 1; i < stops.length; i += 1) {
     if (value <= stops[i][0]) {
@@ -187,7 +200,7 @@ function pm25Color(value, scale, alpha = 0.9) {
       return rgbaBetween(c0, c1, t, alpha);
     }
   }
-  return `rgba(126,34,206,${alpha})`;
+  return `rgba(136,19,55,${alpha})`;
 }
 
 function riskLabel(value) {
@@ -406,7 +419,30 @@ function trajectoriesForReceptor(features, receptor = DEFAULT_RECEPTOR) {
   const matched = latestTrajectoryGroup(features, receptor);
   if (matched.length) return matched.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
   const latest = latestTrajectoryGroup(features, DEFAULT_RECEPTOR);
-  return latest.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: true } }));
+  return latest.map((feature, index) => translateTrajectoryToReceptor(feature, receptor, index)).filter(Boolean);
+}
+
+function translateTrajectoryToReceptor(feature, receptor, index = 0) {
+  const coords = feature?.geometry?.coordinates || [];
+  if (coords.length < 2 || !Number.isFinite(Number(receptor?.lon)) || !Number.isFinite(Number(receptor?.lat))) return null;
+  const [anchorLon, anchorLat] = coords[coords.length - 1];
+  const dx = Number(receptor.lon) - Number(anchorLon);
+  const dy = Number(receptor.lat) - Number(anchorLat);
+  return {
+    ...feature,
+    geometry: {
+      type: "LineString",
+      coordinates: coords.map(([lon, lat]) => [Number(lon) + dx, Number(lat) + dy]),
+    },
+    properties: {
+      ...(feature.properties || {}),
+      endpoint: receptor.name,
+      receptor_name: receptor.name,
+      location_name: receptor.name,
+      derived_for_receptor: true,
+      style_color: feature.properties?.style_color || ["#93c5fd", "#67e8f9", "#99f6e4", "#fde68a"][index % 4],
+    },
+  };
 }
 
 function densifyTrajectory(feature) {
@@ -441,19 +477,33 @@ function stationRadius(feature) {
   return Math.max(7, Math.min(18, 5 + value / 7));
 }
 
+function cellGradientRadius(cell, width, height) {
+  const [x0, y0] = project(cell.lon0, cell.lat0, width, height);
+  const [x1, y1] = project(cell.lon1, cell.lat1, width, height);
+  return Math.max(18, Math.hypot(x1 - x0, y1 - y0) * 1.65);
+}
+
 function clampZoom(value) {
   return Math.max(0.8, Math.min(5, Number(value)));
 }
 
-export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => {}, onStats = () => {} }) {
+export default function MapCanvas({
+  layers = {},
+  enabled = {},
+  selectedReceptor: controlledReceptor = null,
+  onReceptorChange = () => {},
+  onSelect = () => {},
+  onStats = () => {},
+}) {
   const width = MAP_WIDTH;
   const height = MAP_HEIGHT;
   const [zoom, setZoom] = useState(1);
-  const [selectedReceptor, setSelectedReceptor] = useState(DEFAULT_RECEPTOR);
-  const rawHeatmap = layers.heatmap?.features || [];
-  const rawStations = layers.stations?.features || [];
+  const [localSelectedReceptor, setLocalSelectedReceptor] = useState(DEFAULT_RECEPTOR);
+  const selectedReceptor = controlledReceptor || localSelectedReceptor;
+  const rawHeatmap = useMemo(() => layers.heatmap?.features || [], [layers.heatmap]);
+  const rawStations = useMemo(() => layers.stations?.features || [], [layers.stations]);
   const plume = layers.plume?.features || [];
-  const rawTrajectories = layers.trajectories?.features || [];
+  const rawTrajectories = useMemo(() => layers.trajectories?.features || [], [layers.trajectories]);
   const trajectories = useMemo(
     () => (selectedReceptor ? trajectoriesForReceptor(rawTrajectories, selectedReceptor).map(densifyTrajectory) : []),
     [rawTrajectories, selectedReceptor],
@@ -496,6 +546,11 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
     setZoom((current) => clampZoom(current + direction));
   }
 
+  function chooseReceptor(receptor) {
+    setLocalSelectedReceptor(receptor);
+    onReceptorChange(receptor);
+  }
+
   return (
     <div className="windy-map-canvas">
       <svg
@@ -516,6 +571,9 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
               <feMergeNode in="coloredBlur" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
+          </filter>
+          <filter id="heatBlur" x="-12%" y="-12%" width="124%" height="124%">
+            <feGaussianBlur stdDeviation="10" />
           </filter>
           <marker id="trajArrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
             <path d="M0,0 L0,6 L7,3 z" fill="#e0f2fe" opacity="0.92" />
@@ -570,14 +628,28 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
           </g>
 
           {enabled.heatmap && (
-            <g className="heatmap-pixels">
+            <g className="heatmap-gradient" filter="url(#heatBlur)">
+              {cells.map((cell) => (
+                <circle
+                  key={`heat-${cell.row}-${cell.col}`}
+                  cx={project(cell.lon, cell.lat, width, height)[0]}
+                  cy={project(cell.lon, cell.lat, width, height)[1]}
+                  r={cellGradientRadius(cell, width, height)}
+                  fill={cell.color}
+                  className="heatmap-gradient-spot"
+                  style={{ opacity: 0.1 + cell.normalizedValue * 0.18 }}
+                />
+              ))}
+            </g>
+          )}
+
+          {enabled.heatmap && (
+            <g className="heatmap-hitgrid">
               {cells.map((cell) => (
                 <path
-                  key={`pixel-${cell.row}-${cell.col}`}
+                  key={`pixel-hit-${cell.row}-${cell.col}`}
                   d={rectPath(cell, width, height)}
-                  fill={cell.color}
-                  className="heatmap-pixel"
-                  style={{ opacity: 0.68 + cell.normalizedValue * 0.27 }}
+                  className="heatmap-hitcell"
                   onClick={() =>
                     onSelect({
                       type: "Feature",
@@ -607,11 +679,16 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
             <g className="trajectory-layer">
               {trajectories.map((feature, index) => {
                 const d = linePath(feature.geometry, width, height);
+                const coords = feature.geometry?.coordinates || [];
+                const end = coords.length ? coords[coords.length - 1] : null;
+                const endPoint = end ? project(end[0], end[1], width, height) : null;
                 if (!d) return null;
                 const color = feature.properties?.style_color || feature.properties?.color || "#e0f2fe";
                 return (
                   <g key={`traj-${index}`} onClick={() => onSelect({ ...feature, properties: { ...(feature.properties || {}), layer_name: "Backward trajectory" } })}>
+                    <path className="trajectory-click-target" d={d} />
                     <path className="trajectory-line" d={d} style={{ stroke: color }} markerEnd="url(#trajArrow)" />
+                    {endPoint && <circle className="trajectory-endpoint" cx={endPoint[0]} cy={endPoint[1]} r="5.5" />}
                   </g>
                 );
               })}
@@ -633,7 +710,7 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
                 onClick={() => {
                   const receptor = { name, lon, lat };
                   const currentValue = nearestPm25(layers.heatmap, lon, lat);
-                  setSelectedReceptor(receptor);
+                  chooseReceptor(receptor);
                   onSelect({
                     type: "Feature",
                     geometry: { type: "Point", coordinates: [lon, lat] },
@@ -689,7 +766,6 @@ export default function MapCanvas({ layers = {}, enabled = {}, onSelect = () => 
           <g className="station-layer">
             {stations.map((feature, index) => {
               const [x, y] = pointFromGeometry(feature.geometry, width, height);
-              const [lon, lat] = lonLatFromFeature(feature) || [null, null];
               const value = valueOf(feature);
               return (
                 <g

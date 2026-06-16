@@ -856,6 +856,7 @@ if [ -n "$SPARK_EXECUTOR_CORES" ]; then
 fi
 SPARK_EXTRA_CONF+=(--conf "spark.sql.shuffle.partitions=${SPARK_SQL_SHUFFLE_PARTITIONS:-16}")
 SPARK_EXTRA_CONF+=(--conf "spark.default.parallelism=${SPARK_DEFAULT_PARALLELISM:-16}")
+SPARK_EXTRA_CONF+=(--conf "spark.sql.session.timeZone=${SPARK_SQL_SESSION_TIMEZONE:-UTC}")
 
 docker exec "${DOCKER_EXEC_ARGS[@]}" spark-master /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \

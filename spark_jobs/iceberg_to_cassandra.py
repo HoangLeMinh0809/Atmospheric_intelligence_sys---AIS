@@ -6,7 +6,7 @@ from typing import Iterable
 
 from pyspark.sql import SparkSession
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, to_date, to_timestamp, date_format, coalesce
+from pyspark.sql.functions import col, to_date, to_timestamp, date_format, coalesce, expr
 
 HDFS_NAMENODE = (
     os.getenv("HDFS_NAMENODE")
@@ -17,6 +17,7 @@ HDFS_NAMENODE = (
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
 ICEBERG_WAREHOUSE = os.getenv("ICEBERG_WAREHOUSE", f"{HDFS_NAMENODE}/warehouse/iceberg")
+SPARK_SQL_SESSION_TIMEZONE = os.getenv("SPARK_SQL_SESSION_TIMEZONE", "UTC")
 CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "cassandra")
 CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "ais_serving")
 
@@ -36,6 +37,7 @@ def build_spark_session() -> SparkSession:
     return (
         SparkSession.builder
         .appName("IcebergToCassandra_Load")
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
@@ -55,7 +57,8 @@ def enrich_weather(df: DataFrame) -> DataFrame:
             "event_time_ts",
             coalesce(
                 to_timestamp(col("event_time")),
-                to_timestamp(col("time"), "yyyy-MM-dd HH:mm"),
+                expr("timestamp_seconds(time_epoch)"),
+                expr("to_utc_timestamp(to_timestamp(time, 'yyyy-MM-dd HH:mm'), tz_id)"),
             ),
         )
         .withColumn("day", date_format(col("query_date"), "yyyy-MM-dd"))

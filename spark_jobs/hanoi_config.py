@@ -16,6 +16,7 @@ except ModuleNotFoundError:  # pragma: no cover - Spark images may not have PyYA
 
 
 ICEBERG_CATALOG = os.getenv("ICEBERG_CATALOG", "ais")
+SPARK_SQL_SESSION_TIMEZONE = os.getenv("SPARK_SQL_SESSION_TIMEZONE", "UTC")
 HDFS_NAMENODE = (
     os.getenv("HDFS_NAMENODE")
     or os.getenv("HDFS_DEFAULT_FS")

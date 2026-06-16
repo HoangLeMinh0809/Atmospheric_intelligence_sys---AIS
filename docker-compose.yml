@@ -187,7 +187,7 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    restart: on-failure
+    restart: "no"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: weather_history
@@ -242,7 +242,7 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    restart: on-failure
+    restart: "no"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: openaq-hourly
@@ -291,6 +291,8 @@ services:
       DEMO_FEED_STEP_MINUTES: ${DEMO_FEED_STEP_MINUTES:-1}
       DEMO_FEED_MAX_BATCHES: ${DEMO_FEED_MAX_BATCHES:-60}
       DEMO_FEED_BATCH_INTERVAL_SECONDS: ${DEMO_FEED_BATCH_INTERVAL_SECONDS:-60}
+      DEMO_FEED_MIN_BATCH_INTERVAL_SECONDS: ${DEMO_FEED_MIN_BATCH_INTERVAL_SECONDS:-30}
+      DEMO_FEED_MAX_BATCH_INTERVAL_SECONDS: ${DEMO_FEED_MAX_BATCH_INTERVAL_SECONDS:-60}
       DEMO_FEED_BATCH_SIZE: ${DEMO_FEED_BATCH_SIZE:-24}
       DEMO_FEED_NOISE_RATIO: ${DEMO_FEED_NOISE_RATIO:-0.08}
       DEMO_FEED_SEND_DELAY_MS: ${DEMO_FEED_SEND_DELAY_MS:-0}
@@ -313,7 +315,7 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    restart: on-failure
+    restart: "no"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: maiac-summary
@@ -366,7 +368,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: weather_history
-      KAFKA_TOPICS: weather_history,openaq-hourly,sentinel5p-summary,maiac-summary,era5-files
+      KAFKA_TOPICS: weather_history,openaq-hourly,sentinel5p-summary,maiac-summary,era5-files,ais-dlq
       HDFS_WEBHDFS_BASE: http://namenode:9870/webhdfs/v1
       HDFS_OUTPUT_PATH: /warehouse/iceberg
       NAMENODE_JMX_URL: http://namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystem
@@ -374,6 +376,9 @@ services:
       AIRFLOW_DAG_ID: ais_hanoi_silver_gold
       AIRFLOW_USERNAME: admin
       AIRFLOW_PASSWORD: admin
+      VISUALIZATION_READY_URL: ${VISUALIZATION_READY_URL:-http://host.docker.internal:3000/api/v1/visualization/manifest/latest}
+      FORECAST_READY_URL: ${FORECAST_READY_URL:-http://host.docker.internal:3000/api/v1/visualization/forecast/latest?location_id=hanoi}
+      FORECAST_LATEST_URL: ${FORECAST_LATEST_URL:-http://host.docker.internal:3000/api/v1/visualization/forecast/latest?location_id=hanoi}
       METRICS_SAMPLE_SECONDS: "5"
       PYTHONUNBUFFERED: "1"
     working_dir: /app
@@ -397,7 +402,7 @@ services:
         condition: service_healthy
       namenode:
         condition: service_healthy
-    restart: on-failure
+    restart: "no"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: sentinel5p-summary

@@ -45,6 +45,7 @@ DIRS=(
     "/warehouse/iceberg/predictions"
     "/warehouse/iceberg/trajectory"
     "/warehouse/iceberg/visualization"
+    "/warehouse/iceberg/audit"
 
     "/checkpoints"
     "/checkpoints/weather_history"

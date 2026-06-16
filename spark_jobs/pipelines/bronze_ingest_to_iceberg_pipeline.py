@@ -64,6 +64,12 @@ def main() -> None:
     spark = build_pipeline_spark("AISBronzeIngestToIcebergPipeline")
     spark.sparkContext.setLogLevel("WARN")
     base_uri = hdfs_base_uri()
+    checkpoint_run_id = os.getenv("BRONZE_CHECKPOINT_RUN_ID", "").strip()
+    checkpoint_base = (
+        f"{base_uri}/checkpoints/bronze_backfill_runs/{checkpoint_run_id}"
+        if checkpoint_run_id
+        else f"{base_uri}/checkpoints"
+    )
     continue_on_error = as_bool(args.continue_on_error)
     failures: list[tuple[str, str]] = []
 
@@ -79,7 +85,7 @@ def main() -> None:
                         "STOP_AFTER_BATCH": "true",
                         "KAFKA_STARTING_OFFSETS": os.getenv("KAFKA_STARTING_OFFSETS", "earliest"),
                         "KAFKA_TOPIC": config["topic"],
-                        "CHECKPOINT_PATH": f"{base_uri}/checkpoints/{config['checkpoint']}/",
+                        "CHECKPOINT_PATH": f"{checkpoint_base}/{config['checkpoint']}/",
                     },
                 )
             except Exception as exc:

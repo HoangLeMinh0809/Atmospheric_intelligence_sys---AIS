@@ -25,10 +25,12 @@ param(
     [int]$TrajectoryMaxPaths = 150,
     [int]$TrajectoryMaxPoints = 100,
     [int]$VisMaxGeoJsonFeatures = 5000,
-    [switch]$SkipRealtimeNewData,
+    [switch]$SkipRealtimeNewData = $true,
     [int]$RealtimeLookbackMinutes = 180,
     [int]$RealtimePollSeconds = 60,
     [string]$RealtimeProcessingTime = "30 seconds",
+    [switch]$EnableWeatherRealtimeStream,
+    [switch]$UseComposeRealtimeBronze,
     [switch]$SkipDemoRealtimeFeed,
     [int]$DemoFeedStepMinutes = 1,
     [int]$DemoFeedMaxBatches = 60,
@@ -36,12 +38,20 @@ param(
     [int]$DemoFeedBatchSize = 24,
     [double]$DemoFeedNoiseRatio = 0.08,
     [string]$DemoFeedSources = "weather,openaq",
-    [int]$OnlineFeatureIntervalSeconds = 120,
-    [int]$RealtimePredictionIntervalSeconds = 120,
-    [int]$OnlineFeatureLookbackHours = 72,
+    [int]$OnlineFeatureIntervalSeconds = 600,
+    [int]$RealtimePredictionIntervalSeconds = 600,
+    [int]$OnlineFeatureLookbackHours = 30,
     [int]$RealtimeBronzeWarmupSeconds = 45,
+    [switch]$EnableHourlyContextUpdater,
+    [ValidateSet("Static", "Refresh")][string]$HourlyContextMode = "Static",
+    [switch]$EnableOnlineCron,
+    [switch]$RunOnlineCycleNow,
+    [switch]$KeepFinishedBatchJobs = $true,
+    [switch]$UseComposeCassandra = $true,
     [switch]$AllowTrajectoryDegraded = $true,
-    [ValidateRange(1, 19)][int]$ResumeFromStep = 1
+    [ValidateSet("Auto", "Require", "Refresh", "SnapshotOnly")][string]$BackfillCacheMode = "Auto",
+    [switch]$ResetKafkaBackfillTopics,
+    [ValidateRange(1, 20)][int]$ResumeFromStep = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,8 +69,15 @@ function Step {
 
     Write-Host ""
     Write-Host "=== $Name ===" -ForegroundColor Cyan
-    & $Action
-    Write-Host "[OK] $Name" -ForegroundColor Green
+    try {
+        & $Action
+        Write-Host "[OK] $Name" -ForegroundColor Green
+    }
+    finally {
+        if (-not $KeepFinishedBatchJobs) {
+            Cleanup-FinishedK8sCompute -DeleteAllFinished -BestEffort
+        }
+    }
 }
 
 function Require-Command {
@@ -117,6 +134,23 @@ function Invoke-Kubectl {
     & kubectl @Arguments | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw ("kubectl failed with exit code {0}: kubectl {1}" -f $LASTEXITCODE, ($Arguments -join " "))
+    }
+}
+
+function Set-K8sCronJobSuspended {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][bool]$Suspended
+    )
+
+    $patch = @{ spec = @{ suspend = $Suspended } } | ConvertTo-Json -Compress
+    $patchFile = New-TemporaryFile
+    try {
+        [System.IO.File]::WriteAllText($patchFile.FullName, $patch, [System.Text.UTF8Encoding]::new($false))
+        Invoke-Kubectl @("patch", "cronjob", $Name, "-n", "ais", "--type", "merge", "--patch-file", $patchFile.FullName)
+    }
+    finally {
+        Remove-Item -LiteralPath $patchFile.FullName -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -420,6 +454,21 @@ function Clear-KafkaBrokerRegistration {
     }
 }
 
+function Ensure-K8sCassandra {
+    if ($UseComposeCassandra) {
+        Write-Host "[INFO] UseComposeCassandra enabled; keeping Cassandra on Docker Compose." -ForegroundColor Yellow
+        Invoke-DockerCompose @("up", "-d", "--build", "cassandra")
+        Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("cassandra")
+        return
+    }
+
+    Write-Host "[INFO] Deploying Cassandra serving layer on Kubernetes." -ForegroundColor Yellow
+    kubectl create namespace ais --dry-run=client -o yaml | kubectl apply -f - | Out-Host
+    Invoke-Kubectl @("apply", "-f", "deploy/k8s/cassandra/cassandra-statefulset.yaml")
+    Invoke-Kubectl @("rollout", "status", "statefulset/cassandra", "-n", "ais", "--timeout=${HealthWaitTimeoutSeconds}s")
+    Invoke-Kubectl @("wait", "--for=condition=ready", "pod/cassandra-0", "-n", "ais", "--timeout=${HealthWaitTimeoutSeconds}s")
+}
+
 function Start-CoreInfra {
     $volatileServices = @("kafka", "zookeeper", "namenode", "datanode", "spark-master", "spark-worker")
     $recreateServices = @("namenode", "datanode", "spark-master", "spark-worker")
@@ -434,14 +483,20 @@ function Start-CoreInfra {
 
     $env:HDFS_NAMENODE_HOST_PORT = "$resolvedHdfsHostPort"
     $env:SPARK_MASTER_UI_HOST_PORT = "$resolvedSparkMasterUiHostPort"
-    Invoke-DockerCompose @("up", "-d", "--build", "cassandra")
+    if (-not $UseComposeCassandra) {
+        Invoke-DockerCompose @("stop", "cassandra")
+    }
+    Ensure-K8sCassandra
     Invoke-DockerCompose @("up", "-d", "--build", "zookeeper")
     Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("zookeeper")
     Clear-KafkaBrokerRegistration -BrokerId 1
     Invoke-DockerCompose @("up", "-d", "--build", "kafka")
     Invoke-DockerCompose @("up", "-d", "--build", "namenode", "datanode")
     Invoke-DockerCompose @("up", "-d", "--build", "spark-master", "spark-worker")
-    $coreServices = @("zookeeper", "kafka", "namenode", "datanode", "cassandra", "spark-master", "spark-worker")
+    $coreServices = @("zookeeper", "kafka", "namenode", "datanode", "spark-master", "spark-worker")
+    if ($UseComposeCassandra) {
+        $coreServices += "cassandra"
+    }
     Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services $coreServices
     Invoke-Bash "bash scripts/init_hdfs_layout.sh"
 }
@@ -496,16 +551,311 @@ function Start-RealtimeNewData {
 
 }
 
+function Stop-ComposeKafkaProducers {
+    $producerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest", "demo-realtime-feed")
+    Write-Host "[INFO] Stopping Compose Kafka producer services before historical catch-up." -ForegroundColor Yellow
+    Invoke-DockerCompose (@("stop") + $producerServices)
+}
+
+function Ensure-ComposeKafkaProducersDoNotAutoRestart {
+    $sourceProducerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest")
+    Write-Host "[INFO] Recreating source producer containers with restart=no and leaving them stopped." -ForegroundColor Yellow
+    Invoke-DockerCompose (@("up", "--no-start", "--force-recreate") + $sourceProducerServices)
+    Invoke-DockerCompose (@("stop") + $sourceProducerServices)
+}
+
+function Cleanup-FinishedK8sCompute {
+    param(
+        [int]$KeepNewestJobs = 8,
+        [switch]$DeleteAllFinished,
+        [switch]$BestEffort
+    )
+
+    $cleanupArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "scripts/cleanup_finished_k8s_compute.ps1",
+        "-Namespace", "ais",
+        "-KeepNewestJobs", "$KeepNewestJobs"
+    )
+    if ($DeleteAllFinished) {
+        $cleanupArgs += "-DeleteAllFinished"
+    }
+
+    & powershell @cleanupArgs
+    if ($LASTEXITCODE -ne 0) {
+        $message = "Finished Kubernetes compute cleanup failed"
+        if ($BestEffort) {
+            Write-Host "[WARN] $message" -ForegroundColor Yellow
+            return
+        }
+        throw $message
+    }
+}
+
+function Reset-BackfillKafkaTopics {
+    $topics = Get-BackfillKafkaTopics
+    Write-Host ("[INFO] Resetting Kafka backfill topics: {0}" -f ($topics -join ", ")) -ForegroundColor Yellow
+    foreach ($topic in $topics) {
+        docker exec kafka kafka-topics --bootstrap-server kafka:9092 --delete --topic $topic 2>$null | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN] Topic delete failed or topic was absent: $topic" -ForegroundColor Yellow
+        }
+    }
+    Start-Sleep -Seconds 5
+}
+
+function Test-ComposeSparkAppRunning {
+    param([Parameter(Mandatory = $true)][string]$AppName)
+
+    try {
+        $sparkApps = Invoke-RestMethod -Uri "http://localhost:$resolvedSparkMasterUiHostPort/json" -TimeoutSec 5
+        return @($sparkApps.activeapps | Where-Object { $_.name -eq $AppName -and $_.state -eq "RUNNING" }).Count -gt 0
+    }
+    catch {
+        Write-Host "[WARN] Could not query Spark master app list: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function ConvertTo-K8sNameToken {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    return ($Value.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+}
+
+function Stop-ComposeSparkAppsByName {
+    param([Parameter(Mandatory = $true)][string[]]$AppNames)
+
+    try {
+        $sparkApps = Invoke-RestMethod -Uri "http://localhost:$resolvedSparkMasterUiHostPort/json" -TimeoutSec 5
+    }
+    catch {
+        Write-Host "[INFO] Compose Spark master UI not reachable; no Compose realtime app to stop." -ForegroundColor Yellow
+        return
+    }
+
+    $activeApps = @($sparkApps.activeapps)
+    foreach ($appName in $AppNames) {
+        $matches = @($activeApps | Where-Object { $_.name -eq $appName -and $_.state -eq "RUNNING" })
+        foreach ($app in $matches) {
+            Write-Host "[INFO] Stopping old Compose Spark app before K8s realtime: $($app.name) $($app.id)" -ForegroundColor Yellow
+            docker exec spark-master /opt/spark/bin/spark-class org.apache.spark.deploy.Client kill spark://spark-master:7077 $app.id | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[WARN] Failed to kill Compose Spark app $($app.id); continuing." -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
+function Test-K8sRealtimeStreamRunning {
+    param([Parameter(Mandatory = $true)][string]$AppName)
+
+    $token = ConvertTo-K8sNameToken -Value $AppName
+    try {
+        $pods = kubectl -n ais get pods -l spark-role=driver -o json | ConvertFrom-Json
+    }
+    catch {
+        return $false
+    }
+
+    foreach ($pod in @($pods.items)) {
+        if ($pod.status.phase -ne "Running") {
+            continue
+        }
+        $labels = $pod.metadata.labels
+        $sparkAppName = [string]$labels."spark-app-name"
+        $podName = [string]$pod.metadata.name
+        $haystack = "$(ConvertTo-K8sNameToken -Value $sparkAppName) $(ConvertTo-K8sNameToken -Value $podName)"
+        if ($haystack -like "*$token*") {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Wait-K8sRealtimeDriverRunning {
+    param(
+        [Parameter(Mandatory = $true)][string]$AppName,
+        [int]$TimeoutSeconds = 180
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-K8sRealtimeStreamRunning -AppName $AppName) {
+            Write-Host "[INFO] K8s realtime Spark driver is running: $AppName" -ForegroundColor Yellow
+            return
+        }
+        Start-Sleep -Seconds 5
+    }
+
+    kubectl -n ais get pods -l spark-role=driver -o wide | Out-Host
+    throw "Timed out waiting for K8s realtime Spark driver: $AppName"
+}
+
+function Submit-K8sRealtimeBronzeStream {
+    param(
+        [Parameter(Mandatory = $true)][string]$Job,
+        [Parameter(Mandatory = $true)][string]$AppName,
+        [Parameter(Mandatory = $true)][string]$CheckpointPath
+    )
+
+    if (Test-K8sRealtimeStreamRunning -AppName $AppName) {
+        Write-Host "[INFO] K8s realtime Spark stream already running; skip duplicate submit: $AppName" -ForegroundColor Yellow
+        return
+    }
+
+    $stamp = Get-Date -Format "yyyyMMddHHmmss"
+    $submitJobName = "ais-realtime-$Job-$stamp"
+    $extraEnv = @(
+        "KAFKA_STARTING_OFFSETS=latest",
+        "STOP_AFTER_BATCH=false",
+        "PROCESSING_TIME='$RealtimeProcessingTime'",
+        "CHECKPOINT_PATH='$CheckpointPath'",
+        "SPARK_RUNTIME_APP_NAME='$AppName'",
+        "SPARK_K8S_WAIT_APP_COMPLETION=false",
+        "SPARK_EXECUTOR_INSTANCES=1",
+        "SPARK_EXECUTOR_MEMORY=768m",
+        "SPARK_DRIVER_MEMORY=768m",
+        "SPARK_EXECUTOR_REQUEST_CORES=250m",
+        "SPARK_DRIVER_REQUEST_CORES=250m",
+        "SPARK_EXECUTOR_LIMIT_CORES=1",
+        "SPARK_DRIVER_LIMIT_CORES=1",
+        "SPARK_SQL_SHUFFLE_PARTITIONS=4",
+        "SPARK_DEFAULT_PARALLELISM=4",
+        "SPARK_SUBMIT_REQUEST_CPU=200m",
+        "SPARK_SUBMIT_REQUEST_MEMORY=512Mi",
+        "SPARK_SUBMIT_LIMIT_CPU=1",
+        "SPARK_SUBMIT_LIMIT_MEMORY=1Gi",
+        "JOB_ACTIVE_DEADLINE_SECONDS=300",
+        "JOB_TTL_SECONDS_AFTER_FINISHED=3600"
+    ) -join " "
+
+    Start-SparkK8sAsync -Job $Job -SubmitJobName $submitJobName -ExtraEnv "$extraEnv " -NoDateRange | Out-Null
+    Wait-K8sRealtimeDriverRunning -AppName $AppName
+}
+
+function Submit-ComposeRealtimeBronzeStream {
+    param(
+        [Parameter(Mandatory = $true)][string]$AppName,
+        [Parameter(Mandatory = $true)][string]$JobFile,
+        [Parameter(Mandatory = $true)][string]$KafkaTopic,
+        [Parameter(Mandatory = $true)][string]$IcebergTable,
+        [Parameter(Mandatory = $true)][string]$CheckpointPath,
+        [Parameter(Mandatory = $true)][string]$HdfsDataDir,
+        [Parameter(Mandatory = $true)][string]$HdfsCheckpointDir
+    )
+
+    $packages = "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-client:3.3.4,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1"
+    $warehouse = "hdfs://namenode:9000/warehouse/iceberg"
+    $hdfs = "hdfs://namenode:9000"
+
+    if (Test-ComposeSparkAppRunning -AppName $AppName) {
+        Write-Host "[INFO] Realtime Spark stream already running; skip duplicate submit: $AppName" -ForegroundColor Yellow
+        return
+    }
+
+    foreach ($dir in @($HdfsDataDir, $HdfsCheckpointDir, "/warehouse/iceberg")) {
+        docker exec namenode hdfs dfs -fs $hdfs -mkdir -p $dir | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create HDFS path: $dir" }
+        docker exec namenode hdfs dfs -fs $hdfs -chmod 777 $dir | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Failed to chmod HDFS path: $dir" }
+    }
+
+    $dockerArgs = @(
+        "exec", "-d",
+        "-e", "KAFKA_BOOTSTRAP_SERVERS=kafka:9092",
+        "-e", "KAFKA_STARTING_OFFSETS=latest",
+        "-e", "KAFKA_TOPIC=$KafkaTopic",
+        "-e", "ICEBERG_TABLE=$IcebergTable",
+        "-e", "CHECKPOINT_PATH=$CheckpointPath",
+        "-e", "HDFS_NAMENODE=$hdfs",
+        "-e", "HDFS_DEFAULT_FS=$hdfs",
+        "-e", "HADOOP_DEFAULT_FS=$hdfs",
+        "-e", "ICEBERG_WAREHOUSE=$warehouse",
+        "spark-master",
+        "/opt/spark/bin/spark-submit",
+        "--master", "spark://spark-master:7077",
+        "--deploy-mode", "client",
+        "--name", $AppName,
+        "--conf", "spark.jars.ivy=/root/.ivy2",
+        "--repositories", "https://repo.maven.apache.org/maven2,https://repo1.maven.org/maven2,https://repos.spark-packages.org",
+        "--packages", $packages,
+        "--conf", "spark.sql.streaming.checkpointLocation=$CheckpointPath",
+        "--conf", "spark.hadoop.fs.defaultFS=$hdfs",
+        "--conf", "spark.cores.max=1",
+        "--conf", "spark.executor.cores=1",
+        "--conf", "spark.sql.shuffle.partitions=4",
+        "--conf", "spark.default.parallelism=4",
+        "--conf", "spark.sql.session.timeZone=UTC",
+        "--conf", "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+        "--conf", "spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog",
+        "--conf", "spark.sql.catalog.ais.type=hadoop",
+        "--conf", "spark.sql.catalog.ais.warehouse=$warehouse",
+        $JobFile,
+        "--processing-time", $RealtimeProcessingTime
+    )
+
+    & docker @dockerArgs | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to submit realtime Spark stream: $AppName"
+    }
+    Write-Host "[INFO] Submitted realtime Spark stream without bash: $AppName" -ForegroundColor Yellow
+}
+
 function Start-RealtimeBronzeStreaming {
-    Invoke-Bash "DETACH=true KAFKA_STARTING_OFFSETS=latest STOP_AFTER_BATCH=false PROCESSING_TIME='$RealtimeProcessingTime' bash scripts/submit_spark.sh openaq"
-    Invoke-Bash "DETACH=true KAFKA_STARTING_OFFSETS=latest STOP_AFTER_BATCH=false PROCESSING_TIME='$RealtimeProcessingTime' bash scripts/submit_spark.sh weather"
+    $runId = Get-Date -Format "yyyyMMddHHmmss"
+    if (-not $UseComposeRealtimeBronze) {
+        Write-Host "[INFO] Starting realtime Bronze streams on Kubernetes Spark pods." -ForegroundColor Yellow
+        Stop-ComposeSparkAppsByName -AppNames @("OpenAQHourly_Streaming", "WeatherHistory_Streaming")
+        Submit-K8sRealtimeBronzeStream `
+            -Job "openaq" `
+            -AppName "OpenAQHourly_Streaming" `
+            -CheckpointPath "$k8sHdfsNamenode/checkpoints/realtime/$runId/openaq_hourly/"
+        if ($EnableWeatherRealtimeStream) {
+            Submit-K8sRealtimeBronzeStream `
+                -Job "weather" `
+                -AppName "WeatherHistory_Streaming" `
+                -CheckpointPath "$k8sHdfsNamenode/checkpoints/realtime/$runId/weather_history/"
+        }
+        else {
+            Write-Host "[INFO] Weather realtime Bronze stream skipped by default for local demo stability. Pass -EnableWeatherRealtimeStream to run it too." -ForegroundColor Yellow
+        }
+        kubectl -n ais get pods -l spark-role=driver -o wide | Out-Host
+        return
+    }
+
+    Write-Host "[INFO] Ensuring Compose Spark master/worker are running before realtime Bronze streaming." -ForegroundColor Yellow
+    Invoke-DockerCompose @("up", "-d", "spark-master", "spark-worker")
+    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("spark-master", "spark-worker")
+    Submit-ComposeRealtimeBronzeStream `
+        -AppName "OpenAQHourly_Streaming" `
+        -JobFile "/opt/spark-jobs/openaq_hourly_streaming.py" `
+        -KafkaTopic "openaq-hourly" `
+        -IcebergTable "ais.air_quality.openaq_hourly_bronze" `
+        -CheckpointPath "hdfs://namenode:9000/checkpoints/realtime/$runId/openaq_hourly/" `
+        -HdfsDataDir "/warehouse/iceberg/air_quality/openaq_hourly_bronze" `
+        -HdfsCheckpointDir "/checkpoints/realtime/$runId/openaq_hourly"
+    if ($EnableWeatherRealtimeStream) {
+        Submit-ComposeRealtimeBronzeStream `
+            -AppName "WeatherHistory_Streaming" `
+            -JobFile "/opt/spark-jobs/weather_streaming.py" `
+            -KafkaTopic "weather_history" `
+            -IcebergTable "ais.weather.weather_history_bronze" `
+            -CheckpointPath "hdfs://namenode:9000/checkpoints/realtime/$runId/weather_history/" `
+            -HdfsDataDir "/warehouse/iceberg/weather/weather_history_bronze" `
+            -HdfsCheckpointDir "/checkpoints/realtime/$runId/weather_history"
+    }
+    else {
+        Write-Host "[INFO] Weather realtime Bronze stream skipped by default for local demo stability. Pass -EnableWeatherRealtimeStream to run it too." -ForegroundColor Yellow
+    }
 }
 
 function Ensure-OnlineServingInfra {
     Write-Host "[INFO] Ensuring Cassandra and HDFS are running for online serving." -ForegroundColor Yellow
+    Ensure-K8sCassandra
     $env:HDFS_NAMENODE_HOST_PORT = "$resolvedHdfsHostPort"
-    Invoke-DockerCompose @("up", "-d", "cassandra", "namenode", "datanode")
-    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("cassandra", "namenode", "datanode")
+    Invoke-DockerCompose @("up", "-d", "namenode", "datanode")
+    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("namenode", "datanode")
     Invoke-Bash "bash scripts/init_hdfs_layout.sh"
 }
 
@@ -627,6 +977,113 @@ function Assert-KafkaTopicHasMessages {
     }
 }
 
+function Get-BackfillCacheDir {
+    return Join-Path $rootDir ("cache/backfill/{0}_{1}" -f $resolvedStartDate, $resolvedEndDate)
+}
+
+function Get-BackfillKafkaTopics {
+    return @(
+        "openaq-hourly",
+        "weather_history",
+        "sentinel5p-summary",
+        "maiac-summary",
+        "era5-files"
+    )
+}
+
+function Test-BackfillKafkaCache {
+    param([Parameter(Mandatory = $true)][string]$CacheDir)
+
+    if (-not (Test-Path -LiteralPath $CacheDir -PathType Container)) {
+        return $false
+    }
+
+    foreach ($topic in Get-BackfillKafkaTopics) {
+        $topicFile = Join-Path $CacheDir "$topic.jsonl"
+        if (-not (Test-Path -LiteralPath $topicFile -PathType Leaf)) {
+            Write-Host "[WARN] Backfill cache exists but is missing $topicFile; will refresh from source." -ForegroundColor Yellow
+            return $false
+        }
+        if ((Get-Item -LiteralPath $topicFile).Length -le 0) {
+            Write-Host "[WARN] Backfill cache file is empty: $topicFile; will refresh from source." -ForegroundColor Yellow
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Restore-BackfillKafkaCache {
+    param([Parameter(Mandatory = $true)][string]$CacheDir)
+
+    Write-Host "[INFO] Loading historical backfill from cache: $CacheDir" -ForegroundColor Yellow
+    foreach ($topic in Get-BackfillKafkaTopics) {
+        $topicFile = Join-Path $CacheDir "$topic.jsonl"
+        $lineCount = (Get-Content -LiteralPath $topicFile | Measure-Object -Line).Lines
+        Write-Host ("[INFO] Replaying {0} cached message(s) to Kafka topic {1}" -f $lineCount, $topic) -ForegroundColor Yellow
+        Get-Content -LiteralPath $topicFile -Raw | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:9092 --topic $topic | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to replay cached backfill topic '$topic' from $topicFile"
+        }
+    }
+}
+
+function Save-BackfillKafkaCache {
+    param([Parameter(Mandatory = $true)][string]$CacheDir)
+
+    Write-Host "[INFO] Saving historical backfill Kafka snapshot to cache: $CacheDir" -ForegroundColor Yellow
+    New-Item -ItemType Directory -Force -Path $CacheDir | Out-Null
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    $manifestTopics = @{}
+
+    foreach ($topic in Get-BackfillKafkaTopics) {
+        $topicFile = Join-Path $CacheDir "$topic.jsonl"
+        $previousErrorActionPreference = $ErrorActionPreference
+        $rawOutput = @()
+        $consumerExitCode = 0
+        try {
+            $ErrorActionPreference = "Continue"
+            $rawOutput = @(& docker exec kafka kafka-console-consumer --bootstrap-server kafka:9092 --topic $topic --from-beginning --timeout-ms 10000 2>&1)
+            $consumerExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+
+        $messages = @(
+            $rawOutput `
+                | ForEach-Object { $_.ToString() } `
+                | Where-Object {
+                    $line = $_.Trim()
+                    $line.StartsWith("{")
+                }
+        )
+        if ($consumerExitCode -ne 0 -and $messages.Count -eq 0) {
+            $raw = ($rawOutput | ForEach-Object { $_.ToString() } | Select-Object -Last 20) -join "`n"
+            throw "Failed to export Kafka topic '$topic' to backfill cache. consumer_exit=$consumerExitCode raw_tail:`n$raw"
+        }
+        if ($messages.Count -eq 0) {
+            throw "Kafka topic '$topic' has no messages to cache"
+        }
+
+        [System.IO.File]::WriteAllLines($topicFile, [string[]]$messages, $utf8NoBom)
+        $manifestTopics[$topic] = @{
+            file = "$topic.jsonl"
+            messages = $messages.Count
+        }
+        Write-Host ("[INFO] Cached {0} message(s) from Kafka topic {1}" -f $messages.Count, $topic) -ForegroundColor Yellow
+    }
+
+    $manifest = @{
+        start_date = $resolvedStartDate
+        end_date = $resolvedEndDate
+        requested_end_date = $realtimeSimulationDate
+        created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        topics = $manifestTopics
+    } | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText((Join-Path $CacheDir "manifest.json"), $manifest, $utf8NoBom)
+}
+
 function Submit-SparkK8s {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -645,6 +1102,9 @@ function Submit-SparkK8s {
 
     # Large jobs can take time while Spark driver/executors are scheduled.
     Invoke-Bash "${kafkaEnv}${hdfsEnv}${dateEnv}${ExtraEnv}FULL_REFRESH=1 KUBECTL_TIMEOUT=3600s SPARK_SUBMIT_IMAGE_PULL_POLICY=IfNotPresent bash scripts/submit_spark_k8s.sh $Job"
+    if (-not $KeepFinishedBatchJobs) {
+        Cleanup-FinishedK8sCompute -DeleteAllFinished -BestEffort
+    }
 }
 
 function Submit-SparkK8sBestEffort {
@@ -734,6 +1194,9 @@ function Wait-K8sSubmitJobs {
                 continue
             }
             throw "Spark driver pod failed for submit job: $jobName"
+        }
+        if (-not $KeepFinishedBatchJobs) {
+            Cleanup-FinishedK8sCompute -DeleteAllFinished -BestEffort
         }
     }
 }
@@ -878,6 +1341,7 @@ $K8sKafkaBootstrapServers = Replace-EndpointHost -Endpoint $K8sKafkaBootstrapSer
 $k8sHdfsNamenode = "hdfs://namenode:9000"
 $k8sWebHdfsBase = "http://namenode:9870/webhdfs/v1"
 $k8sIcebergWarehouse = "$k8sHdfsNamenode/warehouse/iceberg"
+$k8sCassandraHost = if ($UseComposeCassandra) { $k8sHostBridge } else { "cassandra.ais.svc.cluster.local" }
 $composeHdfsNamenode = "hdfs://namenode:9000"
 $composeWebHdfsBase = "http://namenode:9870/webhdfs/v1"
 $composeIcebergWarehouse = "$composeHdfsNamenode/warehouse/iceberg"
@@ -886,6 +1350,7 @@ $runnerNow = Get-Date
 $simulatedCurrentClock = $runnerNow.ToString("HH:mm:ss")
 $simulatedCurrentHour = $runnerNow.ToString("HH")
 $historicalBackfillEndTime = "${historicalBackfillEndDate}T23:59:59Z"
+$staticHourlyContextHour = "${historicalBackfillEndDate}T23:00:00Z"
 $simulatedBaseTime = "${realtimeSimulationDate}T${simulatedCurrentClock}Z"
 $simulatedBaseHour = "${realtimeSimulationDate}T${simulatedCurrentHour}:00:00Z"
 $asofEnv = "BASE_TIME='$historicalBackfillEndTime' BASE_HOUR='${historicalBackfillEndDate}T23:00:00Z' "
@@ -909,6 +1374,10 @@ Write-Host "Simulated current time: $simulatedBaseTime (date=realtime simulation
 Write-Host "Simulated feature base hour: $simulatedBaseHour (hourly feature/prediction key)"
 Write-Host "Default demo window: StartDate=$StartDate EndDate=$EndDate. LookbackDays is used only when you pass an empty StartDate/EndDate."
 Write-Host "Resume from step: $ResumeFromStep"
+Write-Host "Backfill cache mode: $BackfillCacheMode path=$(Get-BackfillCacheDir)"
+Write-Host ("Finished batch cleanup: {0}" -f $(if ($KeepFinishedBatchJobs) { "disabled by default; keeping completed/failed K8s jobs visible for demo" } else { "enabled; deleting completed/failed K8s jobs after each step" })) -ForegroundColor Yellow
+Write-Host "Hourly context mode: $HourlyContextMode static_hour=$staticHourlyContextHour"
+Write-Host ("Realtime Bronze streams: mode={0} openaq=enabled weather={1}" -f $(if ($UseComposeRealtimeBronze) { "compose-spark" } else { "k8s-spark-pods" }), $(if ($EnableWeatherRealtimeStream) { "enabled" } else { "disabled by default for local demo stability" })) -ForegroundColor Yellow
 Write-Host ("Spark execution mode: {0}" -f $(if ($combinedMode) { "combined pipeline mode" } else { "legacy per-job mode" })) -ForegroundColor Yellow
 Write-Host ("Trajectory directions: {0}" -f $(if ($IncludeForwardTrajectory) { "backward + forward" } else { "backward only" })) -ForegroundColor Yellow
 Write-Host ("Online inference feature source: {0}" -f $(if ($onlineServingEnabled) { "Cassandra feature state" } else { "Iceberg serving features" })) -ForegroundColor Yellow
@@ -917,6 +1386,7 @@ Write-Host ("Demo near-realtime feed: {0}" -f $(if ($SkipDemoRealtimeFeed) { "di
 Write-Host ("Realtime online feature loop: enabled interval=${OnlineFeatureIntervalSeconds}s lookback=${OnlineFeatureLookbackHours}h prediction_interval=${RealtimePredictionIntervalSeconds}s") -ForegroundColor Yellow
 Write-Host "K8s host bridge: $k8sHostBridge" -ForegroundColor Yellow
 Write-Host "K8s Kafka bootstrap: $K8sKafkaBootstrapServers" -ForegroundColor Yellow
+Write-Host "K8s Cassandra endpoint: ${k8sCassandraHost}:9042" -ForegroundColor Yellow
 Write-Host "HDFS host endpoint: $k8sHdfsNamenode" -ForegroundColor Yellow
 Write-Host "HDFS topology: single Compose NameNode + DataNode" -ForegroundColor Yellow
 Write-Host "Spark Master UI host endpoint: http://localhost:$resolvedSparkMasterUiHostPort" -ForegroundColor Yellow
@@ -948,12 +1418,17 @@ if (Should-RunStep 2) {
             ICEBERG_WAREHOUSE = $k8sIcebergWarehouse
             MODEL_ARTIFACT_BASE_URI = "$k8sHdfsNamenode/models"
             VIS_CACHE_BASE_URI = "$k8sHdfsNamenode/visualization_cache"
+            CASSANDRA_HOST = $k8sCassandraHost
+            CASSANDRA_PORT = "9042"
             HISTORICAL_BACKFILL_END_DATE = $historicalBackfillEndDate
             REALTIME_SIMULATION_DATE = $realtimeSimulationDate
             ENABLE_REALTIME_ONLINE_FEATURES = "1"
             ONLINE_FEATURE_INTERVAL_SECONDS = "$OnlineFeatureIntervalSeconds"
             REALTIME_PREDICTION_INTERVAL_SECONDS = "$RealtimePredictionIntervalSeconds"
             ONLINE_FEATURE_LOOKBACK_HOURS = "$OnlineFeatureLookbackHours"
+            HOURLY_CONTEXT_MODE = $HourlyContextMode.ToLowerInvariant()
+            HOURLY_CONTEXT_STATIC_DATE = $historicalBackfillEndDate
+            HOURLY_CONTEXT_STATIC_HOUR = $staticHourlyContextHour
             BASE_TIME = $simulatedBaseTime
             BASE_HOUR = $simulatedBaseHour
             FEATURE_SOURCE = $(if ($onlineServingEnabled) { "cassandra" } else { "iceberg" })
@@ -961,6 +1436,7 @@ if (Should-RunStep 2) {
             VIS_FORECAST_SOURCE = $(if ($onlineServingEnabled) { "cassandra" } else { "cache" })
         }
         Write-Host "[INFO] K8s Spark Kafka bootstrap: $K8sKafkaBootstrapServers" -ForegroundColor Yellow
+        Cleanup-FinishedK8sCompute -KeepNewestJobs 8
     }
 }
 else { Write-Host "[SKIP] Step 2 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
@@ -970,7 +1446,11 @@ if (-not $SkipBuildImages) {
         Step "3) Build runtime images" {
             docker build -t ais-spark-runtime:local -f spark/Dockerfile . | Out-Host
             docker build -t ais-ml-runtime:local -f ml/Dockerfile . | Out-Host
+            docker build -t ais-pm25-api:local -f serving/pm25_api/Dockerfile . | Out-Host
+            docker build -t ais-visualization-api:local -f serving/visualization_api/Dockerfile . | Out-Host
+            docker build -t ais-ui:local -f ui/Dockerfile . | Out-Host
             docker compose build ingest openaq-ingest sentinel5p-ingest maiac-ingest demo-realtime-feed | Out-Host
+            Ensure-ComposeKafkaProducersDoNotAutoRestart
         }
     }
     else { Write-Host "[SKIP] Step 3 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
@@ -989,12 +1469,37 @@ else { Write-Host "[SKIP] Step 4 due to -ResumeFromStep $ResumeFromStep" -Foregr
 if (-not $SkipBackfill) {
     if (Should-RunStep 5) {
         Step "5) Backfill source data to Kafka" {
-            Invoke-Bash "LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' bash scripts/submit_spark.sh openaq-ingest"
-            Invoke-Bash "LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' bash scripts/submit_spark.sh weather-ingest"
-            Invoke-Bash "${composeHdfsEnv}LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' S5P_DOWNLOAD_RAW=true S5P_RAW_HDFS_BASE_PATH='/raw/sentinel5p' bash scripts/submit_spark.sh sentinel5p-ingest"
-            Invoke-Bash "LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' bash scripts/submit_spark.sh maiac-ingest"
-            Invoke-Bash "${composeHdfsEnv}LOOKBACK_DAYS=$LookbackDays ERA5_START_DATE='$resolvedStartDate' ERA5_END_DATE='$resolvedEndDate' ERA5_DATASET_TYPE='surface' bash scripts/submit_spark.sh era5-ingest"
-            Invoke-Bash "${composeHdfsEnv}LOOKBACK_DAYS=$LookbackDays ERA5_START_DATE='$resolvedStartDate' ERA5_END_DATE='$resolvedEndDate' ERA5_DATASET_TYPE='pressure_levels' bash scripts/submit_spark.sh era5-ingest"
+            Stop-ComposeKafkaProducers
+            if ($ResetKafkaBackfillTopics) {
+                Reset-BackfillKafkaTopics
+            }
+            $backfillCacheDir = Get-BackfillCacheDir
+            $hasBackfillCache = Test-BackfillKafkaCache -CacheDir $backfillCacheDir
+            if ($BackfillCacheMode -eq "Refresh") {
+                Write-Host "[INFO] BackfillCacheMode=Refresh; running source ingest and overwriting cache." -ForegroundColor Yellow
+                $hasBackfillCache = $false
+            }
+
+            if ($BackfillCacheMode -eq "SnapshotOnly") {
+                Write-Host "[INFO] BackfillCacheMode=SnapshotOnly; saving current Kafka topics to cache without source ingest." -ForegroundColor Yellow
+                Save-BackfillKafkaCache -CacheDir $backfillCacheDir
+            }
+            elseif ($hasBackfillCache) {
+                Restore-BackfillKafkaCache -CacheDir $backfillCacheDir
+            }
+            elseif ($BackfillCacheMode -eq "Require") {
+                throw "Backfill cache is required but missing/incomplete: $backfillCacheDir. Run once with -BackfillCacheMode Auto or Refresh while network/source data is available to create it, or SnapshotOnly if Kafka already contains the completed backfill."
+            }
+            else {
+                Write-Host "[INFO] No complete backfill cache found; running source ingest normally, then saving cache for future offline runs." -ForegroundColor Yellow
+                Invoke-Bash "LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' bash scripts/submit_spark.sh openaq-ingest"
+                Invoke-Bash "LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' bash scripts/submit_spark.sh weather-ingest"
+                Invoke-Bash "${composeHdfsEnv}LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' S5P_DOWNLOAD_RAW=true S5P_RAW_HDFS_BASE_PATH='/raw/sentinel5p' bash scripts/submit_spark.sh sentinel5p-ingest"
+                Invoke-Bash "LOOKBACK_DAYS=$LookbackDays WINDOW_START_UTC='${resolvedStartDate}T00:00:00Z' WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z' bash scripts/submit_spark.sh maiac-ingest"
+                Invoke-Bash "${composeHdfsEnv}LOOKBACK_DAYS=$LookbackDays ERA5_START_DATE='$resolvedStartDate' ERA5_END_DATE='$resolvedEndDate' ERA5_DATASET_TYPE='surface' bash scripts/submit_spark.sh era5-ingest"
+                Invoke-Bash "${composeHdfsEnv}LOOKBACK_DAYS=$LookbackDays ERA5_START_DATE='$resolvedStartDate' ERA5_END_DATE='$resolvedEndDate' ERA5_DATASET_TYPE='pressure_levels' bash scripts/submit_spark.sh era5-ingest"
+                Save-BackfillKafkaCache -CacheDir $backfillCacheDir
+            }
             Assert-KafkaTopicHasMessages -Topic "openaq-hourly"
             Assert-KafkaTopicHasMessages -Topic "weather_history"
             Assert-KafkaTopicHasMessages -Topic "sentinel5p-summary"
@@ -1006,8 +1511,13 @@ if (-not $SkipBackfill) {
 
     if (Should-RunStep 6) {
         Step "6) Catch Kafka bronze topics into Iceberg" {
+            Cleanup-FinishedK8sCompute -KeepNewestJobs 8
+            Stop-ComposeKafkaProducers
+            $bronzeCheckpointRunId = "todo4_${resolvedStartDate}_${resolvedEndDate}_$(Get-Date -Format 'yyyyMMddHHmmss')"
+            $bronzeCheckpointEnv = "BRONZE_CHECKPOINT_RUN_ID='$bronzeCheckpointRunId' "
+            Write-Host "[INFO] Bronze checkpoint run id: $bronzeCheckpointRunId" -ForegroundColor Yellow
             if ($combinedMode) {
-                Submit-SparkK8s "bronze-pipeline" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true PIPELINE_SOURCES='openaq,weather,sentinel5p,maiac,era5-files' PIPELINE_CONTINUE_ON_ERROR=false " -NoDateRange
+                Submit-SparkK8s "bronze-pipeline" ($bronzeCheckpointEnv + "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true PIPELINE_SOURCES='openaq,weather,sentinel5p,maiac,era5-files' PIPELINE_CONTINUE_ON_ERROR=false ") -NoDateRange
             }
             else {
                 Submit-SparkK8s "openaq" "KAFKA_STARTING_OFFSETS=earliest STOP_AFTER_BATCH=true " -NoDateRange
@@ -1045,6 +1555,7 @@ else { Write-Host "[SKIP] Step 7 due to -ResumeFromStep $ResumeFromStep" -Foregr
 if (-not $SkipTodo2) {
     if (Should-RunStep 8) {
         Step "8) TODO2 trajectory and source feature tables" {
+            Cleanup-FinishedK8sCompute -KeepNewestJobs 8
             $hysplitEnv = "HYSPLIT_MAX_RUNS=$HysplitMaxRuns HYSPLIT_PARALLELISM=$HysplitParallelism HYSPLIT_TIMEOUT_SEC=$HysplitTimeoutSec "
             Write-Host ("[INFO] HYSPLIT window={0}->{1} max_runs={2} parallelism={3} timeout_sec={4} shard_count={5}" -f $resolvedStartDate, $resolvedEndDate, $HysplitMaxRuns, $HysplitParallelism, $HysplitTimeoutSec, $HysplitShardCount) -ForegroundColor Yellow
             if ($combinedMode) {
@@ -1069,6 +1580,7 @@ if (-not $SkipTodo2) {
                     }
                 }
                 Wait-K8sSubmitJobs -JobNames $submittedJobs -TimeoutSeconds 3600 -AllowFailures:$AllowTrajectoryDegraded
+                Cleanup-FinishedK8sCompute -KeepNewestJobs 8
                 $postDirection = if ($IncludeForwardTrajectory) { "both" } else { "backward" }
                 if ($AllowTrajectoryDegraded) {
                     Submit-SparkK8sBestEffort "trajectory-post-pipeline" "DIRECTION=$postDirection TRAJ_SPATIAL_BUCKET_DEG=0.25 MAX_DISTANCE_DEG=0.25 " | Out-Null
@@ -1164,6 +1676,8 @@ if (Should-RunStep 12) {
                 FEATURE_SOURCE = "cassandra"
                 WRITE_CASSANDRA_FORECAST = "1"
                 VIS_FORECAST_SOURCE = "cassandra"
+                CASSANDRA_HOST = $k8sCassandraHost
+                CASSANDRA_PORT = "9042"
                 BASE_HOUR = $simulatedBaseHour
                 BASE_TIME = $simulatedBaseTime
             }
@@ -1272,7 +1786,7 @@ if (-not $SkipRealtimeNewData) {
     else { Write-Host "[SKIP] Step 16 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 }
 else {
-    Write-Host "[INFO] Skip near-realtime new-data loops due to -SkipRealtimeNewData"
+    Write-Host "[INFO] Skip external API new-data loops due to -SkipRealtimeNewData; demo near-realtime feed still runs in step 19 unless -SkipDemoRealtimeFeed is set."
 }
 
 if (Should-RunStep 17) {
@@ -1283,9 +1797,25 @@ if (Should-RunStep 17) {
 else { Write-Host "[SKIP] Step 17 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 
 if (Should-RunStep 18) {
-    Step "18) Start hourly ERA5/HYSPLIT context updater" {
+    Step "18) Install static hourly context hook" {
+        Patch-RuntimeConfig @{
+            HOURLY_CONTEXT_MODE = $HourlyContextMode.ToLowerInvariant()
+            HOURLY_CONTEXT_STATIC_DATE = $historicalBackfillEndDate
+            HOURLY_CONTEXT_STATIC_HOUR = $staticHourlyContextHour
+        }
         kubectl apply -f deploy/k8s/hourly/ais-hourly-context-updater-cronjob.yaml | Out-Host
-        Write-Host "[INFO] Hourly context updater schedule: ERA5 surface/pressure -> ERA5 bronze/silver -> ARL -> HYSPLIT -> trajectory hourly features." -ForegroundColor Yellow
+        Set-K8sCronJobSuspended -Name "ais-hourly-context-updater" -Suspended (-not $EnableHourlyContextUpdater)
+        if ($EnableHourlyContextUpdater) {
+            if ($HourlyContextMode -eq "Refresh") {
+                Write-Host "[WARN] Hourly context cron enabled in Refresh mode; this runs the heavy ERA5/HYSPLIT context pipeline." -ForegroundColor Yellow
+            }
+            else {
+                Write-Host "[INFO] Hourly context cron enabled in Static mode; it only writes the cached context marker and exits." -ForegroundColor Yellow
+            }
+        }
+        else {
+            Write-Host "[INFO] Hourly context hook installed suspended. Static context is pinned to $staticHourlyContextHour; no hourly ERA5/HYSPLIT refresh will run." -ForegroundColor Yellow
+        }
     }
 }
 else { Write-Host "[SKIP] Step 18 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
@@ -1304,7 +1834,7 @@ else {
 
 if ($onlineServingEnabled) {
     if (Should-RunStep 20) {
-        Step "20) Build online feature state and run realtime prediction" {
+        Step "20) Bootstrap asynchronous online feature and prediction cycle" {
             Write-Host ("[INFO] current base_time={0} online_feature_interval={1}s prediction_interval={2}s" -f $simulatedBaseTime, $OnlineFeatureIntervalSeconds, $RealtimePredictionIntervalSeconds) -ForegroundColor Yellow
             Ensure-OnlineServingInfra
             Invoke-Bash "bash scripts/ensure_cassandra_online_schema.sh"
@@ -1312,6 +1842,8 @@ if ($onlineServingEnabled) {
                 FEATURE_SOURCE = "cassandra"
                 WRITE_CASSANDRA_FORECAST = "1"
                 VIS_FORECAST_SOURCE = "cassandra"
+                CASSANDRA_HOST = $k8sCassandraHost
+                CASSANDRA_PORT = "9042"
                 BASE_HOUR = $simulatedBaseHour
                 BASE_TIME = $simulatedBaseTime
                 HISTORICAL_BACKFILL_END_DATE = $historicalBackfillEndDate
@@ -1320,23 +1852,33 @@ if ($onlineServingEnabled) {
                 REALTIME_PREDICTION_INTERVAL_SECONDS = "$RealtimePredictionIntervalSeconds"
                 ONLINE_FEATURE_LOOKBACK_HOURS = "$OnlineFeatureLookbackHours"
             }
-            if ($RealtimeBronzeWarmupSeconds -gt 0) {
-                Write-Host ("[INFO] Waiting {0}s for realtime Kafka->Bronze streaming warmup before online feature build." -f $RealtimeBronzeWarmupSeconds) -ForegroundColor Yellow
-                Start-Sleep -Seconds $RealtimeBronzeWarmupSeconds
-            }
             Patch-ComposeBridgeEndpoints -HostAddress $k8sHostBridge
-            Submit-SparkK8s "online-pm25-features" ("SPARK_EXECUTOR_INSTANCES=1 SPARK_SQL_SHUFFLE_PARTITIONS=4 SPARK_DEFAULT_PARALLELISM=4 " + $realtimeEnv) -NoDateRange
-            kubectl -n ais delete job pm25-predict --ignore-not-found | Out-Host
-            kubectl apply -f deploy/k8s/ml/pm25-predict-job.yaml | Out-Host
-            kubectl -n ais wait --for=condition=complete --timeout=600s job/pm25-predict | Out-Host
-            kubectl -n ais delete cronjob pm25-predict --ignore-not-found | Out-Host
+            Cleanup-FinishedK8sCompute -DeleteAllFinished -BestEffort
             kubectl apply -f deploy/k8s/ml/online-pm25-features-cronjob.yaml | Out-Host
+            kubectl apply -f deploy/k8s/ml/pm25-predict-cronjob.yaml | Out-Host
+            Set-K8sCronJobSuspended -Name "pm25-predict" -Suspended $true
+            Set-K8sCronJobSuspended -Name "online-pm25-features" -Suspended (-not $EnableOnlineCron)
+            if ($RunOnlineCycleNow) {
+                $manualJobName = "online-pm25-features-manual-$(Get-Date -Format 'yyyyMMddHHmmss')"
+                Invoke-Kubectl @("create", "job", "-n", "ais", "--from=cronjob/online-pm25-features", $manualJobName)
+                Write-Host "[INFO] Started one manual online cycle job: $manualJobName" -ForegroundColor Yellow
+            }
+            if ($EnableOnlineCron) {
+                Write-Host "[INFO] Online feature+prediction cron enabled. pm25-predict remains suspended because prediction is already run inside online-pm25-features." -ForegroundColor Yellow
+            }
+            else {
+                Write-Host "[INFO] Online cronjobs installed suspended; pass -RunOnlineCycleNow for one update or -EnableOnlineCron for scheduled updates." -ForegroundColor Yellow
+            }
         }
     }
     else { Write-Host "[SKIP] Step 20 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
 }
 else {
     Write-Host "[INFO] Online feature_state/prediction step disabled because -UseIcebergPredictionInput was set."
+}
+
+if (-not $KeepFinishedBatchJobs) {
+    Cleanup-FinishedK8sCompute -DeleteAllFinished -BestEffort
 }
 
 Write-Host ""

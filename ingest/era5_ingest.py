@@ -214,6 +214,28 @@ def _hdfs_path_exists(hdfs_uri: str) -> bool:
     return False
 
 
+def _hdfs_file_length(hdfs_uri: str) -> int:
+    last_response = None
+    for url in _webhdfs_path_urls(hdfs_uri):
+        response = requests.get(
+            url,
+            params={"op": "GETFILESTATUS", "user.name": os.getenv("HDFS_USER", "root")},
+            timeout=30,
+        )
+        last_response = response
+        if _is_standby_response(response):
+            logger.info("WebHDFS endpoint is standby, trying next endpoint: %s", url)
+            continue
+        if response.status_code == 200:
+            payload = response.json()
+            return int((payload.get("FileStatus") or {}).get("length") or 0)
+        if response.status_code == 404:
+            raise FileNotFoundError(hdfs_uri)
+        response.raise_for_status()
+    _raise_last_webhdfs_error(last_response)
+    return 0
+
+
 def _hdfs_mkdirs(hdfs_uri: str) -> None:
     _, abs_path = _split_hdfs_uri(hdfs_uri)
     parent = posixpath.dirname(abs_path)
@@ -462,6 +484,49 @@ def main() -> None:
             surface_hdfs_path is None or _hdfs_path_exists(surface_hdfs_path)
         ):
             logger.info(f"Skip existing HDFS file: {hdfs_path}")
+            month_first = date(year, month, 1)
+            month_last = _next_month(month_first) - timedelta(days=1)
+            req_start = max(start_d, month_first)
+            req_end = min(end_d, month_last)
+
+            start_hour, start_minute = _parse_hhmm(request_times[0])
+            end_hour, end_minute = _parse_hhmm(request_times[-1])
+            start_time = datetime(
+                req_start.year,
+                req_start.month,
+                req_start.day,
+                start_hour,
+                start_minute,
+                tzinfo=timezone.utc,
+            )
+            end_time = datetime(
+                req_end.year,
+                req_end.month,
+                req_end.day,
+                end_hour,
+                end_minute,
+                tzinfo=timezone.utc,
+            )
+
+            event = _event_payload(
+                dataset_type=args.dataset_type,
+                year=year,
+                month=month,
+                start_utc=start_time,
+                end_utc=end_time,
+                region=region,
+                file_path=hdfs_path,
+                file_size=_hdfs_file_length(hdfs_path),
+                checksum="existing_hdfs_file",
+                surface_file_path=surface_hdfs_path,
+                surface_file_size=_hdfs_file_length(surface_hdfs_path) if surface_hdfs_path is not None else None,
+                surface_checksum="existing_hdfs_file" if surface_hdfs_path is not None else None,
+            )
+            ok = send_event(producer, args.topic, event, logger, key_field="event_id", wait_for_ack=True)
+            if ok:
+                logger.info(f"Published Kafka event for existing HDFS file: {event['event_id']}")
+            else:
+                logger.error(f"Failed to publish Kafka event for existing HDFS file: {event['event_id']}")
             continue
 
         logger.info(f"Downloading ERA5 {args.dataset_type} {year}-{month:02d} -> {hdfs_path}")

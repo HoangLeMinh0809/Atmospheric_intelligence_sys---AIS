@@ -8,6 +8,7 @@ from airflow.operators.bash import BashOperator
 from ais_dag_utils import (
     ensure_streaming_job_command,
     kafka_lag_check_command,
+    operational_health_check_command,
 )
 
 DAG_ID = "ais_streaming_supervision"
@@ -70,6 +71,11 @@ with DAG(
         bash_command=kafka_lag_check_command("ais-stream-maiac", "maiac-summary", 50000),
     )
 
+    check_operational_health = BashOperator(
+        task_id="check_operational_health",
+        bash_command=operational_health_check_command(),
+    )
+
     supervision_done = BashOperator(
         task_id="supervision_done",
         bash_command=(
@@ -88,4 +94,4 @@ with DAG(
         check_openaq_kafka_lag,
         check_sentinel5p_kafka_lag,
         check_maiac_kafka_lag,
-    ] >> supervision_done
+    ] >> check_operational_health >> supervision_done

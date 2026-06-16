@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import traceback
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
@@ -27,7 +27,16 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_hanoi_bbox, get_hanoi_center, get_table_names, parse_asof_time
+from hanoi_config import (
+    HDFS_NAMENODE,
+    ICEBERG_CATALOG,
+    ICEBERG_WAREHOUSE,
+    SPARK_SQL_SESSION_TIMEZONE,
+    get_hanoi_bbox,
+    get_hanoi_center,
+    get_table_names,
+    parse_asof_time,
+)
 
 try:
     import netCDF4 as nc  # type: ignore
@@ -95,7 +104,6 @@ VAR_ALIASES = {
     "mean_sea_level_pressure": ["msl", "msl_pressure", "mean_sea_level_pressure"],
 }
 
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi ERA5 surface hourly silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -153,6 +161,7 @@ def build_spark() -> SparkSession:
     return (
         SparkSession.builder
         .appName("ERA5SurfaceHanoiSilver")
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
@@ -400,8 +409,8 @@ def _time_values(dataset) -> list[datetime]:
     calendar = getattr(time_var, "calendar", "standard")
     if units:
         values = nc.num2date(raw, units=units, calendar=calendar, only_use_cftime_datetimes=False)
-        return [datetime(v.year, v.month, v.day, v.hour, v.minute, v.second) for v in values]
-    return [datetime.utcfromtimestamp(float(v)) for v in raw]
+        return [datetime(v.year, v.month, v.day, v.hour, v.minute, v.second, tzinfo=timezone.utc) for v in values]
+    return [datetime.fromtimestamp(float(v), tz=timezone.utc) for v in raw]
 
 
 def _lat_lon(dataset):
@@ -485,7 +494,7 @@ def read_era5_file(
     bbox = get_hanoi_bbox()
     center = get_hanoi_center()
     rows: list[dict[str, Any]] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     resolved_path = resolve_netcdf_path(path)
     with nc.Dataset(str(resolved_path)) as dataset:
@@ -504,11 +513,12 @@ def read_era5_file(
 
         for idx, hour in enumerate(times):
             hour = hour.replace(minute=0, second=0, microsecond=0)
-            if start_date and hour.date() < start_date:
+            hour_utc_naive = hour.astimezone(timezone.utc).replace(tzinfo=None)
+            if start_date and hour_utc_naive.date() < start_date:
                 continue
-            if end_date and hour.date() > end_date:
+            if end_date and hour_utc_naive.date() > end_date:
                 continue
-            if asof_time and hour > asof_time:
+            if asof_time and hour_utc_naive > asof_time:
                 continue
 
             wind_u10 = _mean_at_time(cubes["wind_u10"], idx, mask)
@@ -526,7 +536,7 @@ def read_era5_file(
 
             rows.append(
                 {
-                    "hour": hour,
+                    "hour": hour_utc_naive,
                     "wind_u10": wind_u10,
                     "wind_v10": wind_v10,
                     "wind_speed": wind_speed,
@@ -540,10 +550,10 @@ def read_era5_file(
                     "mean_sea_level_pressure": _mean_at_time(cubes["mean_sea_level_pressure"], idx, mask),
                     "grid_point_count": grid_count,
                     "source_file": source_file,
-                    "year": hour.year,
-                    "month": hour.month,
-                    "day": hour.day,
-                    "spark_processed_at": now,
+                    "year": hour_utc_naive.year,
+                    "month": hour_utc_naive.month,
+                    "day": hour_utc_naive.day,
+                    "spark_processed_at": now.replace(tzinfo=None),
                 }
             )
     return rows

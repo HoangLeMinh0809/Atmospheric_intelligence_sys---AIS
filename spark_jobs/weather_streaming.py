@@ -12,6 +12,8 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     col,
+    coalesce,
+    expr,
     from_json,
     month as spark_month,
     to_date,
@@ -27,8 +29,9 @@ from pyspark.sql.types import (
     StructType,
 )
 
-from hanoi_config import get_table_names
+from hanoi_config import SPARK_SQL_SESSION_TIMEZONE, get_table_names
 from runtime_utils import apply_stream_trigger, parse_streaming_runtime
+from streaming_bronze_utils import add_contract_columns, contract_schema_fields, start_bronze_streams
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "weather_history")
@@ -94,7 +97,7 @@ WEATHER_SCHEMA = StructType(
         StructField("window_start_utc", StringType(), True),
         StructField("window_end_utc", StringType(), True),
         StructField("window_now_utc", StringType(), True),
-    ]
+    ] + contract_schema_fields()
 )
 
 WEATHER_TABLE_COLUMNS = [
@@ -163,6 +166,7 @@ def main() -> None:
     spark = (
         SparkSession.builder
         .appName("WeatherHistory_Streaming")
+        .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}.type", "hadoop")
@@ -188,14 +192,21 @@ def main() -> None:
     parsed_df = (
         kafka_df
         .selectExpr("CAST(key AS STRING) AS kafka_key", "CAST(value AS STRING) AS json_str")
-        .select(col("kafka_key"), from_json(col("json_str"), WEATHER_SCHEMA).alias("data"))
-        .select("data.*")
+        .select(col("json_str"), col("kafka_key"), from_json(col("json_str"), WEATHER_SCHEMA).alias("data"))
+        .select("json_str", "data.*")
+        .withColumnRenamed("json_str", "_raw_payload")
     )
 
-    final_df = (
+    final_df = add_contract_columns(
         parsed_df
         .withColumn("query_date", to_date(col("query_date"), "yyyy-MM-dd"))
-        .withColumn("event_time", to_timestamp(col("time"), "yyyy-MM-dd HH:mm"))
+        .withColumn(
+            "event_time",
+            coalesce(
+                expr("timestamp_seconds(time_epoch)"),
+                expr("to_utc_timestamp(to_timestamp(time, 'yyyy-MM-dd HH:mm'), tz_id)"),
+            ),
+        )
         .withColumn("ingest_time", to_timestamp(col("ingest_time")))
         .withColumn("window_start_utc", to_timestamp(col("window_start_utc")))
         .withColumn("window_end_utc", to_timestamp(col("window_end_utc")))
@@ -203,7 +214,7 @@ def main() -> None:
         .withColumn("year", spark_year(col("query_date")))
         .withColumn("month", spark_month(col("query_date")))
         .withColumn("spark_processed_at", col("ingest_time").cast("timestamp"))
-        .select(*WEATHER_TABLE_COLUMNS)
+        .select("*")
     )
 
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.weather")
@@ -273,20 +284,17 @@ def main() -> None:
         """
     )
 
-    writer = (
-        final_df.writeStream
-        .format("iceberg")
-        .outputMode("append")
-        .option("checkpointLocation", CHECKPOINT_PATH)
-        .queryName("weather_history_to_iceberg")
-    )
-
-    writer = apply_stream_trigger(writer, stop_after_batch=stop_after_batch, processing_time=processing_time)
-    query = writer.toTable(ICEBERG_TABLE)
-
     print(f"Weather stream mode: {'availableNow' if stop_after_batch else processing_time}")
     print(f"Kafka startingOffsets: {KAFKA_STARTING_OFFSETS}")
-    query.awaitTermination()
+    start_bronze_streams(
+        final_df,
+        table_name=ICEBERG_TABLE,
+        topic=KAFKA_TOPIC,
+        checkpoint_path=CHECKPOINT_PATH,
+        catalog=ICEBERG_CATALOG,
+        stop_after_batch=stop_after_batch,
+        processing_time=processing_time,
+    )
 
 
 if __name__ == "__main__":

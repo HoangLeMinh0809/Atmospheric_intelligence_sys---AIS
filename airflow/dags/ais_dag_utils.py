@@ -238,6 +238,17 @@ def kafka_lag_check_command(group_id: str, topic: str, max_lag: int = 50000) -> 
     )
 
 
+def operational_health_check_command() -> str:
+    return (
+        "set -euo pipefail\n"
+        "cd /opt/ais\n"
+        "python scripts/check_operational_health.py "
+        "--visualization-url ${VIS_API_BASE_URL:-http://visualization-api:8080} "
+        "--forecast-url ${PM25_API_BASE_URL:-http://pm25-api:8080} "
+        "--webhdfs-url ${HDFS_WEBHDFS_BASE:-http://namenode:9870/webhdfs/v1}"
+    )
+
+
 def reconcile_serving_command(lookback_hours: int = 24, tolerance: float = 0.95) -> str:
     return spark_submit_command(
         app_name="AIS_ReconcileServing",

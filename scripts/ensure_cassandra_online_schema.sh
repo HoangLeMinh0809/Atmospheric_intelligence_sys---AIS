@@ -3,8 +3,43 @@ set -euo pipefail
 
 CASSANDRA_CONTAINER="${CASSANDRA_CONTAINER:-cassandra}"
 CASSANDRA_KEYSPACE="${CASSANDRA_KEYSPACE:-ais_serving}"
+CASSANDRA_K8S_NAMESPACE="${CASSANDRA_K8S_NAMESPACE:-ais}"
+CASSANDRA_K8S_POD="${CASSANDRA_K8S_POD:-cassandra-0}"
+CASSANDRA_SCHEMA_TARGET="${CASSANDRA_SCHEMA_TARGET:-docker}"
 
-docker exec -i "$CASSANDRA_CONTAINER" cqlsh <<CQL
+use_k8s_cassandra() {
+  case "$CASSANDRA_SCHEMA_TARGET" in
+    k8s) return 0 ;;
+    docker) return 1 ;;
+    auto)
+      kubectl -n "$CASSANDRA_K8S_NAMESPACE" get pod "$CASSANDRA_K8S_POD" >/dev/null 2>&1
+      return $?
+      ;;
+    *)
+      echo "[ERROR] Invalid CASSANDRA_SCHEMA_TARGET=$CASSANDRA_SCHEMA_TARGET (expected auto|k8s|docker)" >&2
+      exit 2
+      ;;
+  esac
+}
+
+cqlsh_stdin() {
+  if use_k8s_cassandra; then
+    kubectl -n "$CASSANDRA_K8S_NAMESPACE" exec -i "$CASSANDRA_K8S_POD" -- cqlsh
+  else
+    docker exec -i "$CASSANDRA_CONTAINER" cqlsh
+  fi
+}
+
+cqlsh_exec() {
+  local cql="$1"
+  if use_k8s_cassandra; then
+    kubectl -n "$CASSANDRA_K8S_NAMESPACE" exec "$CASSANDRA_K8S_POD" -- cqlsh -e "$cql"
+  else
+    docker exec "$CASSANDRA_CONTAINER" cqlsh -e "$cql"
+  fi
+}
+
+cqlsh_stdin <<CQL
 CREATE KEYSPACE IF NOT EXISTS ${CASSANDRA_KEYSPACE}
 WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 
@@ -139,8 +174,8 @@ ensure_column() {
   local table="$1"
   local column="$2"
   local type="$3"
-  if ! docker exec "$CASSANDRA_CONTAINER" cqlsh -e "SELECT column_name FROM system_schema.columns WHERE keyspace_name='${CASSANDRA_KEYSPACE}' AND table_name='${table}' AND column_name='${column}';" | grep -q "$column"; then
-    docker exec "$CASSANDRA_CONTAINER" cqlsh -e "ALTER TABLE ${CASSANDRA_KEYSPACE}.${table} ADD ${column} ${type};"
+  if ! cqlsh_exec "SELECT column_name FROM system_schema.columns WHERE keyspace_name='${CASSANDRA_KEYSPACE}' AND table_name='${table}' AND column_name='${column}';" | grep -q "$column"; then
+    cqlsh_exec "ALTER TABLE ${CASSANDRA_KEYSPACE}.${table} ADD ${column} ${type};"
   fi
 }
 
@@ -163,4 +198,8 @@ ensure_column pm25_forecast_latest_by_location feature_source text
 ensure_column pm25_forecast_latest_by_location data_watermark timestamp
 ensure_column pm25_forecast_latest_by_location updated_at timestamp
 
-echo "Ensured Cassandra online serving schema in keyspace ${CASSANDRA_KEYSPACE}"
+if use_k8s_cassandra; then
+  echo "Ensured Cassandra online serving schema in keyspace ${CASSANDRA_KEYSPACE} via k8s pod ${CASSANDRA_K8S_NAMESPACE}/${CASSANDRA_K8S_POD}"
+else
+  echo "Ensured Cassandra online serving schema in keyspace ${CASSANDRA_KEYSPACE} via docker container ${CASSANDRA_CONTAINER}"
+fi

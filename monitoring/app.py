@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -43,6 +45,16 @@ AIRFLOW_API_BASE = os.getenv("AIRFLOW_API_BASE", "http://airflow-webserver:8080/
 AIRFLOW_DAG_ID = os.getenv("AIRFLOW_DAG_ID", "ais_batch_orchestration")
 AIRFLOW_USERNAME = os.getenv("AIRFLOW_USERNAME", "admin")
 AIRFLOW_PASSWORD = os.getenv("AIRFLOW_PASSWORD", "admin")
+VISUALIZATION_READY_URL = os.getenv(
+    "VISUALIZATION_READY_URL",
+    "http://host.docker.internal:3000/api/v1/visualization/manifest/latest",
+)
+FORECAST_READY_URL = os.getenv(
+    "FORECAST_READY_URL",
+    "http://host.docker.internal:3000/api/v1/visualization/forecast/latest?location_id=hanoi",
+)
+FORECAST_LATEST_URL = os.getenv("FORECAST_LATEST_URL", FORECAST_READY_URL)
+SERVICE_TIMEOUT_SEC = float(os.getenv("SERVICE_TIMEOUT_SEC", "5"))
 
 # Ingest source mapping: source name -> (container name, lookback days, topic)
 # All sources default to 7 days for UI-triggered backfill (can override via env)
@@ -416,6 +428,36 @@ HTML_TEMPLATE = """
         <div class="value" id="persisted-status">-</div>
         <div class="sub">Based on HDFS files + live DataNode</div>
       </div>
+      <div class="card">
+        <div class="label">Visualization API</div>
+        <div class="value" id="visualization-ready">-</div>
+        <div class="sub" id="visualization-latency">readiness + latency</div>
+      </div>
+      <div class="card">
+        <div class="label">Forecast API</div>
+        <div class="value" id="forecast-ready">-</div>
+        <div class="sub" id="forecast-latency">readiness + latency</div>
+      </div>
+      <div class="card">
+        <div class="label">Prediction Freshness</div>
+        <div class="value" id="prediction-age">-</div>
+        <div class="sub" id="prediction-version">latest forecast</div>
+      </div>
+      <div class="card">
+        <div class="label">DLQ Messages</div>
+        <div class="value" id="dlq-messages">-</div>
+        <div class="sub">producer failures requiring review</div>
+      </div>
+      <div class="card">
+        <div class="label">Invalid Event Audit</div>
+        <div class="value" id="invalid-audit-files">-</div>
+        <div class="sub">Iceberg audit parquet files</div>
+      </div>
+      <div class="card">
+        <div class="label">Late Event Audit</div>
+        <div class="value" id="late-audit-files">-</div>
+        <div class="sub">Iceberg audit parquet files</div>
+      </div>
     </div>
 
     <div class="section">
@@ -545,12 +587,23 @@ HTML_TEMPLATE = """
       const kafka = payload.kafka || {};
       const hdfs = payload.hdfs || {};
       const datanode = payload.datanode || {};
+      const services = payload.services || {};
+      const prediction = payload.prediction || {};
 
       document.getElementById('kafka-throughput').textContent = Number(kafka.throughput_mps || 0).toFixed(2);
       document.getElementById('kafka-total').textContent = String(kafka.messages_total ?? '-');
       document.getElementById('kafka-partitions').textContent = `Topics: ${kafka.topic_count ?? '-'} | Partitions: ${kafka.partitions ?? '-'}`;
       document.getElementById('hdfs-files').textContent = String(hdfs.parquet_files ?? '-');
       document.getElementById('hdfs-size').textContent = `Total size: ${humanBytes(hdfs.total_size_bytes)}`;
+      document.getElementById('visualization-ready').innerHTML = statusBadge(services.visualization?.ready, 'NOT READY', 'READY');
+      document.getElementById('visualization-latency').textContent = `${services.visualization?.latency_ms ?? '-'} ms`;
+      document.getElementById('forecast-ready').innerHTML = statusBadge(services.forecast?.ready, 'NOT READY', 'READY');
+      document.getElementById('forecast-latency').textContent = `${services.forecast?.latency_ms ?? '-'} ms`;
+      document.getElementById('prediction-age').textContent = prediction.age_minutes == null ? '-' : `${prediction.age_minutes} min`;
+      document.getElementById('prediction-version').textContent = `model: ${prediction.model_version || '-'}`;
+      document.getElementById('dlq-messages').textContent = String(payload.audit?.dlq_messages ?? '-');
+      document.getElementById('invalid-audit-files').textContent = String(payload.audit?.invalid?.parquet_files ?? '-');
+      document.getElementById('late-audit-files').textContent = String(payload.audit?.late?.parquet_files ?? '-');
 
       const topicRows = Array.isArray(kafka.topics) ? kafka.topics : [];
       const body = document.getElementById('kafka-topic-body');
@@ -934,6 +987,21 @@ def _run_ingest_thread(source: str, lookback_days: int = 7):
           _ingest_job["error_msg"] = error_msg or "Ingest subprocess failed"
 
 
+def _service_json(url: str) -> tuple[dict, float]:
+    started = time.perf_counter()
+    response = requests.get(url, timeout=SERVICE_TIMEOUT_SEC)
+    latency_ms = round((time.perf_counter() - started) * 1000, 1)
+    response.raise_for_status()
+    return response.json(), latency_ms
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def collect_metrics():
     errors = []
     now = datetime.now(timezone.utc)
@@ -1004,6 +1072,33 @@ def collect_metrics():
         errors.append(f"DataNode status error: {exc}")
 
     persisted = (len(parquet_files) > 0) and (datanode_status.get("live_nodes", 0) > 0)
+    services = {}
+    prediction = {"age_minutes": None, "model_version": None, "generated_at": None}
+    for name, url in (("visualization", VISUALIZATION_READY_URL), ("forecast", FORECAST_READY_URL)):
+        try:
+            body, latency_ms = _service_json(url)
+            services[name] = {"ready": True, "latency_ms": latency_ms, "detail": body}
+        except Exception as exc:
+            services[name] = {"ready": False, "latency_ms": None, "error": str(exc)}
+            errors.append(f"{name} API readiness error: {exc}")
+    try:
+        body, _ = _service_json(FORECAST_LATEST_URL)
+        generated_at = body.get("created_at") or body.get("generated_at") or body.get("base_hour")
+        generated = _parse_utc(generated_at)
+        prediction = {
+            "age_minutes": round(max(0, (now - generated).total_seconds() / 60), 1) if generated else None,
+            "model_version": body.get("model_version") or body.get("model", {}).get("model_version"),
+            "generated_at": generated_at,
+        }
+    except Exception as exc:
+        errors.append(f"prediction freshness error: {exc}")
+
+    dlq_messages = next(
+        (row["messages_total"] for row in kafka_topic_rows if row["topic"] == "ais-dlq"),
+        0,
+    )
+    invalid_audit = _summarize_hdfs_path("/warehouse/iceberg/audit/invalid_events_bronze")
+    late_audit = _summarize_hdfs_path("/warehouse/iceberg/audit/late_events_bronze")
 
     # Get current ingest job status
     with _ingest_job_lock:
@@ -1035,6 +1130,9 @@ def collect_metrics():
         },
         "datanode": datanode_status,
         "persisted_to_datanode": persisted,
+        "services": services,
+        "prediction": prediction,
+        "audit": {"dlq_messages": dlq_messages, "invalid": invalid_audit, "late": late_audit},
         "ingest_job": ingest_status,
         "errors": errors,
     }
