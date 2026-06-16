@@ -1,4 +1,5 @@
-﻿"""Run HYSPLIT trajectories from ERA5 ARL metadata and write run metadata.
+# File nay: chay/parse HYSPLIT va tao dac trung trajectory.
+"""Run HYSPLIT trajectories from ERA5 ARL metadata and write run metadata.
 
 The job reads monthly ARL files from Iceberg, creates HYSPLIT CONTROL files
 for configured Hanoi start points, runs ``hyts_std`` locally in the Spark
@@ -61,6 +62,7 @@ RUN_METADATA_SCHEMA = StructType(
 )
 
 
+# Mo ta mot file ARL theo thang cung cua so thoi gian ma no bao phu.
 @dataclass(frozen=True)
 class ArlFile:
     year: int
@@ -70,6 +72,7 @@ class ArlFile:
     end_time: datetime | None
 
 
+# Mo ta mot lenh chay HYSPLIT da duoc lap lich day du: receptor, do cao, huong chay, file meteo va output.
 @dataclass(frozen=True)
 class PlannedRun:
     run_id: str
@@ -83,6 +86,7 @@ class PlannedRun:
     output_path: str
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run HYSPLIT trajectories from ARL files")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -102,10 +106,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Parse va chuan hoa input cho du lieu trajectory HYSPLIT.
 def parse_date(raw: str) -> date | None:
     raw = (raw or "").strip()
     if not raw:
@@ -113,10 +119,12 @@ def parse_date(raw: str) -> date | None:
     return datetime.strptime(raw, "%Y-%m-%d").date()
 
 
+# Chuyen ve datetime UTC cho du lieu trajectory HYSPLIT.
 def utc_dt(d: date, hour: int) -> datetime:
     return datetime.combine(d, time(hour=hour), tzinfo=timezone.utc).replace(tzinfo=None)
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu trajectory HYSPLIT.
 def date_range(start: date, end: date) -> list[date]:
     days: list[date] = []
     cur = start
@@ -126,8 +134,10 @@ def date_range(start: date, end: date) -> list[date]:
     return days
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("HYSPLITTrajectoryRun")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -139,8 +149,10 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang metadata luu trang thai moi trajectory run.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.trajectory")
+    # Tao metadata table luu tung lan chay HYSPLIT de parser/coordinator co the noi tiep.
     spark.sql(
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
@@ -164,21 +176,25 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Xu ly path va storage HDFS cho du lieu trajectory HYSPLIT.
 def hdfs_remote_path(path: str) -> str:
     if path.startswith("hdfs://"):
         return "/" + path.split("/", 3)[3]
     return path
 
 
+# Chuan hoa duong dan Hadoop cho du lieu trajectory HYSPLIT.
 def _hadoop_path(spark: SparkSession, path: str):
     return spark._jvm.org.apache.hadoop.fs.Path(path)
 
 
+# Khoi tao doi tuong Hadoop FS cho du lieu trajectory HYSPLIT.
 def _hadoop_fs(spark: SparkSession, path: str):
     uri = spark._jvm.java.net.URI.create(path if path.startswith("hdfs://") else f"hdfs://namenode:9000{path}")
     return spark._jvm.org.apache.hadoop.fs.FileSystem.get(uri, spark._jsc.hadoopConfiguration())
 
 
+# Xu ly path va storage HDFS cho du lieu trajectory HYSPLIT.
 def copy_hdfs_to_local(spark: SparkSession, path: str, local_dir: Path) -> Path:
     remote = hdfs_remote_path(path)
     local_path = local_dir / Path(remote).name
@@ -187,6 +203,7 @@ def copy_hdfs_to_local(spark: SparkSession, path: str, local_dir: Path) -> Path:
     return local_path
 
 
+# Xu ly path va storage HDFS cho du lieu trajectory HYSPLIT.
 def upload_local_to_hdfs(spark: SparkSession, local_path: Path, hdfs_path: str) -> None:
     remote = hdfs_remote_path(hdfs_path)
     fs = _hadoop_fs(spark, hdfs_path)
@@ -199,6 +216,7 @@ def upload_local_to_hdfs(spark: SparkSession, local_path: Path, hdfs_path: str) 
     fs.copyFromLocalFile(False, True, _hadoop_path(spark, str(local_path)), target)
 
 
+# Thu thap danh sach file ARL cho du lieu trajectory HYSPLIT.
 def collect_arl_files(
     spark: SparkSession,
     table_name: str,
@@ -261,6 +279,7 @@ def collect_arl_files(
     }
 
 
+# Xac dinh cot PM2.5 cua OpenAQ cho du lieu trajectory HYSPLIT.
 def openaq_pm25_column(df) -> str | None:
     for candidate in ("pm25_median", "pm25_mean", "pm25"):
         if candidate in df.columns:
@@ -268,6 +287,7 @@ def openaq_pm25_column(df) -> str | None:
     return None
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu trajectory HYSPLIT.
 def collect_backward_hours(
     spark: SparkSession,
     table_name: str,
@@ -298,6 +318,7 @@ def collect_backward_hours(
     return [row["hour"].replace(tzinfo=None) for row in rows if row["hour"] is not None]
 
 
+# Suy ra cua so mac dinh tu file ARL cho du lieu trajectory HYSPLIT.
 def default_window_from_arl(arl_files: dict[tuple[int, int], ArlFile]) -> tuple[date, date] | tuple[None, None]:
     if not arl_files:
         return None, None
@@ -311,22 +332,27 @@ def default_window_from_arl(arl_files: dict[tuple[int, int], ArlFile]) -> tuple[
     return start, end
 
 
+# Tao id an toan cho file/chay job cho du lieu trajectory HYSPLIT.
 def safe_id(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value))
 
 
+# Sinh HDFS output path on dinh cho tung run de parser/coordinator co the tra cuu lai.
 def build_output_path(base_path: str, run_id: str, direction: str, init_time: datetime) -> str:
     base = base_path.rstrip("/")
+    # Path duoc partition theo huong va ngay de UI/doc parser loc nhanh hon.
     return (
         f"{base}/direction={direction}/year={init_time.year}/month={init_time.month:02d}/"
         f"day={init_time.day:02d}/{safe_id(run_id)}.tdump"
     )
 
 
+# Kiem tra ARL co bao phu du meteo hay khong cho du lieu trajectory HYSPLIT.
 def meteo_coverage_fits(arl: ArlFile, init_time: datetime, duration_hours: int, meteo_interval_hours: int) -> bool:
     if arl.start_time is None or arl.end_time is None:
         return True
     end_time = init_time + timedelta(hours=duration_hours)
+    # Backward run co duration am, forward run co duration duong nen can lay hai dau cua cua so.
     required_start = min(init_time, end_time)
     required_end = max(init_time, end_time)
     interval = timedelta(hours=max(0, meteo_interval_hours))
@@ -337,6 +363,7 @@ def meteo_coverage_fits(arl: ArlFile, init_time: datetime, duration_hours: int, 
     return required_start >= arl.start_time and required_end <= arl.end_time
 
 
+# Lap lich danh sach backward/forward runs tu config, PM2.5 trigger hours va danh sach file ARL san co.
 def build_planned_runs(
     *,
     arl_files: dict[tuple[int, int], ArlFile],
@@ -361,10 +388,12 @@ def build_planned_runs(
 
     runs: list[PlannedRun] = []
 
+    # Them mot trajectory run vao output cho du lieu trajectory HYSPLIT.
     def add_run(direction: str, init_time: datetime, lat: float, lon: float, alt: float, duration: int) -> None:
         arl = arl_files.get((init_time.year, init_time.month))
         if arl is None:
             return
+        # Bo qua run neu file ARL cua thang do khong du cover toan bo khoang can noi suy.
         if not meteo_coverage_fits(arl, init_time, duration, meteo_interval_hours):
             return
         run_id = (
@@ -387,6 +416,8 @@ def build_planned_runs(
 
     if "backward" in directions:
         if fallback_backward:
+            # Giu backward theo schedule co dinh ngay ca khi khong co dot PM2.5 vuot nguong,
+            # nham tranh UI/feature pipeline chi co du lieu o mot vai thoi diem.
             scheduled_backward_hours = [utc_dt(d, hour) for d in date_range(start_date, end_date) for hour in run_hours]
             original_count = len(backward_hours)
             backward_hours = sorted({*backward_hours, *scheduled_backward_hours})
@@ -396,6 +427,7 @@ def build_planned_runs(
                 f"'combined_hours': {len(backward_hours)}, 'run_hours_utc': {run_hours}}}"
             )
         for init_time in backward_hours:
+            # Moi moc gio se bung thanh nhieu receptor offset va nhieu do cao de cluster co du do phong phu.
             for lat_off in lat_offsets:
                 for lon_off in lon_offsets:
                     for alt in back_alts:
@@ -412,6 +444,7 @@ def build_planned_runs(
         for d in date_range(start_date, end_date):
             for hour in run_hours:
                 init_time = utc_dt(d, hour)
+                # Forward runs luon di theo lich co dinh vi dung cho attribution/preview thay vi trigger PM2.5.
                 for lat_off in lat_offsets:
                     for lon_off in lon_offsets:
                         for alt in fwd_alts:
@@ -427,6 +460,7 @@ def build_planned_runs(
     return runs
 
 
+# Lay tap run id da ton tai cho du lieu trajectory HYSPLIT.
 def existing_run_ids(spark: SparkSession, table_name: str, planned_ids: list[str]) -> set[str]:
     if not planned_ids:
         return set()
@@ -436,6 +470,7 @@ def existing_run_ids(spark: SparkSession, table_name: str, planned_ids: list[str
     }
 
 
+# Ghi output cho du lieu trajectory HYSPLIT.
 def write_control_file(work_dir: Path, local_arl: Path, run: PlannedRun, output_name: str) -> None:
     met_dir = str(local_arl.parent.resolve()) + "/"
     out_dir = str(work_dir.resolve()) + "/"
@@ -456,6 +491,7 @@ def write_control_file(work_dir: Path, local_arl: Path, run: PlannedRun, output_
     (work_dir / "CONTROL").write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
+# Tao thu muc tam cho HYSPLIT cho du lieu trajectory HYSPLIT.
 def hysplit_temp_parent(hysplit_bin: str) -> str | None:
     configured = os.getenv("HYSPLIT_WORK_DIR", "").strip()
     candidates = [Path(configured)] if configured else []
@@ -489,6 +525,7 @@ def hysplit_temp_parent(hysplit_bin: str) -> str | None:
     return None
 
 
+# Doc noi dung file log/tdump da cat ngan de dua vao warning message.
 def read_text(path: Path, max_chars: int = 2000) -> str:
     if not path.exists():
         return ""
@@ -498,6 +535,7 @@ def read_text(path: Path, max_chars: int = 2000) -> str:
         return ""
 
 
+# Dam bao `bdyfiles` co san trong workdir tam de binary HYSPLIT co the khoi dong duoc.
 def ensure_hysplit_bdyfiles(work_dir: Path, hysplit_bin: str) -> None:
     if len(Path(hysplit_bin).parents) < 2:
         return
@@ -533,6 +571,7 @@ def ensure_hysplit_bdyfiles(work_dir: Path, hysplit_bin: str) -> None:
             raise
 
 
+# Dem so diem trong file tdump cho du lieu trajectory HYSPLIT.
 def tdump_point_count(path: Path) -> int:
     count = 0
     try:
@@ -555,6 +594,7 @@ def tdump_point_count(path: Path) -> int:
     return count
 
 
+# Rut gon thong diep HYSPLIT de log cho du lieu trajectory HYSPLIT.
 def compact_hysplit_message(stdout: str, stderr: str, message: str) -> str:
     parts = []
     for label, value in (("stdout", stdout), ("stderr", stderr), ("MESSAGE", message)):
@@ -564,6 +604,7 @@ def compact_hysplit_message(stdout: str, stderr: str, message: str) -> str:
     return "\n".join(parts)[:4000]
 
 
+# Chay mot lan xu ly cho du lieu trajectory HYSPLIT.
 def run_hysplit(
     spark: SparkSession,
     run: PlannedRun,
@@ -628,10 +669,12 @@ def run_hysplit(
         return "success", None
 
 
+# Ghi output cho du lieu trajectory HYSPLIT.
 def write_metadata(spark: SparkSession, rows: list[dict[str, Any]], table_name: str) -> None:
     if not rows:
         return
     df = spark.createDataFrame([Row(**row) for row in rows], schema=RUN_METADATA_SCHEMA)
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("hysplit_run_updates")
     spark.sql(
         f"""
@@ -644,6 +687,7 @@ def write_metadata(spark: SparkSession, rows: list[dict[str, Any]], table_name: 
     )
 
 
+# Xoa cua so du lieu can refresh cho du lieu trajectory HYSPLIT.
 def clear_refresh_window(
     spark: SparkSession,
     table_name: str,
@@ -666,6 +710,7 @@ def clear_refresh_window(
     )
 
 
+# Ap dung shard va limit de chia nho workload cho du lieu trajectory HYSPLIT.
 def apply_shard_and_limit(planned: list[PlannedRun], shard_id: int, shard_count: int, max_runs: int) -> list[PlannedRun]:
     total_before = len(planned)
     if shard_count < 1:
@@ -686,6 +731,7 @@ def apply_shard_and_limit(planned: list[PlannedRun], shard_id: int, shard_count:
     return planned
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     full_refresh = as_bool(args.full_refresh)
@@ -756,6 +802,7 @@ def main() -> None:
     success_count = 0
     failure_count = 0
 
+    # Chuyen mot run thanh dong du lieu cho du lieu trajectory HYSPLIT.
     def _row_for_run(run: PlannedRun, status: str, error: str | None) -> dict[str, Any]:
         return {
             "run_id": run.run_id,
@@ -776,6 +823,7 @@ def main() -> None:
         cache_dir = Path(cache)
         fs_lock = threading.Lock()
 
+        # Thuc thi lenh HYSPLIT cho du lieu trajectory HYSPLIT.
         def _execute(run: PlannedRun) -> tuple[PlannedRun, str, str | None]:
             try:
                 status, error = run_hysplit(spark, run, args.hysplit_bin, cache_dir, args.timeout_sec, fs_lock)

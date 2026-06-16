@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 # =============================================================================
 # TODO_1 end-to-end runner
 #
@@ -28,6 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Lay ngay hien tai theo UTC de tinh cua so backfill.
 today_utc() {
   if date -u +%Y-%m-%d >/dev/null 2>&1; then
     date -u +%Y-%m-%d
@@ -36,6 +38,7 @@ today_utc() {
   powershell.exe -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')" | tr -d '\r'
 }
 
+# Tinh ngay lui theo UTC tu moc hien tai.
 days_before_utc() {
   local base_date="$1"
   local days="$2"
@@ -87,6 +90,7 @@ MAIAC_RELAXED_QA="${MAIAC_RELAXED_QA:-0}"
 DATASET_VERSION="${DATASET_VERSION:-hanoi_pm25_v1_${START_DATE}_${HISTORICAL_END_DATE}}"
 FEATURE_SET_NAME="${FEATURE_SET_NAME:-hanoi_pm25_core_v1}"
 
+# Cho den khi tai nguyen hoac service can dung da san sang.
 wait_for_healthy() {
   local container_name="$1"
   local timeout_sec="${2:-300}"
@@ -110,6 +114,7 @@ wait_for_healthy() {
   done
 }
 
+# Chay mot luot xu ly cua script nay.
 run_ingest_service() {
   local service="$1"
   local label="$2"
@@ -125,6 +130,7 @@ run_ingest_service() {
     "$service"
 }
 
+# Catch up du lieu bronze truoc khi chay cac tang cao hon.
 catch_up_bronze() {
   local job_type="$1"
   local label="$2"
@@ -135,6 +141,7 @@ catch_up_bronze() {
     bash scripts/submit_spark.sh "$job_type"
 }
 
+# Chay mot luot xu ly cua script nay.
 run_silver_gold_job() {
   local job_type="$1"
   local label="$2"
@@ -150,6 +157,7 @@ run_silver_gold_job() {
     bash scripts/submit_spark.sh "$job_type"
 }
 
+# Reset checkpoint bronze neu can de doc lai du lieu.
 maybe_reset_bronze_checkpoints() {
   if [ "$RESET_BRONZE_CHECKPOINTS" != "true" ]; then
     echo "[INFO] Keep existing bronze checkpoints (RESET_BRONZE_CHECKPOINTS=${RESET_BRONZE_CHECKPOINTS})"
@@ -164,6 +172,7 @@ maybe_reset_bronze_checkpoints() {
   docker exec namenode hdfs dfs -rm -r -f /checkpoints/era5_files || true
 }
 
+# Quyet dinh co can chay nhom buoc ERA5 hay khong.
 should_run_era5() {
   if [ "$RUN_ERA5" = "true" ]; then
     return 0

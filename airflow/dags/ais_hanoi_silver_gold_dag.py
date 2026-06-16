@@ -1,3 +1,4 @@
+# File nay: DAG Airflow dieu phoi ingest, Spark, ML, visualization hoac maintenance.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -24,6 +25,7 @@ FULL_REFRESH_TEMPLATE = "{{ dag_run.conf.get('full_refresh', 0) if dag_run and d
 DATASET_VERSION_TEMPLATE = "{{ dag_run.conf.get('dataset_version', 'hanoi_pm25_v1') if dag_run and dag_run.conf else 'hanoi_pm25_v1' }}"
 
 
+# Khai bao class submit_command de gom state, cau hinh hoac hanh vi lien quan.
 def submit_command(job_type: str, *, include_dataset_version: bool = False) -> str:
     dataset_env = f" DATASET_VERSION={DATASET_VERSION_TEMPLATE}" if include_dataset_version else ""
     return (

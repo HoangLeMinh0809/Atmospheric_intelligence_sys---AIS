@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -17,6 +18,7 @@ $defaultEra5StartDate = (Get-Date).ToUniversalTime().Date.AddDays(-$lookbackDays
 $era5StartDate = if ($env:ERA5_START_DATE) { $env:ERA5_START_DATE } else { $defaultEra5StartDate }
 $era5EndDate = if ($env:ERA5_END_DATE) { $env:ERA5_END_DATE } else { $defaultEra5EndDate }
 
+# Khai bao class Show de gom state, cau hinh hoac hanh vi lien quan.
 function Show-ContainerDiagnostics {
     param(
         [Parameter(Mandatory = $true)][string]$ContainerName
@@ -29,6 +31,7 @@ function Show-ContainerDiagnostics {
     docker logs --tail 120 $ContainerName 2>&1 | Out-Host
 }
 
+# Khai bao class Wait de gom state, cau hinh hoac hanh vi lien quan.
 function Wait-ForHealthy {
     param(
         [Parameter(Mandatory = $true)][string]$ContainerName,
@@ -58,6 +61,7 @@ function Wait-ForHealthy {
     }
 }
 
+# Khai bao class Initialize de gom state, cau hinh hoac hanh vi lien quan.
 function Initialize-Topics {
     $topics = @("openaq-hourly", "weather_history", "sentinel5p-summary", "maiac-summary", "era5-files")
     $partitions = 3
@@ -79,6 +83,7 @@ function Initialize-Topics {
     }
 }
 
+# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
 function Submit-SparkJobDetached {
     param(
         [Parameter(Mandatory = $true)][string]$AppName,

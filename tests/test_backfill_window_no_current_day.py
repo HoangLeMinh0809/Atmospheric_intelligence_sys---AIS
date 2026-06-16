@@ -1,3 +1,4 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 import re
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from ais_architecture_logic import build_historical_backfill_env
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# Kiem tra backfill env uses historical end date not current day.
 def test_backfill_env_uses_historical_end_date_not_current_day():
     env = build_historical_backfill_env("2026-05-29", "2026-05-31")
 
@@ -16,6 +18,7 @@ def test_backfill_env_uses_historical_end_date_not_current_day():
     assert "2026-05-31T23:59:59Z" not in env.values()
 
 
+# Kiem tra todo4 backfill commands do not use raw end date as batch window end.
 def test_todo4_backfill_commands_do_not_use_raw_end_date_as_batch_window_end():
     script = (ROOT / "scripts" / "run_todo4_stack.ps1").read_text(encoding="utf-8")
 
@@ -26,6 +29,7 @@ def test_todo4_backfill_commands_do_not_use_raw_end_date_as_batch_window_end():
     assert "WINDOW_END_UTC='${resolvedEndDate}T23:59:59Z'" in script
 
 
+# Kiem tra training dataset is submitted with historical resolved end date.
 def test_training_dataset_is_submitted_with_historical_resolved_end_date():
     script = (ROOT / "scripts" / "run_todo4_stack.ps1").read_text(encoding="utf-8")
 

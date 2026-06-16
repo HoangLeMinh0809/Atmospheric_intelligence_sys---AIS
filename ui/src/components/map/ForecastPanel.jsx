@@ -1,3 +1,4 @@
+// File nay: component ban do hien thi layer PM2.5, station, trajectory va plume.
 const CARDS = [
   ["now", "Now"],
   ["6h", "+6h"],
@@ -5,6 +6,7 @@ const CARDS = [
   ["24h", "+24h"],
 ];
 
+// Render component ForecastPanel va gan state/props cho UI.
 export default function ForecastPanel({ forecast }) {
   const data = forecast?.forecast || {};
   return (

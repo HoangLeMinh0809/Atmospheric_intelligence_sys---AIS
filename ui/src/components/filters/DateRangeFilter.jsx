@@ -1,3 +1,5 @@
+// File nay: component UI dung lai trong dashboard.
+// Render component DateRangeFilter va gan state/props cho UI.
 function DateRangeFilter({ startDate, endDate, onStartChange, onEndChange }) {
   return (
     <>

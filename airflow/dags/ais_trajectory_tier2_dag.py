@@ -1,3 +1,4 @@
+# File nay: DAG Airflow dieu phoi ingest, Spark, ML, visualization hoac maintenance.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -26,6 +27,7 @@ FEATURE_SET_NAME_TEMPLATE = "{{ dag_run.conf.get('feature_set_name', 'hanoi_pm25
 MODEL_TYPE_TEMPLATE = "{{ dag_run.conf.get('model_type', 'lightgbm') if dag_run and dag_run.conf else 'lightgbm' }}"
 
 
+# Submit workload Spark/K8s cho du lieu trajectory.
 def submit_command(job_type: str, *, extra_env: str = "") -> str:
     env = extra_env.strip()
     env_prefix = f"{env} " if env else ""

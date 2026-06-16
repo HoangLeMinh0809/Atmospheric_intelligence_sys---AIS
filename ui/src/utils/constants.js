@@ -1,3 +1,4 @@
+// File nay: helper frontend cho format, mapping hoac adapter du lieu.
 export const POLLUTION_METRIC_OPTIONS = [
   { label: "PM2.5", value: "pm25" },
   { label: "PM10", value: "pm10" },

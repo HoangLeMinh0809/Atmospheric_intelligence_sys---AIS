@@ -1,3 +1,4 @@
+// File nay: page React gom API calls, state va layout man hinh.
 import { useEffect, useMemo, useState } from "react";
 import PageContainer from "../components/layout/PageContainer";
 import HistoricalLineChart from "../components/charts/HistoricalLineChart";
@@ -16,6 +17,7 @@ import {
   getHistoricalSentinel,
 } from "../services/api";
 
+// Render component HistoricalDashboard va gan state/props cho UI.
 function HistoricalDashboard() {
   const [tab, setTab] = useState("openaq");
   const [openaqRows, setOpenaqRows] = useState([]);
@@ -27,8 +29,10 @@ function HistoricalDashboard() {
   const [endDate, setEndDate] = useState("2025-01-02");
 
   useEffect(() => {
+    // Tai du lieu can thiet truoc khi render man hinh.
     async function load() {
       try {
+        // Tai song song nhieu payload de giam do tre cho man hinh.
         const [openaqData, weatherData, sentinelData] = await Promise.all([
           getHistoricalOpenAQ(),
           getHistoricalWeather(),

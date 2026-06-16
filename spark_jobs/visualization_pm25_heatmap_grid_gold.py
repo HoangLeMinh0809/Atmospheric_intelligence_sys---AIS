@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -33,6 +34,7 @@ HANOI_LAT = 21.0285
 HANOI_LON = 105.8542
 
 
+# Noi suy PM2.5 bang inverse-distance weighting cho payload visualization.
 def idw_pm25(lat: float, lon: float, stations: list[dict], fallback: float | None) -> tuple[float | None, int]:
     weighted_sum = 0.0
     weight_total = 0.0
@@ -53,6 +55,7 @@ def idw_pm25(lat: float, lon: float, stations: list[dict], fallback: float | Non
     return fallback, 0
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build Northern Vietnam PM2.5 visualization heatmap grid")
     add_common_args(parser)

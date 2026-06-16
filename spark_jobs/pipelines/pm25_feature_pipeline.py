@@ -1,3 +1,4 @@
+# File nay: orchestrate cac Spark job theo dung thu tu bronze/silver/gold.
 from __future__ import annotations
 
 import argparse
@@ -32,6 +33,7 @@ ASOF_SUPPORTED_STEPS = {
 }
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run PM2.5 silver/gold/features in one Spark app")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -42,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     steps = [item.strip() for item in args.steps.split(",") if item.strip()]

@@ -1,25 +1,27 @@
+// File nay: page React gom API calls, state va layout man hinh.
 import { useEffect, useMemo, useState } from "react";
 import StatCard from "../components/cards/StatCard";
 import StatisticsCharts from "../components/charts/StatisticsCharts";
 import {
   getForecastLatest,
-  getHeatmapLatest,
   getLiveHeatmapLatest,
-  getManifestLatest,
   getPM25TimeseriesLatest,
   getStationsLatest,
 } from "../services/visualizationApi";
 
+// Khai bao class numeric de gom state, cau hinh hoac hanh vi lien quan.
 function numeric(values) {
   return values.map(Number).filter(Number.isFinite);
 }
 
+// Khai bao class numberOrNull de gom state, cau hinh hoac hanh vi lien quan.
 function numberOrNull(value) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// Khai bao class percentile de gom state, cau hinh hoac hanh vi lien quan.
 function percentile(values, p) {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -30,55 +32,37 @@ function percentile(values, p) {
   return sorted[lo] * (1 - frac) + sorted[hi] * frac;
 }
 
+// Khai bao class countWhere de gom state, cau hinh hoac hanh vi lien quan.
 function countWhere(values, test) {
   return values.reduce((count, value) => count + (test(value) ? 1 : 0), 0);
 }
 
+// Tai du lieu realtime va render man hinh thong ke PM2.5.
 export default function StatisticsDashboard() {
-  const [data, setData] = useState({ forecast: null, heatmap: null, timeseries: null, stations: null, manifest: null, batch: [] });
+  const [data, setData] = useState({ forecast: null, heatmap: null, timeseries: null, stations: null });
   const [status, setStatus] = useState({ loading: true, error: "" });
 
   useEffect(() => {
-    getManifestLatest()
-      .then((manifest) => {
-        const dates = (manifest?.available_dates || []).slice(-7);
-        return Promise.all([
-          getForecastLatest("hanoi"),
-          getLiveHeatmapLatest("hanoi"),
-          getPM25TimeseriesLatest("hanoi"),
-          getStationsLatest(),
-          Promise.all(
-            dates.map((date) =>
-              Promise.all([
-                getHeatmapLatest(0, date).catch(() => null),
-                getStationsLatest(date).catch(() => null),
-                getPM25TimeseriesLatest("hanoi", date).catch(() => null),
-              ]).then(([heatmap, stations, timeseries]) => ({ date, heatmap, stations, timeseries })),
-            ),
-          ),
-          manifest,
-        ]);
-      })
-      .then(([forecast, heatmap, timeseries, stations, batch, manifest]) => {
-        setData({ forecast, heatmap, timeseries, stations, batch, manifest });
+    // Tai song song nhieu payload de giam do tre cho man hinh.
+    Promise.all([
+      getForecastLatest("hanoi"),
+      getLiveHeatmapLatest("hanoi"),
+      getPM25TimeseriesLatest("hanoi"),
+      getStationsLatest(),
+    ])
+      .then(([forecast, heatmap, timeseries, stations]) => {
+        setData({ forecast, heatmap, timeseries, stations });
         setStatus({ loading: false, error: "" });
       })
       .catch((error) => setStatus({ loading: false, error: error.message }));
   }, []);
 
-  const batchPoints = data.batch.flatMap((item) => item.timeseries?.points || []);
-  const points = [...batchPoints, ...(data.timeseries?.points || [])];
+  const points = data.timeseries?.points || [];
   const distribution = useMemo(() => {
     const liveStationValues = numeric((data.stations?.features || []).map((feature) => feature?.properties?.pm25_value ?? feature?.properties?.pm25));
     const liveHeatmapValues = numeric((data.heatmap?.features || []).map((feature) => feature?.properties?.pm25_value));
-    const batchStationValues = data.batch.flatMap((item) =>
-      numeric((item.stations?.features || []).map((feature) => feature?.properties?.pm25_value ?? feature?.properties?.pm25)),
-    );
-    const batchHeatmapValues = data.batch.flatMap((item) =>
-      numeric((item.heatmap?.features || []).map((feature) => feature?.properties?.pm25_value)),
-    );
-    return [...batchStationValues, ...batchHeatmapValues, ...liveStationValues, ...liveHeatmapValues];
-  }, [data.batch, data.heatmap, data.stations]);
+    return [...liveStationValues, ...liveHeatmapValues];
+  }, [data.heatmap, data.stations]);
   const forecastBars = useMemo(() => {
     const forecast = data.forecast?.forecast || {};
     return [
@@ -97,10 +81,6 @@ export default function StatisticsDashboard() {
   const p95 = percentile(sorted, 0.95);
   const liveGridCount = data.heatmap?.features?.length || 0;
   const stationCount = data.stations?.features?.length || 0;
-  const batchSampleCount = data.batch.reduce(
-    (count, item) => count + (item.heatmap?.features?.length || 0) + (item.stations?.features?.length || 0) + (item.timeseries?.points?.length || 0),
-    0,
-  );
   const lowCount = countWhere(distribution, (value) => value < 25);
   const midCount = countWhere(distribution, (value) => value >= 25 && value < 40);
   const highCount = countWhere(distribution, (value) => value >= 40);
@@ -108,7 +88,6 @@ export default function StatisticsDashboard() {
   const sourceSummary = [
     { label: "Live grid", value: liveGridCount },
     { label: "Stations", value: stationCount },
-    { label: "Batch cache", value: batchSampleCount },
     { label: "Timeseries", value: points.length },
   ];
 
@@ -118,7 +97,7 @@ export default function StatisticsDashboard() {
         <div>
           <span className="statistics-kicker">AIS Data Statistics</span>
           <h1>Thống kê dữ liệu khí quyển</h1>
-          <p>Gộp dữ liệu batch trong visualization cache và dữ liệu live từ Visualization API.</p>
+          <p>Thống kê trực tiếp từ realtime serving API và Cassandra latest state.</p>
         </div>
         <a className="dashboard-link" href="#/">Quay lại bản đồ</a>
       </header>
@@ -133,7 +112,6 @@ export default function StatisticsDashboard() {
         <StatCard title="Điểm quan sát" value={distribution.length || "--"} />
         <StatCard title="Điểm live grid" value={liveGridCount || "--"} />
         <StatCard title="Trạm quan trắc" value={stationCount || "--"} />
-        <StatCard title="Mẫu batch cache" value={batchSampleCount || "--"} />
         <StatCard title="Chuỗi thời gian" value={points.length || "--"} />
         <StatCard title="Mức thấp" value={lowCount || "--"} />
         <StatCard title="Mức trung bình" value={midCount || "--"} />

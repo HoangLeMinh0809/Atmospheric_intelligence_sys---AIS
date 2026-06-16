@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 from __future__ import annotations
 
 import argparse
@@ -7,19 +8,24 @@ import urllib.parse
 import urllib.request
 
 
+# Lay du lieu hoac metadata cho payload visualization.
 def get_json(url: str, timeout: int) -> tuple[int, dict]:
     try:
+        # Goi HTTP request truc tiep toi endpoint dich.
         with urllib.request.urlopen(url, timeout=timeout) as response:
+            # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         payload = exc.read().decode("utf-8")
         try:
+            # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
             body = json.loads(payload)
         except json.JSONDecodeError:
             body = {"raw": payload}
         return exc.code, body
 
 
+# Fail fast neu response khong OK cho payload visualization.
 def require_ok(name: str, url: str, timeout: int) -> dict:
     status, body = get_json(url, timeout)
     if status < 200 or status >= 300:
@@ -28,6 +34,7 @@ def require_ok(name: str, url: str, timeout: int) -> dict:
     return body
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check TODO4 visualization API/cache serving endpoints")
     parser.add_argument("--base-url", default="http://localhost:8082")

@@ -1,3 +1,4 @@
+# File nay: monitoring app/endpoint theo doi trang thai he thong.
 from __future__ import annotations
 
 import json
@@ -565,6 +566,7 @@ HTML_TEMPLATE = """
 
     async function loadPipeline() {
       try {
+        # Goi HTTP request den backend hoac service ben ngoai.
         const res = await fetch('/api/pipeline');
         const payload = await res.json();
         document.getElementById('pipeline-flow').innerHTML = (payload.datasets || []).map(flowCard).join('');
@@ -577,6 +579,7 @@ HTML_TEMPLATE = """
     async function loadMetrics() {
       let payload;
       try {
+        # Goi HTTP request den backend hoac service ben ngoai.
         const res = await fetch('/api/metrics');
         payload = await res.json();
       } catch (err) {
@@ -644,6 +647,7 @@ HTML_TEMPLATE = """
 """
 
 
+# Khai bao class airflow_request de gom state, cau hinh hoac hanh vi lien quan.
 def _airflow_request(method: str, path: str, payload: dict | None = None):
     return requests.request(
         method=method,
@@ -654,6 +658,7 @@ def _airflow_request(method: str, path: str, payload: dict | None = None):
     )
 
 
+# Khai bao class trigger_airflow_dag de gom state, cau hinh hoac hanh vi lien quan.
 def _trigger_airflow_dag(lookback_days: int = 7) -> tuple[bool, str, str | None]:
     try:
         unpause_resp = _airflow_request("PATCH", f"/dags/{AIRFLOW_DAG_ID}", {"is_paused": False})
@@ -681,6 +686,7 @@ def _trigger_airflow_dag(lookback_days: int = 7) -> tuple[bool, str, str | None]
         return False, str(exc), None
 
 
+# Khai bao class parse_live_nodes de gom state, cau hinh hoac hanh vi lien quan.
 def _parse_live_nodes(raw_value):
     if not raw_value:
         return {}
@@ -688,12 +694,14 @@ def _parse_live_nodes(raw_value):
         return raw_value
     if isinstance(raw_value, str):
         try:
+            # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
             return json.loads(raw_value)
         except json.JSONDecodeError:
             return {}
     return {}
 
 
+# Khai bao class hdfs_list_status de gom state, cau hinh hoac hanh vi lien quan.
 def _hdfs_list_status(path):
     url = f"{HDFS_WEBHDFS_BASE}{path}?op=LISTSTATUS"
     resp = requests.get(url, timeout=10)
@@ -702,6 +710,7 @@ def _hdfs_list_status(path):
     return payload.get("FileStatuses", {}).get("FileStatus", [])
 
 
+# Khai bao class walk_hdfs de gom state, cau hinh hoac hanh vi lien quan.
 def _walk_hdfs(path, max_depth: int | None = None, max_files: int | None = None):
     max_depth = HDFS_WALK_MAX_DEPTH if max_depth is None else max_depth
     max_files = HDFS_WALK_MAX_FILES if max_files is None else max_files
@@ -729,6 +738,7 @@ def _walk_hdfs(path, max_depth: int | None = None, max_files: int | None = None)
     return files
 
 
+# Khai bao class summarize_hdfs_path de gom state, cau hinh hoac hanh vi lien quan.
 def _summarize_hdfs_path(path: str) -> dict:
     try:
         files = _walk_hdfs(path)
@@ -753,6 +763,7 @@ def _summarize_hdfs_path(path: str) -> dict:
         }
 
 
+# Khai bao class collect_pipeline_map de gom state, cau hinh hoac hanh vi lien quan.
 def collect_pipeline_map() -> dict:
     topic_counts = {}
     for topic in KAFKA_TOPICS:
@@ -784,6 +795,7 @@ def collect_pipeline_map() -> dict:
     }
 
 
+# Khai bao class collect_kafka_totals de gom state, cau hinh hoac hanh vi lien quan.
 def _collect_kafka_totals(topic: str):
   admin = KafkaAdminClient(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS, client_id="monitoring-admin")
   try:
@@ -805,6 +817,7 @@ def _collect_kafka_totals(topic: str):
     consumer.close()
 
 
+# Khai bao class collect_datanode_status de gom state, cau hinh hoac hanh vi lien quan.
 def _collect_datanode_status():
     resp = requests.get(NAMENODE_JMX_URL, timeout=10)
     resp.raise_for_status()
@@ -839,6 +852,7 @@ def _collect_datanode_status():
     }
 
 
+# Get current message count for a specific Kafka topic.
 def _get_kafka_message_count(topic: str) -> int:
     """Get current message count for a specific Kafka topic."""
     try:
@@ -864,6 +878,7 @@ def _get_kafka_message_count(topic: str) -> int:
         return 0
 
 
+# Run ingest subprocess. Returns (success, error_message). Some images include Docker CLI without Compose plugin. In that case, fallback to docker-compose binary if available.
 def _run_ingest_subprocess(source: str, container: str, lookback_days: int) -> tuple[bool, str | None]:
     """
     Run ingest subprocess.
@@ -946,6 +961,7 @@ def _run_ingest_subprocess(source: str, container: str, lookback_days: int) -> t
         return False, str(e)
 
 
+# Background thread runner for ingest. Updates _ingest_job state during execution.
 def _run_ingest_thread(source: str, lookback_days: int = 7):
     """
     Background thread runner for ingest. Updates _ingest_job state during execution.
@@ -987,6 +1003,7 @@ def _run_ingest_thread(source: str, lookback_days: int = 7):
           _ingest_job["error_msg"] = error_msg or "Ingest subprocess failed"
 
 
+# Khai bao class service_json de gom state, cau hinh hoac hanh vi lien quan.
 def _service_json(url: str) -> tuple[dict, float]:
     started = time.perf_counter()
     response = requests.get(url, timeout=SERVICE_TIMEOUT_SEC)
@@ -995,6 +1012,7 @@ def _service_json(url: str) -> tuple[dict, float]:
     return response.json(), latency_ms
 
 
+# Khai bao class parse_utc de gom state, cau hinh hoac hanh vi lien quan.
 def _parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -1002,6 +1020,7 @@ def _parse_utc(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+# Khai bao class collect_metrics de gom state, cau hinh hoac hanh vi lien quan.
 def collect_metrics():
     errors = []
     now = datetime.now(timezone.utc)
@@ -1139,11 +1158,13 @@ def collect_metrics():
     return payload
 
 
+# Render trang tong quan monitoring tai route goc.
 @app.route("/")
 def index():
     return render_template_string(HTML_TEMPLATE)
 
 
+# Unpause and trigger the configured Airflow DAG with 7-day lookback.
 @app.route("/api/airflow/start-backfill", methods=["POST"])
 def api_airflow_start_backfill():
   """Unpause and trigger the configured Airflow DAG with 7-day lookback."""
@@ -1153,6 +1174,7 @@ def api_airflow_start_backfill():
   return jsonify({"status": "ok", "message": message, "dag_id": AIRFLOW_DAG_ID, "dag_run_id": dag_run_id}), 202
 
 
+# Trigger ingest for a specific source (weather, openaq, sentinel5p, maiac). Query params: - source: (required) source name - lookback_days: (optional) override default lookback days (default=7) Returns: {status: "ok"|"err
 @app.route("/api/ingest/trigger", methods=["POST"])
 def api_ingest_trigger():
     """
@@ -1204,6 +1226,7 @@ def api_ingest_trigger():
     }), 202
 
 
+# Get current ingest job status. Returns: {status: "idle"|"running"|"done"|"error", source, started_at, ended_at, messages_sent, error}
 @app.route("/api/ingest/status", methods=["GET"])
 def api_ingest_status():
     """
@@ -1221,6 +1244,7 @@ def api_ingest_status():
         }), 200
 
 
+# Tra bo metric tong hop qua monitoring API.
 @app.route("/api/metrics")
 def api_metrics():
     now = time.time()
@@ -1237,11 +1261,13 @@ def api_metrics():
     return jsonify(payload)
 
 
+# Tra trang thai pipeline qua monitoring API.
 @app.route("/api/pipeline")
 def api_pipeline():
     return jsonify(collect_pipeline_map())
 
 
+# Tra liveness probe de xac nhan service con song.
 @app.route("/healthz")
 def healthz():
     return jsonify({"status": "ok"})

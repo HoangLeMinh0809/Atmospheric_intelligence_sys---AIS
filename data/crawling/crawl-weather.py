@@ -1,3 +1,4 @@
+# File nay: crawler tai du lieu tho tu cac nguon ben ngoai.
 import os
 import json
 import time
@@ -47,6 +48,7 @@ LOCATIONS= [
 ]
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu thoi tiet.
 def daterange(start, end):
     current = start
     while current <= end:
@@ -54,6 +56,7 @@ def daterange(start, end):
         current += timedelta(days=1)
 
 
+# Goi API nguon cho du lieu thoi tiet.
 def call_api(lat, lon, date):
     params = {
         "key": API_KEY,
@@ -65,6 +68,7 @@ def call_api(lat, lon, date):
     return response.json()
 
 
+# Ghi output cho du lieu thoi tiet.
 def save_json(data, province, date):
     folder = os.path.join(DATA_DIR, province.replace(" ", "_"))
     os.makedirs(folder, exist_ok=True)
@@ -77,6 +81,7 @@ def save_json(data, province, date):
     return file_path
 
 
+# Chay mot luot crawl du lieu cho du lieu thoi tiet.
 def crawl(start_date, end_date):
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")

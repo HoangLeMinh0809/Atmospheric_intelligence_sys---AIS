@@ -1,3 +1,4 @@
+# File nay: tao feature online moi nhat va ghi serving state PM2.5 vao Cassandra.
 from __future__ import annotations
 
 import argparse
@@ -82,6 +83,7 @@ WEATHER_SCHEMA = StructType(
 )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build latest online PM2.5 feature state from realtime Bronze")
     parser.add_argument("--base-time", default=os.getenv("BASE_TIME", os.getenv("BASE_HOUR", "")))
@@ -97,14 +99,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Xu ly topic va producer Kafka cho du lieu/du doan PM2.5.
 def allow_kafka_fallback() -> bool:
     return as_bool(os.getenv("ONLINE_FEATURE_ALLOW_KAFKA_FALLBACK", "1"))
 
 
+# Parse va chuan hoa input cho du lieu/du doan PM2.5.
 def parse_base_time(raw: str) -> datetime:
     value = (raw or "").strip()
     if not value:
@@ -126,6 +131,7 @@ def parse_base_time(raw: str) -> datetime:
     return parsed.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     packages = os.getenv("SPARK_JARS_PACKAGES")
     if packages is None:
@@ -135,6 +141,7 @@ def build_spark() -> SparkSession:
             "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
         )
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder.appName("OnlinePM25FeatureBuilder")
         .config("spark.jars.ivy", os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2"))
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -152,6 +159,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Quan ly bang Iceberg va schema cho du lieu/du doan PM2.5.
 def table_or_empty(spark: SparkSession, table: str) -> DataFrame | None:
     try:
         return spark.table(table)
@@ -160,11 +168,13 @@ def table_or_empty(spark: SparkSession, table: str) -> DataFrame | None:
         return None
 
 
+# Lay mot ban ghi duy nhat cho du lieu/du doan PM2.5.
 def collect_one(df: DataFrame) -> dict[str, Any]:
     rows = df.limit(1).collect()
     return rows[0].asDict() if rows else {}
 
 
+# Xu ly topic va producer Kafka cho du lieu/du doan PM2.5.
 def kafka_batch(spark: SparkSession, topic: str, schema: StructType) -> DataFrame | None:
     if not allow_kafka_fallback():
         print(
@@ -186,6 +196,7 @@ def kafka_batch(spark: SparkSession, topic: str, schema: StructType) -> DataFram
             .option("failOnDataLoss", "false")
             .load()
             .selectExpr("CAST(value AS STRING) AS json_str")
+            # Parse chuoi JSON thanh cot co schema ro rang.
             .select(F.from_json(F.col("json_str"), schema).alias("data"))
             .select("data.*")
         )
@@ -194,6 +205,7 @@ def kafka_batch(spark: SparkSession, topic: str, schema: StructType) -> DataFram
         return None
 
 
+# Tra gia tri mac dinh khi du lieu thieu cho du lieu/du doan PM2.5.
 def default_value(name: str) -> Any:
     if name == "season":
         return "unknown"
@@ -204,6 +216,7 @@ def default_value(name: str) -> Any:
     return 0.0
 
 
+# Xac dinh mua trong nam tu timestamp cho du lieu/du doan PM2.5.
 def season_for(month: int) -> str:
     if month in {12, 1, 2}:
         return "winter"
@@ -214,6 +227,7 @@ def season_for(month: int) -> str:
     return "autumn"
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu/du doan PM2.5.
 def as_timestamp(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -224,12 +238,14 @@ def as_timestamp(value: Any) -> datetime | None:
     return None
 
 
+# Lay bo context moi nhat theo as-of time cho du lieu/du doan PM2.5.
 def latest_context(spark: SparkSession, base_time: datetime, feature_version: str) -> dict[str, Any]:
     tables = get_table_names()
     base_naive = base_time.replace(tzinfo=None)
     df = table_or_empty(spark, tables["serving_features_gold"])
     context = {}
     if df is not None:
+        # Neu bang serving features da ton tai, uu tien lay snapshot da duoc tinh san gan nhat.
         context.update(collect_one(
             df.filter(F.col("feature_version") == F.lit(feature_version))
             .filter(F.col("base_hour") <= F.lit(base_naive))
@@ -248,7 +264,9 @@ def latest_context(spark: SparkSession, base_time: datetime, feature_version: st
             .select("product_norm", "date", "overpass_time_utc", "value_mean", "valid_pct")
         )
         w = Window.partitionBy("product_norm").orderBy(F.col("date").desc_nulls_last(), F.col("overpass_time_utc").desc_nulls_last())
+        # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
         latest = s5p_norm.withColumn("rn", F.row_number().over(w)).filter(F.col("rn") == 1)
+        # Pivot nhe bang agg/F.when de giu output dung schema feature model ky vong.
         s5p_row = collect_one(latest.agg(
             F.max(F.when(F.col("product_norm") == "NO2", F.col("value_mean"))).alias("s5p_no2_mean"),
             F.max(F.when(F.col("product_norm") == "CO", F.col("value_mean"))).alias("s5p_co_mean"),
@@ -263,6 +281,7 @@ def latest_context(spark: SparkSession, base_time: datetime, feature_version: st
 
     maiac = table_or_empty(spark, tables["maiac_silver"])
     if maiac is not None:
+        # MAIAC chi can lay ngay gan nhat truoc base_time vi day la daily feature.
         maiac_row = collect_one(
             maiac
             .filter(F.col("date") <= F.to_date(F.lit(base_naive)))
@@ -295,6 +314,7 @@ def latest_context(spark: SparkSession, base_time: datetime, feature_version: st
         ]
         selected_cols = [F.col(name) for name in era5_cols if name in era5.columns]
         if selected_cols:
+            # Weather/ERA5 la cadence theo gio nen chon snapshot moi nhat <= base_time.
             era5_row = collect_one(
                 era5
                 .filter(F.col("hour") <= F.lit(base_naive))
@@ -305,6 +325,7 @@ def latest_context(spark: SparkSession, base_time: datetime, feature_version: st
 
     traj = table_or_empty(spark, tables["trajectory_hourly_silver"])
     if traj is not None:
+        # Feature trajectory duoc cast ve kieu model train dang su dung de tranh mismatch schema hash.
         traj_row = collect_one(
             traj
             .filter(F.col("hour") <= F.lit(base_naive))
@@ -324,6 +345,7 @@ def latest_context(spark: SparkSession, base_time: datetime, feature_version: st
 
     gradient = table_or_empty(spark, tables["openaq_gradient_silver"])
     if gradient is not None:
+        # Spatial gradient bo sung thong tin vi tri nguon phat thai gan thoi diem hien tai.
         gradient_row = collect_one(
             gradient
             .filter(F.col("hour") <= F.lit(base_naive))
@@ -346,6 +368,7 @@ def latest_context(spark: SparkSession, base_time: datetime, feature_version: st
     return context
 
 
+# Tong hop thong ke OpenAQ moi nhat cho du lieu/du doan PM2.5.
 def latest_openaq_stats(spark: SparkSession, base_time: datetime, lookback_hours: int) -> dict[str, Any]:
     tables = get_table_names()
     df = table_or_empty(spark, tables["openaq_bronze"])
@@ -368,9 +391,11 @@ def latest_openaq_stats(spark: SparkSession, base_time: datetime, lookback_hours
         .withColumn("base_hour", F.date_trunc("hour", F.col("event_time")))
     )
     hourly = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         scoped.groupBy("base_hour")
         .agg(
             F.avg("value").alias("pm25_mean"),
+            # Tinh median xap xi de tong hop du lieu lon nhanh hon.
             F.expr("percentile_approx(value, 0.5)").alias("pm25_median"),
             F.countDistinct("sensor_id").cast("int").alias("station_count"),
             F.avg("coverage_pct").alias("coverage_avg"),
@@ -395,9 +420,11 @@ def latest_openaq_stats(spark: SparkSession, base_time: datetime, lookback_hours
             .withColumn("base_hour", F.date_trunc("hour", F.col("event_time")))
         )
         hourly = (
+            # Bat dau gom nhom de tinh cac chi so tong hop.
             scoped.groupBy("base_hour")
             .agg(
                 F.avg("value").alias("pm25_mean"),
+                # Tinh median xap xi de tong hop du lieu lon nhanh hon.
                 F.expr("percentile_approx(value, 0.5)").alias("pm25_median"),
                 F.countDistinct("sensor_id").cast("int").alias("station_count"),
                 F.avg("coverage_pct").alias("coverage_avg"),
@@ -411,9 +438,11 @@ def latest_openaq_stats(spark: SparkSession, base_time: datetime, lookback_hours
     latest = latest_rows[0].asDict()
     history = {row["base_hour"]: row["pm25_mean"] for row in hourly.collect() if row["pm25_mean"] is not None}
 
+    # Tinh do tre giua du lieu va base time cho du lieu/du doan PM2.5.
     def lag(hours: int) -> float | None:
         return history.get(base_time.replace(tzinfo=None) - timedelta(hours=hours))
 
+    # Luu history vao dict de tinh nhanh lag/rolling ma khong phai chay them nhieu job Spark nho.
     values_3h = [value for hour, value in history.items() if hour >= base_time.replace(tzinfo=None) - timedelta(hours=3)]
     values_6h = [value for hour, value in history.items() if hour >= base_time.replace(tzinfo=None) - timedelta(hours=6)]
     values_24h = [value for hour, value in history.items() if hour >= base_time.replace(tzinfo=None) - timedelta(hours=24)]
@@ -434,6 +463,7 @@ def latest_openaq_stats(spark: SparkSession, base_time: datetime, lookback_hours
     return latest
 
 
+# Tong hop thong ke weather moi nhat cho du lieu/du doan PM2.5.
 def latest_weather_stats(spark: SparkSession, base_time: datetime) -> dict[str, Any]:
     tables = get_table_names()
     df = table_or_empty(spark, tables["weather_bronze"])
@@ -478,6 +508,7 @@ def latest_weather_stats(spark: SparkSession, base_time: datetime) -> dict[str, 
     wind_kph = row.get("wind_kph")
     wind_degree = row.get("wind_degree")
     radians = math.radians(float(wind_degree or 0))
+    # WeatherAPI dua gio theo kph/degree, doi sang he u/v giong ERA5 de feature schema thong nhat.
     wind_speed = float(wind_kph or 0) / 3.6
     return {
         "weather_time": row.get("event_time"),
@@ -498,6 +529,7 @@ def latest_weather_stats(spark: SparkSession, base_time: datetime) -> dict[str, 
     }
 
 
+# Gop context feature, thong ke OpenAQ, weather va metadata thanh mot row online de ghi Cassandra.
 def build_row(args: argparse.Namespace, context: dict[str, Any], openaq: dict[str, Any], weather: dict[str, Any], base_time: datetime) -> dict[str, Any]:
     base_hour = base_time.replace(tzinfo=None)
     row = {name: context.get(name, default_value(name)) for name in FEATURE_COLUMNS}
@@ -568,6 +600,7 @@ def build_row(args: argparse.Namespace, context: dict[str, Any], openaq: dict[st
     return row
 
 
+# Khai bao schema dau ra cho du lieu/du doan PM2.5.
 def output_schema() -> StructType:
     fields = [
         StructField("location_id", StringType(), False),
@@ -606,6 +639,7 @@ def output_schema() -> StructType:
     return StructType(fields)
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     dry_run = as_bool(args.dry_run)

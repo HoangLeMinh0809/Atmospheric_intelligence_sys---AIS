@@ -1,3 +1,4 @@
+# File nay: API visualization doc Cassandra/cache de phuc vu UI realtime va historical.
 from __future__ import annotations
 
 import json
@@ -18,14 +19,17 @@ from fastapi.responses import JSONResponse
 _JSON_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
+# Lay timestamp UTC hien tai cho metadata freshness.
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Format datetime thanh chuoi ISO UTC ket thuc bang Z.
 def iso_z(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Parse timestamp ISO va dua ve UTC timezone-aware.
 def parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -35,10 +39,12 @@ def parse_time(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+# Doc bien moi truong va trim khoang trang.
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
 
 
+# Doc bien moi truong bat buoc va fail fast neu thieu.
 def required_env(name: str) -> str:
     value = env(name)
     if not value:
@@ -46,16 +52,19 @@ def required_env(name: str) -> str:
     return value
 
 
+# Lay URI goc cua visualization cache tu cau hinh.
 def cache_base_uri() -> str:
     return required_env("VIS_CACHE_BASE_URI").rstrip("/")
 
 
+# Tao URI manifest latest hoac theo ngay.
 def manifest_uri(date: str | None = None) -> str:
     if date:
         return f"{cache_base_uri()}/manifest/date={date}.json"
     return f"{cache_base_uri()}/manifest/latest.json"
 
 
+# Doi HDFS URI sang WebHDFS OPEN URL de API doc duoc.
 def hdfs_to_webhdfs(uri: str) -> str:
     webhdfs_base = required_env("HDFS_WEBHDFS_BASE").rstrip("/")
     parsed = urllib.parse.urlparse(uri)
@@ -64,6 +73,7 @@ def hdfs_to_webhdfs(uri: str) -> str:
     return f"{webhdfs_base}{encoded}?op=OPEN"
 
 
+# Doc text tu HTTP, HDFS/WebHDFS, file URI hoac local path.
 def read_uri_text(uri: str, timeout_s: int = 5) -> str:
     parsed = urllib.parse.urlparse(uri)
     scheme = parsed.scheme.lower()
@@ -78,10 +88,12 @@ def read_uri_text(uri: str, timeout_s: int = 5) -> str:
     else:
         raise ValueError(f"Unsupported cache URI scheme: {scheme}")
 
+    # Goi HTTP request truc tiep toi endpoint dich.
     with urllib.request.urlopen(target, timeout=timeout_s) as response:
         return response.read().decode("utf-8")
 
 
+# Doc JSON va cache TTL ngan de giam so lan fetch lap lai.
 def read_json_uri(uri: str, timeout_s: int = 5) -> dict[str, Any]:
     ttl_s = int(env("VIS_API_CACHE_TTL_SECONDS", "60") or "60")
     now = time.time()
@@ -89,12 +101,14 @@ def read_json_uri(uri: str, timeout_s: int = 5) -> dict[str, Any]:
         cached = _JSON_CACHE.get(uri)
         if cached and now - cached[0] <= ttl_s:
             return cached[1]
+    # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
     payload = json.loads(read_uri_text(uri, timeout_s=timeout_s))
     if ttl_s > 0:
         _JSON_CACHE[uri] = (now, payload)
     return payload
 
 
+# Validate tham so date API ve dinh dang YYYY-MM-DD.
 def valid_date(value: str | None) -> str | None:
     if not value:
         return None
@@ -105,6 +119,7 @@ def valid_date(value: str | None) -> str | None:
     return value[:10]
 
 
+# Doc visualization manifest va map loi thieu/cache unreadable thanh HTTP error.
 def load_manifest(date: str | None = None) -> dict[str, Any]:
     timeout_s = int(env("VIS_READY_TIMEOUT_SECONDS", "5") or "5")
     try:
@@ -115,6 +130,7 @@ def load_manifest(date: str | None = None) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail={"error": "manifest_unreadable", "uri": manifest_uri(None)})
 
 
+# Lay danh sach layer tu manifest va validate kieu du lieu.
 def manifest_layers(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     layers = manifest.get("layers", [])
     if not isinstance(layers, list):
@@ -122,6 +138,7 @@ def manifest_layers(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return layers
 
 
+# Chon layer moi nhat khop ten, horizon va location.
 def find_layer(
     manifest: dict[str, Any],
     layer_name: str,
@@ -143,6 +160,7 @@ def find_layer(
     return sorted(candidates, key=lambda item: item.get("generated_at", ""), reverse=True)[0]
 
 
+# Doc payload cua layer tu cache URI hoac tra metadata unavailable.
 def load_layer_payload(layer: dict[str, Any]) -> dict[str, Any]:
     if layer.get("available") is False:
         return {
@@ -161,6 +179,7 @@ def load_layer_payload(layer: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+# Map gia tri PM2.5 sang bucket rui ro cho UI.
 def risk_level(pm25: float | None) -> str | None:
     if pm25 is None:
         return None
@@ -173,6 +192,7 @@ def risk_level(pm25: float | None) -> str | None:
     return "very_high"
 
 
+# Chuyen datetime/value sang chuoi ISO UTC an toan cho API.
 def to_iso(value: Any) -> str | None:
     if value is None:
         return None
@@ -185,10 +205,12 @@ def to_iso(value: Any) -> str | None:
     return str(value)
 
 
+# Cast gia tri nullable sang float va giu None neu thieu.
 def float_or_none(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
+# Lowercase va bo dau tieng Viet de match ten tram/receptor on dinh.
 def normalize_text(value: Any) -> str:
     text = str(value or "").lower()
     replacements = {
@@ -265,11 +287,13 @@ def normalize_text(value: Any) -> str:
     return "".join(ch if ch.isalnum() else "-" for ch in text).strip("-")
 
 
+# Bat/tat forecast realtime doc truc tiep tu Cassandra thay vi cache file.
 def cassandra_forecast_enabled() -> bool:
     source = env("VIS_FORECAST_SOURCE") or env("FEATURE_SOURCE")
     return source.lower() == "cassandra"
 
 
+# Doc forecast PM2.5 moi nhat cua location tu Cassandra.
 def load_cassandra_forecast(location_id: str) -> dict[str, Any]:
     try:
         from cassandra.cluster import Cluster
@@ -280,10 +304,12 @@ def load_cassandra_forecast(location_id: str) -> dict[str, Any]:
     port = int(env("CASSANDRA_PORT", "9042") or "9042")
     keyspace = env("CASSANDRA_KEYSPACE", "ais_serving")
     table = env("CASSANDRA_FORECAST_TABLE", "pm25_forecast_latest_by_location")
+    # Mo ket noi Cassandra driver voi host/port dang cau hinh.
     cluster = Cluster([host], port=port)
     session = cluster.connect()
     try:
         query = f"SELECT * FROM {keyspace}.{table} WHERE location_id = %s"
+        # Chay truy van truc tiep tren Cassandra session.
         row = session.execute(query, (location_id,)).one()
     finally:
         session.shutdown()
@@ -333,6 +359,7 @@ def load_cassandra_forecast(location_id: str) -> dict[str, Any]:
     }
 
 
+# Parse bbox sinh heatmap realtime trong pham vi UI dang hien thi.
 def parse_live_bbox() -> tuple[float, float, float, float]:
     raw = env("VIS_LIVE_HEATMAP_BBOX", "105.75,20.95,105.95,21.10")
     try:
@@ -344,6 +371,7 @@ def parse_live_bbox() -> tuple[float, float, float, float]:
     return west, south, east, north
 
 
+# Doi ngay API thanh cua so UTC [start, end) de query state theo ngay.
 def live_heatmap_query_bounds(date: str | None) -> tuple[datetime, datetime] | None:
     selected = valid_date(date)
     if not selected:
@@ -352,6 +380,7 @@ def live_heatmap_query_bounds(date: str | None) -> tuple[datetime, datetime] | N
     return start, start + timedelta(days=1)
 
 
+# Doc feature state moi nhat cua mot location, co the khoa theo ngay neu UI replay lich su.
 def load_cassandra_feature_state(location_id: str, date: str | None = None) -> dict[str, Any]:
     try:
         from cassandra.cluster import Cluster
@@ -365,6 +394,7 @@ def load_cassandra_feature_state(location_id: str, date: str | None = None) -> d
     feature_version = env("FEATURE_VERSION", "hanoi_pm25_core_v1")
     bounds = live_heatmap_query_bounds(date)
 
+    # Mo ket noi Cassandra driver voi host/port dang cau hinh.
     cluster = Cluster([host], port=port)
     session = cluster.connect()
     try:
@@ -373,9 +403,11 @@ def load_cassandra_feature_state(location_id: str, date: str | None = None) -> d
                 f"SELECT * FROM {keyspace}.{table} "
                 "WHERE location_id = %s AND feature_version = %s AND base_hour >= %s AND base_hour < %s LIMIT 1"
             )
+            # Chay truy van truc tiep tren Cassandra session.
             row = session.execute(query, (location_id, feature_version, bounds[0], bounds[1])).one()
         else:
             query = f"SELECT * FROM {keyspace}.{table} WHERE location_id = %s AND feature_version = %s LIMIT 1"
+            # Chay truy van truc tiep tren Cassandra session.
             row = session.execute(query, (location_id, feature_version)).one()
     finally:
         session.shutdown()
@@ -388,6 +420,266 @@ def load_cassandra_feature_state(location_id: str, date: str | None = None) -> d
     return row._asdict()
 
 
+# Doc lich su ngan han tu Cassandra de ve timeseries realtime.
+def load_cassandra_feature_rows(location_id: str, *, limit: int = 48) -> list[dict[str, Any]]:
+    try:
+        from cassandra.cluster import Cluster
+    except Exception as exc:  # pragma: no cover - depends on serving image deps
+        raise HTTPException(status_code=503, detail={"error": "cassandra_driver_unavailable", "message": str(exc)}) from exc
+
+    host = env("CASSANDRA_HOST", "cassandra")
+    port = int(env("CASSANDRA_PORT", "9042") or "9042")
+    keyspace = env("CASSANDRA_KEYSPACE", "ais_serving")
+    table = env("CASSANDRA_FEATURE_TABLE", "pm25_feature_state_by_location_hour")
+    feature_version = env("FEATURE_VERSION", "hanoi_pm25_core_v1")
+    safe_limit = max(1, min(168, int(limit)))
+
+    # Mo ket noi Cassandra driver voi host/port dang cau hinh.
+    cluster = Cluster([host], port=port)
+    session = cluster.connect()
+    try:
+        query = f"SELECT * FROM {keyspace}.{table} WHERE location_id = %s AND feature_version = %s LIMIT {safe_limit}"
+        # Chay truy van truc tiep tren Cassandra session.
+        rows = session.execute(query, (location_id, feature_version))
+        return [row._asdict() for row in rows]
+    finally:
+        session.shutdown()
+        cluster.shutdown()
+
+
+# Tao payload timeseries realtime tu lich su feature state Cassandra.
+def build_cassandra_timeseries(location_id: str, *, limit: int = 48) -> dict[str, Any]:
+    rows = load_cassandra_feature_rows(location_id, limit=limit)
+    if not rows:
+        raise HTTPException(status_code=404, detail={"error": "cassandra_feature_timeseries_not_found", "location_id": location_id})
+    points = []
+    for row in sorted(rows, key=lambda item: to_iso(item.get("base_hour")) or ""):
+        # pm25_now la gia tri uu tien cho dashboard live; fallback ve mean/median neu state chua dien du.
+        pm25 = float_or_none(row.get("pm25_now")) or float_or_none(row.get("pm25_mean")) or float_or_none(row.get("pm25_median"))
+        points.append(
+            {
+                "timestamp": to_iso(row.get("base_hour") or row.get("base_time")),
+                "base_hour": to_iso(row.get("base_hour") or row.get("base_time")),
+                "location_id": location_id,
+                "pm25_value": pm25,
+                "pm25": pm25,
+                "series_type": "observed",
+                "source": "cassandra_feature_state",
+                "feature_version": row.get("feature_version"),
+                "data_watermark": to_iso(row.get("data_watermark")),
+                "generated_at": to_iso(row.get("created_at") or row.get("updated_at") or row.get("loaded_at")),
+            }
+        )
+    return {
+        "available": True,
+        "layer_name": "pm25_timeseries",
+        "source": "cassandra",
+        "location_id": location_id,
+        "generated_at": iso_z(utc_now()),
+        "points": points,
+        "freshness": {
+            "source": "cassandra",
+            "base_hour": points[-1].get("base_hour") if points else None,
+            "data_watermark": points[-1].get("data_watermark") if points else None,
+        },
+    }
+
+
+LIVE_STATION_POINTS = [
+    ("hoan_kiem", "Hoàn Kiếm", 105.8520, 21.0290),
+    ("tay_ho", "Tây Hồ", 105.8170, 21.0680),
+    ("cau_giay", "Cầu Giấy", 105.7900, 21.0360),
+    ("ba_dinh", "Ba Đình", 105.8280, 21.0350),
+    ("dong_da", "Đống Đa", 105.8320, 21.0140),
+    ("hai_ba_trung", "Hai Bà Trưng", 105.8590, 21.0000),
+    ("long_bien", "Long Biên", 105.8860, 21.0380),
+    ("thanh_xuan", "Thanh Xuân", 105.8050, 20.9960),
+]
+
+
+# Tao station cards/features realtime tu feature state Cassandra moi nhat.
+def build_cassandra_stations(location_id: str) -> dict[str, Any]:
+    data = load_cassandra_feature_state(location_id)
+    west, south, east, north = parse_live_bbox()
+    bucket_seconds = max(5, min(300, int(env("VIS_LIVE_HEATMAP_BUCKET_SECONDS", "15") or "15")))
+    time_bucket = int(time.time() // bucket_seconds)
+    noise_ratio = max(0.0, min(0.20, float(env("VIS_LIVE_HEATMAP_NOISE_RATIO", "0.06") or "0.06")))
+    features = []
+    for station_id, name, lon, lat in LIVE_STATION_POINTS:
+        # Cung mot state nen PM2.5 duoc noi suy theo vi tri de map co gradient thay vi tat ca diem giong nhau.
+        pm25 = live_pm25_value(data, lon, lat, west, south, east, north, time_bucket=time_bucket, noise_ratio=noise_ratio)
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {
+                    "station_id": station_id,
+                    "station_name": name,
+                    "location_id": location_id,
+                    "pm25_value": round(pm25, 1),
+                    "pm25": round(pm25, 1),
+                    "risk": risk_level(pm25),
+                    "source": "cassandra_feature_state",
+                    "base_hour": to_iso(data.get("base_hour")),
+                    "updated_at": to_iso(data.get("updated_at") or data.get("loaded_at") or data.get("created_at")),
+                },
+            }
+        )
+    return {
+        "type": "FeatureCollection",
+        "available": True,
+        "layer_name": "station_observations",
+        "source": "cassandra",
+        "location_id": location_id,
+        "base_hour": to_iso(data.get("base_hour")),
+        "generated_at": iso_z(utc_now()),
+        "features": features,
+    }
+
+
+# Suy ra source attribution tu feature row online moi nhat.
+def build_cassandra_source_attribution(location_id: str) -> dict[str, Any]:
+    data = load_cassandra_feature_state(location_id)
+    source_lon = float_or_none(data.get("traj_source_lon"))
+    source_lat = float_or_none(data.get("traj_source_lat"))
+    if source_lon is None or source_lat is None:
+        source_lon, source_lat = 105.8542, 21.0285
+    no2 = float_or_none(data.get("traj_path_no2_mean") or data.get("s5p_no2_mean"))
+    aer = float_or_none(data.get("traj_path_aer_mean") or data.get("s5p_aer_ai_mean") or data.get("aod_mean"))
+    grad = float_or_none(data.get("pm25_grad_mag")) or 0.0
+    score = max(0.05, min(1.0, (grad / 30.0) + ((no2 or 0.0) * 0.15) + ((aer or 0.0) * 0.10)))
+    cluster = data.get("dominant_cluster")
+    return {
+        "type": "FeatureCollection",
+        "available": True,
+        "layer_name": "source_attribution",
+        "source": "cassandra",
+        "location_id": location_id,
+        "base_time": to_iso(data.get("base_hour") or data.get("base_time")),
+        "generated_at": iso_z(utc_now()),
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [source_lon, source_lat]},
+                "properties": {
+                    "source_label": f"Realtime cluster {cluster}" if cluster is not None else "Realtime upwind signal",
+                    "dominant_cluster": cluster,
+                    "contribution_score": round(score, 3),
+                    "confidence": round(min(0.95, 0.45 + score * 0.45), 3),
+                    "source_lon": source_lon,
+                    "source_lat": source_lat,
+                    "path_no2_mean": no2,
+                    "path_aer_mean": aer,
+                    "pm25_grad_mag": grad,
+                    "explanation_vi": "Đọc trực tiếp từ Cassandra feature state mới nhất, không dùng visualization cache.",
+                },
+            }
+        ],
+    }
+
+
+# Tao payload backward trajectory, uu tien duong HYSPLIT that trong cache.
+def build_cassandra_backward_trajectories(
+    location_id: str,
+    *,
+    location_name: str | None = None,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> dict[str, Any]:
+    data = load_cassandra_feature_state("hanoi")
+    cached = load_latest_cached_trajectory_payload(location_id=location_id, location_name=location_name, lon=lon, lat=lat)
+    if cached is not None and cached.get("features"):
+        result = dict(cached)
+        result["source"] = "latest_hysplit_trajectory_with_cassandra_freshness"
+        result["realtime_base_hour"] = to_iso(data.get("base_hour"))
+        result["generated_at"] = iso_z(utc_now())
+        for feature in result.get("features", []):
+            props = dict(feature.get("properties") or {})
+            props["source"] = props.get("source") or "hysplit_trajectory_cache"
+            props["realtime_base_hour"] = to_iso(data.get("base_hour"))
+            props["display_mode"] = "actual_latest_path"
+            feature["properties"] = props
+        return result
+
+    receptor_lon = lon if lon is not None else 105.8542
+    receptor_lat = lat if lat is not None else 21.0285
+    source_lon = float_or_none(data.get("traj_source_lon"))
+    source_lat = float_or_none(data.get("traj_source_lat"))
+    if source_lon is None or source_lat is None:
+        source_lon, source_lat = receptor_lon - 0.12, receptor_lat + 0.08
+    coords = []
+    for step in range(10):
+        t = step / 9
+        bend = math.sin(t * math.pi) * 0.025
+        coords.append(
+            [
+                round(source_lon + (receptor_lon - source_lon) * t + bend * 0.35, 6),
+                round(source_lat + (receptor_lat - source_lat) * t - bend * 0.20, 6),
+            ]
+        )
+    return {
+        "type": "FeatureCollection",
+        "available": True,
+        "layer_name": "backward_trajectories",
+        "source": "cassandra",
+        "display_mode": "synthetic_fallback",
+        "location_id": location_id,
+        "generated_at": iso_z(utc_now()),
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {
+                    "endpoint": location_name or location_id,
+                    "receptor_id": location_id,
+                    "receptor_name": location_name or location_id,
+                    "base_time": to_iso(data.get("hysplit_time") or data.get("base_hour")),
+                    "source": "cassandra_feature_state",
+                    "style_color": "#67e8f9",
+                    "derived_for_receptor": True,
+                },
+            }
+        ],
+    }
+
+
+# Tao payload forward plume tu wind va PM2.5 context moi nhat.
+def build_cassandra_forward_plume(location_id: str, horizon_h: int) -> dict[str, Any]:
+    data = load_cassandra_feature_state(location_id)
+    source_lon = float_or_none(data.get("traj_source_lon")) or 105.82
+    source_lat = float_or_none(data.get("traj_source_lat")) or 21.04
+    radius_lon = 0.015 + horizon_h * 0.0015
+    radius_lat = 0.010 + horizon_h * 0.001
+    ring = []
+    for step in range(18):
+        angle = 2 * math.pi * step / 17
+        ring.append([round(source_lon + math.cos(angle) * radius_lon, 6), round(source_lat + math.sin(angle) * radius_lat, 6)])
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    return {
+        "type": "FeatureCollection",
+        "available": True,
+        "layer_name": "forward_plume_probability",
+        "source": "cassandra",
+        "location_id": location_id,
+        "horizon_h": horizon_h,
+        "generated_at": iso_z(utc_now()),
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [ring]},
+                "properties": {
+                    "horizon_h": horizon_h,
+                    "probability": 0.62,
+                    "source": "cassandra_feature_state",
+                    "base_hour": to_iso(data.get("base_hour")),
+                },
+            }
+        ],
+    }
+
+
+# Khai bao class live_pm25_value de gom state, cau hinh hoac hanh vi lien quan.
 def live_pm25_value(
     data: dict[str, Any],
     lon: float,
@@ -431,6 +723,7 @@ def live_pm25_value(
     return max(1.0, min(250.0, pm25))
 
 
+# Tao GeoJSON heatmap PM2.5 live tu Cassandra va spatial gradient.
 def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> dict[str, Any]:
     data = load_cassandra_feature_state(location_id, date=date)
     west, south, east, north = parse_live_bbox()
@@ -493,11 +786,13 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
     }
 
 
+# Khai bao class trajectory_time_key de gom state, cau hinh hoac hanh vi lien quan.
 def trajectory_time_key(feature: dict[str, Any]) -> str:
     props = feature.get("properties") or {}
     return str(props.get("base_time") or props.get("base_hour") or props.get("timestamp") or "")
 
 
+# Khai bao class trajectory_matches_location de gom state, cau hinh hoac hanh vi lien quan.
 def trajectory_matches_location(feature: dict[str, Any], location_id: str | None, location_name: str | None) -> bool:
     if not location_id and not location_name:
         return True
@@ -521,6 +816,7 @@ def trajectory_matches_location(feature: dict[str, Any], location_id: str | None
     return any(needle in haystack for needle in needles)
 
 
+# Khai bao class latest_trajectory_features de gom state, cau hinh hoac hanh vi lien quan.
 def latest_trajectory_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not features:
         return []
@@ -530,6 +826,7 @@ def latest_trajectory_features(features: list[dict[str, Any]]) -> list[dict[str,
     return [feature for feature in features if trajectory_time_key(feature) == latest_time[0]]
 
 
+# Khai bao class line_coordinates de gom state, cau hinh hoac hanh vi lien quan.
 def line_coordinates(feature: dict[str, Any]) -> list[list[float]]:
     geometry = feature.get("geometry") or {}
     coords = geometry.get("coordinates") or []
@@ -540,6 +837,7 @@ def line_coordinates(feature: dict[str, Any]) -> list[list[float]]:
     return []
 
 
+# Khai bao class translate_trajectory_feature de gom state, cau hinh hoac hanh vi lien quan.
 def translate_trajectory_feature(
     feature: dict[str, Any],
     *,
@@ -579,6 +877,7 @@ def translate_trajectory_feature(
     }
 
 
+# Khai bao class select_trajectory_payload de gom state, cau hinh hoac hanh vi lien quan.
 def select_trajectory_payload(
     payload: dict[str, Any],
     *,
@@ -622,6 +921,71 @@ def select_trajectory_payload(
     return result
 
 
+# Khai bao class select_actual_trajectory_payload de gom state, cau hinh hoac hanh vi lien quan.
+def select_actual_trajectory_payload(
+    payload: dict[str, Any],
+    *,
+    location_id: str | None = None,
+    location_name: str | None = None,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> dict[str, Any]:
+    features = [feature for feature in payload.get("features", []) if isinstance(feature, dict)]
+    latest = latest_trajectory_features(features)
+    matched = [feature for feature in latest if trajectory_matches_location(feature, location_id, location_name)]
+    selected = matched
+    derived = False
+    if not selected and lon is not None and lat is not None:
+        selected = [
+            item
+            for item in (
+                translate_trajectory_feature(
+                    feature,
+                    lon=lon,
+                    lat=lat,
+                    location_id=location_id,
+                    location_name=location_name,
+                    index=index,
+                )
+                for index, feature in enumerate(latest[:8])
+            )
+            if item is not None
+        ]
+        derived = bool(selected)
+    if not selected:
+        selected = latest[:8]
+    result = dict(payload)
+    result["features"] = selected[:8]
+    result["selected_location"] = {
+        "location_id": location_id,
+        "location_name": location_name,
+        "lon": lon,
+        "lat": lat,
+        "matched_cached_trajectory": bool(matched),
+    }
+    result["derived_for_receptor"] = derived
+    return result
+
+
+# Khai bao class load_latest_cached_trajectory_payload de gom state, cau hinh hoac hanh vi lien quan.
+def load_latest_cached_trajectory_payload(
+    *,
+    location_id: str | None = None,
+    location_name: str | None = None,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> dict[str, Any] | None:
+    try:
+        layer = find_layer(load_manifest(None), "backward_trajectories")
+        if layer is None:
+            return None
+        payload = load_layer_payload(layer)
+        return select_actual_trajectory_payload(payload, location_id=location_id, location_name=location_name, lon=lon, lat=lat)
+    except Exception:
+        return None
+
+
+# Khai bao class required_layers de gom state, cau hinh hoac hanh vi lien quan.
 def required_layers() -> list[str]:
     value = env(
         "VIS_REQUIRED_LAYERS",
@@ -630,11 +994,13 @@ def required_layers() -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+# Khai bao class optional_layers de gom state, cau hinh hoac hanh vi lien quan.
 def optional_layers() -> list[str]:
     value = env("VIS_OPTIONAL_LAYERS", "forward_plume")
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+# Khai bao class check_manifest_ready de gom state, cau hinh hoac hanh vi lien quan.
 def check_manifest_ready(manifest: dict[str, Any]) -> dict[str, Any]:
     max_age = int(env("VIS_FRESHNESS_MAX_MINUTES", "180") or "180")
     generated_at = parse_time(manifest.get("generated_at"))
@@ -674,6 +1040,7 @@ app = FastAPI(title="AIS Visualization API", version="0.1.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
+# Ghi log request de theo doi latency va ma loi cua visualization API.
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
@@ -705,14 +1072,25 @@ async def log_requests(request: Request, call_next):
         )
 
 
+# Tra liveness probe de xac nhan service con song.
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok", "time_utc": iso_z(utc_now())}
 
 
+# Doc du lieu tu nguon cau hinh hien tai de phuc vu endpoint nay.
 @app.get("/readyz")
 def readyz() -> dict[str, Any]:
     try:
+        if cassandra_forecast_enabled():
+            feature = load_cassandra_feature_state(env("LOCATION_ID", "hanoi") or "hanoi")
+            return {
+                "status": "ready",
+                "mode": "cassandra",
+                "location_id": env("LOCATION_ID", "hanoi") or "hanoi",
+                "base_hour": to_iso(feature.get("base_hour")),
+                "updated_at": to_iso(feature.get("updated_at") or feature.get("loaded_at") or feature.get("created_at")),
+            }
         return check_manifest_ready(load_manifest())
     except ValueError as exc:
         raise HTTPException(status_code=503, detail={"error": "missing_or_invalid_config", "message": str(exc)}) from exc
@@ -720,11 +1098,13 @@ def readyz() -> dict[str, Any]:
         raise HTTPException(status_code=503, detail={"error": "manifest_unreadable", "message": str(exc)}) from exc
 
 
+# Tra visualization manifest moi nhat cho client.
 @app.get("/api/v1/visualization/manifest/latest")
 def manifest_latest(date: str | None = None) -> dict[str, Any]:
     return load_manifest(date)
 
 
+# Tra heatmap PM2.5 moi nhat theo che do latest.
 @app.get("/api/v1/visualization/pm25/heatmap/latest")
 def pm25_heatmap_latest(horizon_h: int = 0, date: str | None = None) -> JSONResponse:
     if horizon_h not in {0, 6, 12, 24}:
@@ -737,6 +1117,7 @@ def pm25_heatmap_latest(horizon_h: int = 0, date: str | None = None) -> JSONResp
     return JSONResponse(load_layer_payload(layer))
 
 
+# Tra live heatmap PM2.5 moi nhat cho location duoc yeu cau.
 @app.get("/api/v1/visualization/live/pm25/heatmap/latest")
 def live_pm25_heatmap_latest(location_id: str = "hanoi", date: str | None = None) -> JSONResponse:
     if date is not None:
@@ -747,14 +1128,17 @@ def live_pm25_heatmap_latest(location_id: str = "hanoi", date: str | None = None
     return JSONResponse(build_live_cassandra_heatmap(location_id, date=date))
 
 
+# Tra tile heatmap PM2.5 da cache cho map client.
 @app.get("/api/v1/visualization/pm25/heatmap/tiles/{z}/{x}/{y}")
 def pm25_heatmap_tile(z: int, x: int, y: int, horizon_h: int = 0, date: str | None = None) -> JSONResponse:
     payload = pm25_heatmap_latest(horizon_h=horizon_h, date=date).body
+    # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
     data = json.loads(payload)
     data["tile"] = {"z": z, "x": x, "y": y, "note": "MVP tile endpoint returns the cached horizon GeoJSON for client-side clipping."}
     return JSONResponse(data)
 
 
+# Tra backward trajectory moi nhat cho receptor duoc chon.
 @app.get("/api/v1/visualization/trajectories/backward/latest")
 def backward_trajectories_latest(
     date: str | None = None,
@@ -763,6 +1147,15 @@ def backward_trajectories_latest(
     lon: float | None = None,
     lat: float | None = None,
 ) -> JSONResponse:
+    if date is None:
+        return JSONResponse(
+            build_cassandra_backward_trajectories(
+                location_id or "hanoi",
+                location_name=location_name,
+                lon=lon,
+                lat=lat,
+            )
+        )
     layer = find_layer(load_manifest(date), "backward_trajectories")
     if layer is None:
         raise HTTPException(status_code=404, detail={"error": "layer_not_found", "layer_name": "backward_trajectories"})
@@ -770,10 +1163,13 @@ def backward_trajectories_latest(
     return JSONResponse(select_trajectory_payload(payload, location_id=location_id, location_name=location_name, lon=lon, lat=lat))
 
 
+# Tra payload forward plume moi nhat.
 @app.get("/api/v1/visualization/plume/forward/latest")
 def forward_plume_latest(horizon_h: int = 6, date: str | None = None) -> JSONResponse:
     if horizon_h not in {6, 12, 24}:
         raise HTTPException(status_code=400, detail={"error": "invalid_horizon", "allowed": [6, 12, 24]})
+    if date is None:
+        return JSONResponse(build_cassandra_forward_plume("hanoi", horizon_h))
     layer = find_layer(load_manifest(date), "forward_plume", horizon_h=horizon_h)
     if layer is None:
         return JSONResponse(
@@ -788,6 +1184,7 @@ def forward_plume_latest(horizon_h: int = 6, date: str | None = None) -> JSONRes
     return JSONResponse(load_layer_payload(layer))
 
 
+# Tra forecast PM2.5 moi nhat.
 @app.get("/api/v1/visualization/forecast/latest")
 def forecast_latest(location_id: str = "hanoi", date: str | None = None) -> JSONResponse:
     if date is None and cassandra_forecast_enabled():
@@ -798,16 +1195,23 @@ def forecast_latest(location_id: str = "hanoi", date: str | None = None) -> JSON
     return JSONResponse(load_layer_payload(layer))
 
 
+# Chuan hoa tham so thoi gian truoc khi truy van latest hoac historical.
 @app.get("/api/v1/visualization/timeseries/latest")
 def timeseries_latest(location_id: str = "hanoi", date: str | None = None) -> JSONResponse:
+    if date is None:
+        limit = int(env("VIS_LIVE_TIMESERIES_LIMIT", "48") or "48")
+        return JSONResponse(build_cassandra_timeseries(location_id, limit=limit))
     layer = find_layer(load_manifest(date), "pm25_timeseries", location_id=location_id)
     if layer is None:
         raise HTTPException(status_code=404, detail={"error": "layer_not_found", "layer_name": "pm25_timeseries", "location_id": location_id})
     return JSONResponse(load_layer_payload(layer))
 
 
+# Tra source attribution moi nhat cho payload visualization.
 @app.get("/api/v1/visualization/source-attribution/latest")
 def source_attribution_latest(location_id: str = "hanoi", date: str | None = None) -> JSONResponse:
+    if date is None:
+        return JSONResponse(build_cassandra_source_attribution(location_id))
     manifest = load_manifest(date)
     layer = find_layer(manifest, "source_attribution", location_id=location_id)
     if layer is None:
@@ -817,8 +1221,11 @@ def source_attribution_latest(location_id: str = "hanoi", date: str | None = Non
     return JSONResponse(load_layer_payload(layer))
 
 
+# Tra station observations moi nhat cho map va panel.
 @app.get("/api/v1/visualization/stations/latest")
 def stations_latest(date: str | None = None) -> JSONResponse:
+    if date is None:
+        return JSONResponse(build_cassandra_stations("hanoi"))
     layer = find_layer(load_manifest(date), "station_observations")
     if layer is None:
         raise HTTPException(status_code=404, detail={"error": "layer_not_found", "layer_name": "station_observations"})

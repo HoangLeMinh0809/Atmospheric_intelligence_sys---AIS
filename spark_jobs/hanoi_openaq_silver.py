@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File nay: lam sach OpenAQ PM2.5 theo tram va ghi bang silver station/hourly.
+from __future__ import annotations
 
 import argparse
 import os
@@ -54,6 +55,7 @@ HOURLY_COLUMNS = [
 ]
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi OpenAQ PM2.5 silver tables")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -63,12 +65,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("HanoiOpenAQSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -80,6 +85,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao namespace va bang Iceberg dich neu chua ton tai.
 def ensure_tables(spark: SparkSession, station_table: str, hourly_table: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.air_quality")
     spark.sql(
@@ -132,6 +138,7 @@ def ensure_tables(spark: SparkSession, station_table: str, hourly_table: str) ->
     )
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df, start_date: str, end_date: str):
     if start_date:
         df = df.filter(F.to_date("event_time") >= F.to_date(F.lit(start_date)))
@@ -140,12 +147,14 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
+# Lam sach, QC, deduplicate va partition quan trac PM2.5 cap tram.
 def build_station_silver(spark: SparkSession, source_table: str, start_date: str, end_date: str, asof_time: str = ""):
     qc = get_pm25_qc()
     raw = spark.table(source_table).filter(F.col("event_time").isNotNull())
     raw = apply_date_range(raw, start_date, end_date)
     raw = apply_asof_time(raw, "event_time", parse_asof_time(asof_time))
 
+    # Chuan hoa ten parameter ve dang khong dau/khong ky tu dac biet de loc PM2.5 nhat quan.
     pm25 = (
         raw
         .withColumn("parameter_norm", F.regexp_replace(F.lower(F.col("parameter")), r"[^a-z0-9]", ""))
@@ -156,10 +165,13 @@ def build_station_silver(spark: SparkSession, source_table: str, start_date: str
         .withColumn("hour", F.date_trunc("hour", F.col("event_time")))
     )
 
+    # Cat theo bbox Ha Noi truoc khi aggregate de bang silver chi phuc vu khu vuc dich.
     hanoi = filter_hanoi_bbox(pm25, "latitude", "longitude")
     outside_bbox_count = pm25.count() - hanoi.count()
 
+    # Dem duplicate truoc khi row_number de van con metric quan sat chat luong nguon.
     duplicate_count = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         hanoi.groupBy("location_id", "sensor_id", "parameter", "hour")
         .count()
         .filter(F.col("count") > 1)
@@ -168,14 +180,17 @@ def build_station_silver(spark: SparkSession, source_table: str, start_date: str
     )
     duplicate_count = int(duplicate_count or 0)
 
+    # Giu ban ghi moi nhat trong tung cum tram-sensor-parameter-hour.
     window = Window.partitionBy("location_id", "sensor_id", "parameter", "hour").orderBy(
         F.col("ingest_time").desc_nulls_last(),
         F.col("spark_processed_at").desc_nulls_last(),
         F.col("event_id").desc_nulls_last(),
     )
 
+    # Sau khi deduplicate, bo sung cac cot partition va cot PM2.5 typed ro rang cho silver table.
     station = (
         hanoi
+        # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
         .withColumn("rn", F.row_number().over(window))
         .filter(F.col("rn") == 1)
         .withColumn("pm25", F.col("value").cast("double"))
@@ -189,11 +204,14 @@ def build_station_silver(spark: SparkSession, source_table: str, start_date: str
     return raw, pm25, hanoi, station, duplicate_count, outside_bbox_count
 
 
+# Tong hop quan trac cap tram thanh PM2.5 theo gio.
 def build_hourly_silver(station_df):
     return (
         station_df
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         .groupBy("hour")
         .agg(
+            # Giu ca median, mean, range va do lech chuan de UI va feature jobs co nhieu goc nhin hon.
             F.expr("percentile_approx(pm25, 0.5)").cast("double").alias("pm25_median"),
             F.avg("pm25").cast("double").alias("pm25_mean"),
             F.min("pm25").cast("double").alias("pm25_min"),
@@ -210,6 +228,7 @@ def build_hourly_silver(station_df):
     )
 
 
+# In metric kiem tra row count, thoi gian, duplicate va null ratio.
 def log_metrics(raw, pm25, hanoi, station, hourly, duplicate_count: int, outside_bbox_count: int) -> None:
     input_count = raw.count()
     pm25_candidate_count = pm25.count()
@@ -223,6 +242,7 @@ def log_metrics(raw, pm25, hanoi, station, hourly, duplicate_count: int, outside
         F.avg(F.when(F.col("coverage_pct").isNull(), F.lit(1.0)).otherwise(F.lit(0.0))).alias("coverage_pct"),
     ).first().asDict() if station_count else {"pm25": None, "coverage_pct": None}
 
+    # In mot goi metric co the grep duoc trong log de so sanh giua cac lan chay.
     print(f"input_count={input_count}")
     print(f"pm25_candidate_count={pm25_candidate_count}")
     print(f"hanoi_filtered_count={hanoi_count}")
@@ -235,9 +255,12 @@ def log_metrics(raw, pm25, hanoi, station, hourly, duplicate_count: int, outside
     print(f"pm25_min={pm25_bounds['pm25_min'] if pm25_bounds else None}")
     print(f"pm25_max={pm25_bounds['pm25_max'] if pm25_bounds else None}")
     print(f"null_ratio_by_important_columns={null_ratio}")
+
+    # Show them so tram theo ngay de phat hien ngay nao du lieu bi sut dot ngot.
     station.groupBy(F.to_date("hour").alias("date")).agg(F.countDistinct("location_id").alias("station_count")).show(50, False)
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
     predicates = []
     if start_date:
@@ -250,6 +273,7 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Upsert DataFrame vao bang Iceberg theo khoa merge duoc truyen vao.
 def merge_iceberg(
     spark: SparkSession,
     df,
@@ -262,8 +286,10 @@ def merge_iceberg(
     end_date: str,
 ) -> None:
     if full_refresh:
+        # Full refresh xoa cua so cu truoc de tranh giu lai ban ghi stale sau khi schema/logic doi.
         delete_date_window(spark, table_name, "hour", start_date, end_date)
 
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView(view_name)
     assignments = ", ".join([f"t.{c} = s.{c}" for c in columns])
     insert_cols = ", ".join(columns)
@@ -279,6 +305,7 @@ def merge_iceberg(
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()
@@ -291,6 +318,8 @@ def main() -> None:
     full_refresh = as_bool(args.full_refresh)
 
     ensure_tables(spark, station_table, hourly_table)
+
+    # Build station silver truoc, sau do aggregate len hourly de hai bang dung cung mot nguon da QC.
     raw, pm25, hanoi, station, duplicate_count, outside_bbox_count = build_station_silver(
         spark,
         source_table=source_table,
@@ -301,6 +330,7 @@ def main() -> None:
     hourly = build_hourly_silver(station)
     log_metrics(raw, pm25, hanoi, station, hourly, duplicate_count, outside_bbox_count)
 
+    # Upsert station-level detail truoc de giu duoc do phan giai cao cho phan visualization/kiem tra.
     merge_iceberg(
         spark,
         station,
@@ -312,6 +342,8 @@ def main() -> None:
         start_date=args.start_date,
         end_date=args.end_date,
     )
+
+    # Upsert bang tong hop theo gio de phuc vu dashboard va downstream features nhanh hon.
     merge_iceberg(
         spark,
         hourly,

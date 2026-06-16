@@ -1,9 +1,11 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# Kiem tra spark submit and shared config default to utc.
 def test_spark_submit_and_shared_config_default_to_utc():
     hanoi_config = (ROOT / "spark_jobs" / "hanoi_config.py").read_text(encoding="utf-8")
     compose_submit = (ROOT / "scripts" / "submit_spark.sh").read_text(encoding="utf-8")
@@ -14,6 +16,7 @@ def test_spark_submit_and_shared_config_default_to_utc():
     assert "spark.sql.session.timeZone=\\${SPARK_SQL_SESSION_TIMEZONE:-UTC}" in k8s_submit
 
 
+# Kiem tra weather processing prefers utc epoch over local time string.
 def test_weather_processing_prefers_utc_epoch_over_local_time_string():
     weather_ingest = (ROOT / "ingest" / "ingest_weather.py").read_text(encoding="utf-8")
     weather_streaming = (ROOT / "spark_jobs" / "weather_streaming.py").read_text(encoding="utf-8")
@@ -26,6 +29,7 @@ def test_weather_processing_prefers_utc_epoch_over_local_time_string():
     assert "timestamp_seconds(time_epoch)" in online_builder
 
 
+# Kiem tra era5 partitions use utc hour.
 def test_era5_partitions_use_utc_hour():
     era5_silver = (ROOT / "spark_jobs" / "era5_surface_hanoi_silver.py").read_text(encoding="utf-8")
 

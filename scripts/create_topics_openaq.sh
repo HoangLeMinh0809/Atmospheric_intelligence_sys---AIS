@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 set -e
 
 echo "=== Create Kafka topic: openaq-hourly ==="

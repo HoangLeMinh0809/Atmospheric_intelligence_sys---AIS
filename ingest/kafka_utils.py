@@ -1,3 +1,4 @@
+# File nay: ingest nguon du lieu va chuan hoa theo event contract cua AIS.
 import json
 import os
 import time
@@ -17,10 +18,12 @@ CONTRACT_METADATA_FIELDS = {
 }
 
 
+# Tao timestamp UTC hien tai dang ISO cho luong event Kafka.
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Chuan hoa va loc moc thoi gian cho luong event Kafka.
 def _event_time(event: dict, ingest_time: str) -> str:
     for field in (
         "event_time",
@@ -37,6 +40,7 @@ def _event_time(event: dict, ingest_time: str) -> str:
     return ingest_time
 
 
+# Attach the shared AIS event envelope without changing flat source fields.
 def apply_event_contract(event: dict) -> dict:
     """Attach the shared AIS event envelope without changing flat source fields."""
     enriched = dict(event)
@@ -62,6 +66,7 @@ def apply_event_contract(event: dict) -> dict:
     return enriched
 
 
+# Create a Kafka producer with simple retry logic while broker is starting.
 def create_kafka_producer(
     bootstrap_servers: str,
     logger,
@@ -93,6 +98,7 @@ def create_kafka_producer(
     raise RuntimeError("Cannot connect to Kafka")
 
 
+# Send one event and return True when the producer accepted it.
 def send_event(
     producer: KafkaProducer,
     topic: str,
@@ -135,6 +141,7 @@ def send_event(
         return False
 
 
+# Send a list of events and return the number of successful sends.
 def send_events(
     producer: KafkaProducer,
     topic: str,
@@ -167,6 +174,7 @@ def send_events(
     return success_count
 
 
+# Flush Kafka producer without allowing an unbounded hang.
 def flush_producer(producer: KafkaProducer, logger, timeout_sec: int | None = None) -> None:
     """Flush Kafka producer without allowing an unbounded hang."""
     resolved_timeout = int(os.getenv("KAFKA_FLUSH_TIMEOUT_SEC", str(timeout_sec or 60)) or 60)

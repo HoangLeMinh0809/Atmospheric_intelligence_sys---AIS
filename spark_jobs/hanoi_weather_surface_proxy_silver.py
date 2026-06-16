@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File nay: tao feature weather surface proxy theo gio cho Ha Noi.
+from __future__ import annotations
 
 import argparse
 import os
@@ -29,6 +30,7 @@ OUTPUT_COLUMNS = [
 ]
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi WeatherAPI surface proxy silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -38,12 +40,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("HanoiWeatherSurfaceProxySilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -55,6 +60,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang hourly weather proxy da loc rieng cho khu vuc Ha Noi.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.weather")
     spark.sql(
@@ -84,6 +90,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df, start_date: str, end_date: str):
     if start_date:
         df = df.filter(F.to_date("event_time") >= F.to_date(F.lit(start_date)))
@@ -92,6 +99,7 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
+# Rut gon weather bronze thanh mot dong moi gio cho Ha Noi de join vao feature tables.
 def build_silver_df(spark: SparkSession, source_table: str, start_date: str, end_date: str, asof_time: str = ""):
     bbox = get_hanoi_bbox()
     raw = spark.table(source_table).filter(F.col("event_time").isNotNull())
@@ -113,6 +121,7 @@ def build_silver_df(spark: SparkSession, source_table: str, start_date: str, end
     with_hour = hanoi.withColumn("hour", F.date_trunc("hour", F.col("event_time")))
 
     duplicate_count = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         with_hour.groupBy("hour")
         .count()
         .filter(F.col("count") > 1)
@@ -129,6 +138,7 @@ def build_silver_df(spark: SparkSession, source_table: str, start_date: str, end
 
     silver = (
         with_hour
+        # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
         .withColumn("rn", F.row_number().over(window))
         .filter(F.col("rn") == 1)
         .withColumn("spark_processed_at", F.current_timestamp())
@@ -140,6 +150,7 @@ def build_silver_df(spark: SparkSession, source_table: str, start_date: str, end
     return raw, hanoi, silver, duplicate_count
 
 
+# In metric kiem tra row count, thoi gian, duplicate va null ratio.
 def log_metrics(raw, hanoi, silver, duplicate_count: int) -> None:
     input_count = raw.count()
     hanoi_count = hanoi.count()
@@ -162,6 +173,7 @@ def log_metrics(raw, hanoi, silver, duplicate_count: int) -> None:
     print(f"null_ratio_by_important_columns={null_ratios}")
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
     predicates = []
     if start_date:
@@ -174,10 +186,12 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Ghi output cho du lieu thoi tiet.
 def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
     if full_refresh:
         delete_date_window(spark, table_name, "hour", start_date, end_date)
 
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("weather_hanoi_surface_proxy_silver_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
     insert_cols = ", ".join(OUTPUT_COLUMNS)
@@ -194,6 +208,7 @@ def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, 
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

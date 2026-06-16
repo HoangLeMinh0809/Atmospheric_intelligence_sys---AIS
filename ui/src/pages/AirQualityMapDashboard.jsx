@@ -1,6 +1,6 @@
+// File nay: page React gom API calls, state va layout man hinh.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PM25ForecastChart from "../components/charts/PM25ForecastChart";
-import DateSelector from "../components/map/DateSelector";
 import ForecastPanel from "../components/map/ForecastPanel";
 import FreshnessBadge from "../components/map/FreshnessBadge";
 import LayerControl from "../components/map/LayerControl";
@@ -12,14 +12,13 @@ import {
   getBackwardTrajectoriesLatest,
   getForecastLatest,
   getForwardPlumeLatest,
-  getHeatmapLatest,
   getLiveHeatmapLatest,
-  getManifestLatest,
   getPM25TimeseriesLatest,
   getSourceAttributionLatest,
   getStationsLatest,
 } from "../services/visualizationApi";
 
+// Doi PM2.5 thanh risk key dung chung cho forecast panel.
 function riskForPm25(value) {
   if (value == null || Number.isNaN(Number(value))) return "unknown";
   const pm25 = Number(value);
@@ -30,6 +29,7 @@ function riskForPm25(value) {
   return "very_high";
 }
 
+// Rut gia tri hien tai tu heatmap live de chen vao forecast card.
 function liveNowFromHeatmap(liveHeatmap) {
   const summary = liveHeatmap?.summary || {};
   const value = Number(summary.pm25_mean ?? summary.pm25_median);
@@ -41,6 +41,7 @@ function liveNowFromHeatmap(liveHeatmap) {
   return Number((values.reduce((sum, item) => sum + item, 0) / values.length).toFixed(1));
 }
 
+// Ghep du lieu "bay gio" vao payload forecast de chart co diem bat dau tu realtime.
 function mergeLiveNowForecast(forecast, liveHeatmap) {
   const liveNow = liveNowFromHeatmap(liveHeatmap);
   if (liveNow == null) return forecast;
@@ -74,6 +75,7 @@ const TRAJECTORY_RECEPTORS = [
   { name: "Thanh Xuân", lon: 105.805, lat: 20.996 },
 ];
 
+// Chuyen ten receptor hien thi thanh location id ma backend co the query.
 function locationIdFromName(name) {
   return String(name || "hanoi")
     .toLowerCase()
@@ -84,9 +86,9 @@ function locationIdFromName(name) {
     .replace(/(^-|-$)/g, "");
 }
 
-function trajectoryRequest(date, receptor) {
+// Tao request backward trajectory tu receptor dang duoc chon tren map.
+function trajectoryRequest(receptor) {
   return getBackwardTrajectoriesLatest({
-    date,
     locationId: locationIdFromName(receptor?.name),
     locationName: receptor?.name,
     lon: receptor?.lon,
@@ -94,9 +96,9 @@ function trajectoryRequest(date, receptor) {
   });
 }
 
+// Dieu phoi API realtime va render man hinh ban do chat luong khong khi.
 export default function AirQualityMapDashboard() {
   const [horizon, setHorizon] = useState(Number(import.meta.env.VITE_DEFAULT_HORIZON_H || 0));
-  const [selectedDate, setSelectedDate] = useState(import.meta.env.VITE_DEFAULT_VIS_DATE || "");
   const refreshMs = Number(import.meta.env.VITE_VIS_REFRESH_MS || 15000);
   const [refreshTick, setRefreshTick] = useState(0);
   const [enabled, setEnabled] = useState({
@@ -111,7 +113,6 @@ export default function AirQualityMapDashboard() {
   const [status, setStatus] = useState({ loading: true, error: "" });
   const [mapStats, setMapStats] = useState({ avg: "-", max: "-", count: 0, source: "" });
   const [data, setData] = useState({
-    manifest: null,
     heatmap: null,
     liveHeatmap: null,
     trajectories: null,
@@ -143,28 +144,25 @@ export default function AirQualityMapDashboard() {
     const requestId = ++fullLoadRequestIdRef.current;
     const requestHorizon = horizonRef.current;
     const plumeHorizon = requestHorizon === 0 ? 6 : requestHorizon;
+    // Tai song song nhieu payload de giam do tre cho man hinh.
     Promise.all([
-      getManifestLatest(selectedDate),
-      getHeatmapLatest(requestHorizon, selectedDate),
-      selectedDate ? Promise.resolve(null) : getLiveHeatmapLatest("hanoi").catch(() => null),
-      trajectoryRequest(selectedDate, selectedReceptor),
-      getForwardPlumeLatest(plumeHorizon, selectedDate),
-      getForecastLatest("hanoi", selectedDate),
-      getPM25TimeseriesLatest("hanoi", selectedDate),
-      getSourceAttributionLatest("hanoi", selectedDate),
-      getStationsLatest(selectedDate),
+      getLiveHeatmapLatest("hanoi"),
+      trajectoryRequest(selectedReceptor),
+      getForwardPlumeLatest(plumeHorizon),
+      getForecastLatest("hanoi"),
+      getPM25TimeseriesLatest("hanoi"),
+      getSourceAttributionLatest("hanoi"),
+      getStationsLatest(),
     ])
-      .then(([manifest, cachedHeatmap, liveHeatmap, trajectories, plume, forecast, timeseries, sources, stations]) => {
+      .then(([liveHeatmap, trajectories, plume, forecast, timeseries, sources, stations]) => {
         if (!active || requestId !== fullLoadRequestIdRef.current) return;
-        const heatmap = requestHorizon === 0 && liveHeatmap ? liveHeatmap : cachedHeatmap;
         setData((current) => ({
-          manifest,
-          heatmap: horizonRef.current === requestHorizon ? heatmap : current.heatmap,
-          liveHeatmap: selectedDate ? null : liveHeatmap || current.liveHeatmap,
+          heatmap: horizonRef.current === requestHorizon ? liveHeatmap : current.heatmap,
+          liveHeatmap: liveHeatmap || current.liveHeatmap,
           heatmapsByHorizon: {
             ...(current.heatmapsByHorizon || {}),
-            [requestHorizon]: heatmap,
-            ...(liveHeatmap ? { 0: liveHeatmap } : {}),
+            [requestHorizon]: liveHeatmap,
+            0: liveHeatmap,
           },
           trajectories,
           plume,
@@ -182,7 +180,7 @@ export default function AirQualityMapDashboard() {
     return () => {
       active = false;
     };
-  }, [selectedDate, refreshTick, selectedReceptor]);
+  }, [refreshTick, selectedReceptor]);
 
   const layerData = useMemo(
     () => ({
@@ -196,8 +194,8 @@ export default function AirQualityMapDashboard() {
     [data],
   );
   const displayForecast = useMemo(
-    () => (selectedDate ? data.forecast : mergeLiveNowForecast(data.forecast, data.liveHeatmap)),
-    [data.forecast, data.liveHeatmap, selectedDate],
+    () => mergeLiveNowForecast(data.forecast, data.liveHeatmap),
+    [data.forecast, data.liveHeatmap],
   );
 
   const handleMapStats = useCallback((nextStats) => {
@@ -211,34 +209,33 @@ export default function AirQualityMapDashboard() {
     );
   }, []);
 
+  // Bat/tat mot overlay layer tren ban do.
   function toggleLayer(key) {
     setEnabled((current) => ({ ...current, [key]: !current[key] }));
   }
 
+  // Doi horizon forecast va load/reuse heatmap tuong ung.
   function changeHorizon(nextHorizon) {
     horizonRef.current = nextHorizon;
     const requestId = ++horizonRequestIdRef.current;
-    const cached = nextHorizon === 0 ? null : data.heatmapsByHorizon?.[nextHorizon];
-    setStatus({ loading: !cached, error: "" });
+    const existingLiveHeatmap = data.heatmapsByHorizon?.[nextHorizon];
+    setStatus({ loading: !existingLiveHeatmap, error: "" });
     setHorizon(nextHorizon);
     setData((current) => ({
       ...current,
       heatmap: current.heatmapsByHorizon?.[nextHorizon] || current.heatmap,
     }));
+    // Tai song song nhieu payload de giam do tre cho man hinh.
     Promise.all([
-      nextHorizon === 0
-        ? selectedDate
-          ? getHeatmapLatest(0, selectedDate)
-          : getLiveHeatmapLatest("hanoi").catch(() => getHeatmapLatest(0))
-        : cached ? Promise.resolve(cached) : getHeatmapLatest(nextHorizon, selectedDate),
-      getForwardPlumeLatest(nextHorizon === 0 ? 6 : nextHorizon, selectedDate),
+      existingLiveHeatmap ? Promise.resolve(existingLiveHeatmap) : getLiveHeatmapLatest("hanoi"),
+      getForwardPlumeLatest(nextHorizon === 0 ? 6 : nextHorizon),
     ])
       .then(([heatmap, plume]) => {
         if (requestId !== horizonRequestIdRef.current || horizonRef.current !== nextHorizon) return;
         setData((current) => ({
           ...current,
           heatmap,
-          liveHeatmap: selectedDate ? null : nextHorizon === 0 ? heatmap : current.liveHeatmap,
+          liveHeatmap: heatmap,
           plume,
           heatmapsByHorizon: {
             ...(current.heatmapsByHorizon || {}),
@@ -253,19 +250,7 @@ export default function AirQualityMapDashboard() {
       });
   }
 
-  function changeDate(nextDate) {
-    horizonRequestIdRef.current += 1;
-    setStatus({ loading: true, error: "" });
-    setData((current) => ({
-      ...current,
-      heatmap: null,
-      liveHeatmap: null,
-      heatmapsByHorizon: {},
-      plume: null,
-    }));
-    setSelectedDate(nextDate);
-  }
-
+  // Chon receptor trajectory va reload duong backward tu backend.
   function chooseTrajectoryReceptor(receptor) {
     setSelectedReceptor(receptor);
     setSelected({
@@ -300,7 +285,6 @@ export default function AirQualityMapDashboard() {
         </div>
         <div className="windy-top-controls">
           <a className="dashboard-link" href="#/statistics">Thống kê</a>
-          <DateSelector value={selectedDate} availableDates={data.manifest?.available_dates} onChange={changeDate} />
           <TimeSelector horizon={horizon} onChange={changeHorizon} />
           <FreshnessBadge forecast={displayForecast} />
         </div>
@@ -338,15 +322,15 @@ export default function AirQualityMapDashboard() {
       </aside>
 
       <div className="windy-legend" aria-label="PM2.5 color legend">
-        <span>PM2.5 adaptive scale</span>
+        <span>PM2.5 scale</span>
         <div className="legend-ramp" />
-        <div className="legend-ticks"><b>Low</b><b>Mid</b><b>High</b><b>Peak</b></div>
+        <div className="legend-ticks"><b>0</b><b>30</b><b>60</b><b>80+</b></div>
       </div>
 
       <div className="windy-bottom-timeline">
         <div className="timeline-caption">
           <strong>{horizon === 0 ? "Latest observed/nowcast" : `Forecast +${horizon}h`}</strong>
-          <span>{selectedDate || data.manifest?.selected_date || "latest cache"}</span>
+          <span>{data.liveHeatmap?.base_hour || data.liveHeatmap?.generated_at || "live serving"}</span>
         </div>
         <TimeSelector horizon={horizon} onChange={changeHorizon} />
       </div>

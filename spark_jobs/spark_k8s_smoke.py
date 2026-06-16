@@ -1,3 +1,4 @@
+# File nay: xu ly du lieu lakehouse hoac tac vu Spark tien ich.
 from __future__ import annotations
 
 import os
@@ -5,12 +6,14 @@ import os
 from pyspark.sql import SparkSession
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     warehouse = os.getenv("ICEBERG_WAREHOUSE", "")
     check_iceberg = os.getenv("SPARK_SMOKE_CHECK_ICEBERG", "1").strip().lower() not in {"0", "false", "no"}
 
     spark = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder.appName("AIS_SparkK8sSmoke")
         .config("spark.sql.adaptive.enabled", "true")
         .getOrCreate()

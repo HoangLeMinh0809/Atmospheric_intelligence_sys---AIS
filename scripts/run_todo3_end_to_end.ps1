@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 param(
     [int]$LookbackDays = 30,
     [string]$StartDate = "",
@@ -13,6 +14,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Resolve-Path (Join-Path $scriptDir "..")
 Set-Location $rootDir
 
+# Khai bao class Step de gom state, cau hinh hoac hanh vi lien quan.
 function Step {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -25,6 +27,7 @@ function Step {
     Write-Host "[OK] $Name" -ForegroundColor Green
 }
 
+# Khai bao class Require de gom state, cau hinh hoac hanh vi lien quan.
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$CommandName)
     if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
@@ -32,6 +35,7 @@ function Require-Command {
     }
 }
 
+# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
 function Resolve-DateRange {
     if ([string]::IsNullOrWhiteSpace($StartDate) -or [string]::IsNullOrWhiteSpace($EndDate)) {
         $utcNow = (Get-Date).ToUniversalTime()

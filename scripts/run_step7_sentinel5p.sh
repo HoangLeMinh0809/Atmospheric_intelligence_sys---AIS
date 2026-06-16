@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 set -euo pipefail
 
 echo "=== Waiting for HDFS parquet /warehouse/iceberg/satellite/sentinel5p_summary_bronze ==="
@@ -24,7 +25,9 @@ docker exec -i -e APP_NAME=Sentinel5PSummary_Streaming spark-master python3 - <<
 import json, urllib.request, os, sys
 app_name=os.environ.get('APP_NAME','')
 try:
+  # Goi HTTP request truc tiep toi endpoint dich.
   raw=urllib.request.urlopen('http://localhost:8080/json', timeout=10).read().decode('utf-8')
+  # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
   payload=json.loads(raw)
 except Exception as exc:
   print('[WARN] Unable to query Spark master:', exc)

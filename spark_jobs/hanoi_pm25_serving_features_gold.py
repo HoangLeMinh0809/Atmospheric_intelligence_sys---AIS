@@ -1,3 +1,4 @@
+# File nay: tao feature, training table hoac serving table cho bai toan PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -103,10 +104,12 @@ METADATA_COLUMN_TYPES = {
 }
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build PM2.5 serving feature gold table (K8s-ready)")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -122,6 +125,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     warehouse = os.getenv("ICEBERG_WAREHOUSE", "")
@@ -135,6 +139,7 @@ def build_spark() -> SparkSession:
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder.appName("HanoiPM25ServingFeaturesGold")
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -152,6 +157,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df: DataFrame, time_col: str, start_date: str, end_date: str) -> DataFrame:
     if start_date:
         df = df.filter(F.to_date(F.col(time_col)) >= F.to_date(F.lit(start_date)))
@@ -160,11 +166,13 @@ def apply_date_range(df: DataFrame, time_col: str, start_date: str, end_date: st
     return df
 
 
+# Tinh schema hash cho payload cho du lieu/du doan PM2.5.
 def schema_hash_for(feature_cols: list[str]) -> str:
     payload = json.dumps({"features": feature_cols}, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+# Kiem tra tinh dung dan cua du lieu/du doan PM2.5.
 def validate_schema(df: DataFrame, expected_features: list[str]) -> dict:
     missing = [c for c in expected_features if c not in df.columns]
     unexpected_leakage = [c for c in sorted(LEAKAGE_COLUMNS) if c in df.columns]
@@ -184,6 +192,7 @@ def validate_schema(df: DataFrame, expected_features: list[str]) -> dict:
     }
 
 
+# Tao bang serving features toi thieu, schema on dinh cho buoc infer/giong lai Cassandra state.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {catalog}.features")
@@ -210,6 +219,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
 
@@ -229,6 +239,7 @@ def main() -> None:
     created_at = datetime.now(timezone.utc)
 
     try:
+        # Doc bang nguon tu Iceberg truoc khi bien doi du lieu.
         df = spark.read.table(source_table)
         df = apply_date_range(df, "hour", args.start_date, args.end_date)
         df = apply_asof_time(df, "hour", parse_asof_time(args.asof_time))
@@ -302,7 +313,7 @@ def main() -> None:
         out.createOrReplaceTempView("src")
         spark.sql(
             f"""
-            MERGE INTO {target_table} t
+                MERGE INTO {target_table} t
             USING src s
             ON t.base_hour = s.base_hour
               AND t.location_id = s.location_id

@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File nay: xu ly du lieu lakehouse hoac tac vu Spark tien ich.
+from __future__ import annotations
 
 import argparse
 import os
@@ -22,8 +23,10 @@ TABLES = [
 ]
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("AIS_IcebergMaintenance")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -35,6 +38,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Chay bo thu tuc bao tri Iceberg co ban cho cac bang bronze lon: rewrite, expire snapshots, remove orphan files.
 def run_maintenance(spark: SparkSession, retention_hours: int) -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=retention_hours)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -67,12 +71,14 @@ def run_maintenance(spark: SparkSession, retention_hours: int) -> None:
             print(f"[WARN] remove_orphan_files failed for {fq_table}: {exc}")
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Iceberg maintenance procedures")
     parser.add_argument("--retention-hours", type=int, default=168)
     return parser.parse_args()
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     spark = build_spark()

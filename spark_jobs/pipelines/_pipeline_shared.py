@@ -1,3 +1,4 @@
+# File nay: orchestrate cac Spark job theo dung thu tu bronze/silver/gold.
 from __future__ import annotations
 
 import contextlib
@@ -19,12 +20,14 @@ for path in (ROOT_DIR, SPARK_JOBS_DIR):
         sys.path.insert(0, text)
 
 
+# Tao mot SparkSession dung chung cho ca pipeline de cac module con co the tai su dung.
 def build_pipeline_spark(app_name: str) -> SparkSession:
     from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, SPARK_SQL_SESSION_TIMEZONE
 
     packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder.appName(app_name)
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -43,6 +46,7 @@ def build_pipeline_spark(app_name: str) -> SparkSession:
     return builder.getOrCreate()
 
 
+# Tam thoi patch bien moi truong trong pham vi chay module dich.
 @contextlib.contextmanager
 def patched_environ(updates: dict[str, str | None]) -> Iterator[None]:
     original: dict[str, str | None] = {}
@@ -62,6 +66,7 @@ def patched_environ(updates: dict[str, str | None]) -> Iterator[None]:
                 os.environ[key] = value
 
 
+# Ep PySpark nhan session chia se nay la active/default session cua process hien tai.
 def _mark_active_session(shared_spark: SparkSession) -> None:
     try:
         SparkSession._instantiatedSession = shared_spark
@@ -70,6 +75,7 @@ def _mark_active_session(shared_spark: SparkSession) -> None:
         pass
 
 
+# Goi `main()` cua mot module pipeline con trong cung process va cung SparkSession.
 def invoke_module_main(
     module_name: str,
     argv: list[str],
@@ -98,6 +104,7 @@ def invoke_module_main(
             _mark_active_session(shared_spark)
 
 
+# Tra ve HDFS endpoint goc cho pipeline orchestration.
 def hdfs_base_uri() -> str:
     return (
         os.getenv("HDFS_NAMENODE")

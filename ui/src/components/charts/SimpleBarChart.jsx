@@ -1,7 +1,9 @@
+// File nay: component bieu do hien thi timeseries, forecast hoac thong ke.
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 import { getProvinceName } from "../../utils/provinceMap";
 
+// Render component SimpleBarChart va gan state/props cho UI.
 function SimpleBarChart({ data, title }) {
   const ref = useRef();
 

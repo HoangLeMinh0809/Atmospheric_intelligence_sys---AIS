@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -63,10 +64,12 @@ OUTPUT_SCHEMA = StructType(
 )
 
 
+# Gioi han gia tri trong khoang hop le cho payload visualization.
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build PM2.5 source attribution visualization layer")
     add_common_args(parser)

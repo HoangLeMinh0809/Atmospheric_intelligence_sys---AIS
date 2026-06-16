@@ -1,3 +1,4 @@
+# File nay: orchestrate cac Spark job theo dung thu tu bronze/silver/gold.
 from __future__ import annotations
 
 import argparse
@@ -35,6 +36,7 @@ SOURCE_CONFIG = {
 }
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run multiple Kafka-to-Iceberg bronze ingests in one Spark app")
     parser.add_argument(
@@ -50,10 +52,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(value: str) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     selected = [item.strip() for item in args.sources.split(",") if item.strip()]

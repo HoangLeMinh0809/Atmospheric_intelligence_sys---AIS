@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -25,6 +26,7 @@ from visualization_common import (
 )
 
 
+# Tinh so phut giua hai moc thoi gian cho payload visualization.
 def minutes_between(now, then) -> int | None:
     if then is None:
         return None
@@ -33,6 +35,7 @@ def minutes_between(now, then) -> int | None:
     return int((now - then.astimezone(timezone.utc)).total_seconds() / 60)
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build PM2.5 visualization forecast dashboard gold table")
     add_common_args(parser)

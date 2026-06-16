@@ -1,3 +1,4 @@
+# File nay: ingest metadata aerosol MAIAC va day event vao Kafka.
 import logging
 import os
 import re
@@ -50,6 +51,7 @@ WINDOW_CONFIG = build_default_window_config(
 )
 
 
+# Parse va chuan hoa input cho du lieu MAIAC aerosol.
 def parse_bbox(raw_bbox: str) -> list[float]:
     parts = [part.strip() for part in raw_bbox.split(",") if part.strip()]
     if len(parts) != 4:
@@ -60,15 +62,18 @@ def parse_bbox(raw_bbox: str) -> list[float]:
 MAIAC_BBOX = parse_bbox(MAIAC_BBOX_RAW)
 
 
+# Chuyen thoi gian sang dinh dang CMR ISO cho du lieu MAIAC aerosol.
 def _to_cmr_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# Rut ma tile tu metadata cho du lieu MAIAC aerosol.
 def _extract_tile(granule_name: str) -> str:
     match = re.search(r"\.(h\d{2}v\d{2})\.", granule_name)
     return match.group(1) if match else ""
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu MAIAC aerosol.
 def _extract_acquisition_date(granule_name: str) -> str:
     match = re.search(r"\.A(\d{7})\.", granule_name)
     if not match:
@@ -81,6 +86,7 @@ def _extract_acquisition_date(granule_name: str) -> str:
     return dt.date().isoformat()
 
 
+# Chon URL tai file phu hop cho du lieu MAIAC aerosol.
 def _pick_download_url(entry: dict) -> str:
     links = entry.get("links") or []
     for link in links:
@@ -93,6 +99,7 @@ def _pick_download_url(entry: dict) -> str:
     return ""
 
 
+# Lay du lieu hoac metadata cho du lieu MAIAC aerosol.
 def get_with_retry(url: str, params: dict, max_retries: int = 4) -> dict | None:
     for attempt in range(max_retries):
         try:
@@ -111,6 +118,7 @@ def get_with_retry(url: str, params: dict, max_retries: int = 4) -> dict | None:
     return None
 
 
+# Lap qua cac ban ghi CMR tra ve cho du lieu MAIAC aerosol.
 def iter_cmr_entries(start_utc: datetime, end_utc: datetime):
     temporal = f"{_to_cmr_iso(start_utc)},{_to_cmr_iso(end_utc)}"
     emitted = 0
@@ -151,6 +159,7 @@ def iter_cmr_entries(start_utc: datetime, end_utc: datetime):
             time.sleep(REQUEST_DELAY_SEC)
 
 
+# Tao payload hoac DataFrame cho du lieu MAIAC aerosol.
 def build_event(
     entry: dict,
     ingest_time: str,
@@ -186,6 +195,7 @@ def build_event(
     }
 
 
+# Chay mot lan xu ly cho du lieu MAIAC aerosol.
 def run_once(producer) -> int:
     window = resolve_window(WINDOW_CONFIG)
     ingest_time = utc_now().isoformat()
@@ -238,6 +248,7 @@ def run_once(producer) -> int:
     return sent
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main():
     logger.info("MODIS MAIAC ingest")
     logger.info(f"  Topic: {KAFKA_TOPIC}")

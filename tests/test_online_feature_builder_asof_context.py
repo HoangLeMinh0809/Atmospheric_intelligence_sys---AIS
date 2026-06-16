@@ -1,6 +1,8 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 from ais_architecture_logic import select_asof_context, staleness_days, staleness_hours
 
 
+# Kiem tra daily and hourly context selection is latest asof without future rows.
 def test_daily_and_hourly_context_selection_is_latest_asof_without_future_rows():
     base_time = "2026-05-31T14:30:00Z"
     era5 = [{"hour": item} for item in ["2026-05-31T12:00:00Z", "2026-05-31T13:00:00Z", "2026-05-31T15:00:00Z"]]

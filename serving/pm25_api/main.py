@@ -1,3 +1,4 @@
+# File nay: API PM2.5 cho health check va truy cap du doan.
 from __future__ import annotations
 
 import json
@@ -12,10 +13,12 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 
 
+# Lay timestamp UTC hien tai cho metadata freshness.
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Map gia tri PM2.5 sang bucket rui ro cho UI.
 def _risk_level(pm25: float | None) -> str | None:
     if pm25 is None:
         return None
@@ -28,10 +31,12 @@ def _risk_level(pm25: float | None) -> str | None:
     return "very_high"
 
 
+# Doc bien moi truong va trim khoang trang.
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
 
 
+# Doc bien moi truong bat buoc va fail fast neu thieu.
 def _required_env(name: str) -> str:
     value = _env(name)
     if not value:
@@ -39,6 +44,7 @@ def _required_env(name: str) -> str:
     return value
 
 
+# Doi HDFS URI sang WebHDFS OPEN URL de API doc duoc.
 def _hdfs_to_webhdfs(uri: str) -> str:
     webhdfs_base = _required_env("HDFS_WEBHDFS_BASE").rstrip("/")
     parsed = urllib.parse.urlparse(uri)
@@ -46,6 +52,7 @@ def _hdfs_to_webhdfs(uri: str) -> str:
     return f"{webhdfs_base}{encoded}?op=OPEN"
 
 
+# Doc text tu HTTP, HDFS/WebHDFS, file URI hoac local path.
 def _read_uri_text(uri: str, timeout_s: int = 5) -> str:
     parsed = urllib.parse.urlparse(uri)
     scheme = parsed.scheme.lower()
@@ -60,14 +67,18 @@ def _read_uri_text(uri: str, timeout_s: int = 5) -> str:
     else:
         raise ValueError(f"Unsupported PM2.5 cache URI scheme: {scheme}")
 
+    # Goi HTTP request truc tiep toi endpoint dich.
     with urllib.request.urlopen(target, timeout=timeout_s) as response:
         return response.read().decode("utf-8")
 
 
+# Doc JSON va cache TTL ngan de giam so lan fetch lap lai.
 def _read_json_uri(uri: str, timeout_s: int = 5) -> dict[str, Any]:
+    # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
     return json.loads(_read_uri_text(uri, timeout_s=timeout_s))
 
 
+# Tao URI manifest latest hoac theo ngay.
 def _manifest_uri() -> str | None:
     explicit = _env("PM25_MANIFEST_URI")
     if explicit:
@@ -78,6 +89,7 @@ def _manifest_uri() -> str | None:
     return None
 
 
+# Tim cache URI cua forecast, uu tien env explicit roi moi fallback sang manifest visualization.
 def _forecast_cache_uri() -> str | None:
     explicit = _env("PM25_FORECAST_CACHE_URI") or _env("PREDICTION_CACHE_URI")
     if explicit:
@@ -106,6 +118,7 @@ def _forecast_cache_uri() -> str | None:
     return sorted(candidates, key=lambda item: item.get("generated_at", ""), reverse=True)[0]["cache_uri"]
 
 
+# Tai payload forecast tu Cassandra, cache hoac Spark fallback tuy theo che do cau hinh.
 def _load_forecast_payload() -> dict[str, Any]:
     if _cassandra_forecast_enabled():
         return _load_forecast_payload_from_cassandra()
@@ -128,6 +141,7 @@ def _load_forecast_payload() -> dict[str, Any]:
         raise HTTPException(status_code=503, detail={"error": "forecast_cache_unreadable", "uri": uri, "message": str(exc)}) from exc
 
 
+# Compatibility fallback only. Do not enable for readiness or normal serving.
 def _load_forecast_payload_from_spark() -> dict[str, Any]:
     """Compatibility fallback only. Do not enable for readiness or normal serving."""
     try:
@@ -143,6 +157,7 @@ def _load_forecast_payload_from_spark() -> dict[str, Any]:
     location_id = _env("LOCATION_ID", "hanoi") or "hanoi"
 
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder.appName("AIS_PM25_API_COMPAT_FALLBACK")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config(f"spark.sql.catalog.{catalog}", "org.apache.iceberg.spark.SparkCatalog")
@@ -154,6 +169,7 @@ def _load_forecast_payload_from_spark() -> dict[str, Any]:
     spark = builder.getOrCreate()
     try:
         df = (
+            # Doc bang nguon tu Iceberg truoc khi bien doi du lieu.
             spark.read.table(prediction_table)
             .filter(F.col("location_id") == F.lit(location_id))
             .filter(F.col("model_status") == F.lit("production"))
@@ -169,6 +185,7 @@ def _load_forecast_payload_from_spark() -> dict[str, Any]:
         spark.stop()
 
 
+# Chuyen datetime/value sang chuoi ISO UTC an toan cho API.
 def _to_iso(ts: Any) -> str | None:
     if ts is None:
         return None
@@ -179,6 +196,7 @@ def _to_iso(ts: Any) -> str | None:
     return ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Chuyen mot dong du lieu du doan thanh JSON contract ma client/API dang dung.
 def _row_to_forecast_payload(row: dict[str, Any], *, location_id: str) -> dict[str, Any]:
     return {
         "base_hour": _to_iso(row.get("base_hour")),
@@ -218,6 +236,7 @@ def _row_to_forecast_payload(row: dict[str, Any], *, location_id: str) -> dict[s
     }
 
 
+# Normalize visualization dashboard cache or legacy prediction row into PM2.5 API response.
 def _normalize_forecast_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize visualization dashboard cache or legacy prediction row into PM2.5 API response."""
     location_id = _env("LOCATION_ID", "hanoi") or "hanoi"
@@ -246,11 +265,13 @@ def _normalize_forecast_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return _row_to_forecast_payload(payload, location_id=location_id)
 
 
+# Kiem tra xem forecast latest co dang phuc vu truc tiep tu Cassandra hay khong.
 def _cassandra_forecast_enabled() -> bool:
     source = _env("VIS_FORECAST_SOURCE") or _env("FEATURE_SOURCE")
     return source.lower() == "cassandra"
 
 
+# Doc ban ghi forecast moi nhat cua location tu bang Cassandra phuc vu serving online.
 def _load_forecast_payload_from_cassandra() -> dict[str, Any]:
     try:
         from cassandra.cluster import Cluster
@@ -263,9 +284,11 @@ def _load_forecast_payload_from_cassandra() -> dict[str, Any]:
     table = _env("CASSANDRA_FORECAST_TABLE", "pm25_forecast_latest_by_location")
     location_id = _env("LOCATION_ID", "hanoi") or "hanoi"
 
+    # Mo ket noi Cassandra driver voi host/port dang cau hinh.
     cluster = Cluster([host], port=port)
     session = cluster.connect()
     try:
+        # Chay truy van truc tiep tren Cassandra session.
         row = session.execute(f"SELECT * FROM {keyspace}.{table} WHERE location_id = %s", (location_id,)).one()
     finally:
         session.shutdown()
@@ -280,6 +303,7 @@ def _load_forecast_payload_from_cassandra() -> dict[str, Any]:
 app = FastAPI(title="AIS PM2.5 API", version="0.1.0")
 
 
+# Ghi log timing va status cho moi request de de theo doi API trong runtime.
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
@@ -306,11 +330,13 @@ async def log_requests(request: Request, call_next):
         )
 
 
+# Liveness probe don gian de container orchestration biet service con song.
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok", "time_utc": _utc_now()}
 
 
+# Readiness probe xac nhan API doc duoc forecast tu nguon hien tai ma khong khoi tao Spark.
 @app.get("/readyz")
 def readyz() -> dict:
     try:
@@ -329,6 +355,7 @@ def readyz() -> dict:
         raise HTTPException(status_code=503, detail={"error": "missing_config", "message": str(exc)}) from exc
 
 
+# Endpoint tra forecast PM2.5 moi nhat theo contract ma UI va client dang su dung.
 @app.get("/api/v1/hanoi/pm25/forecast/latest")
 def latest_forecast() -> dict:
     payload = _load_forecast_payload()

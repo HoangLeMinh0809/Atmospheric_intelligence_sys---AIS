@@ -1,3 +1,5 @@
+// File nay: helper frontend cho format, mapping hoac adapter du lieu.
+// Chuyen payload Weather API thanh danh sach ban ghi theo gio cho frontend.
 export function adaptWeatherApiDay(weatherJson) {
   const location = weatherJson.location;
   const forecastDay = weatherJson.forecast?.forecastday?.[0];
@@ -22,6 +24,7 @@ export function adaptWeatherApiDay(weatherJson) {
   }));
 }
 
+// Chuan hoa ban ghi OpenAQ ve schema frontend thong nhat.
 export function adaptOpenAQRows(rows) {
   return rows.map((row) => ({
     source: "openaq",
@@ -42,10 +45,12 @@ export function adaptOpenAQRows(rows) {
   }));
 }
 
+// Gop nhieu nhom ban ghi da chuan hoa thanh mot danh sach chung.
 export function mergeNormalizedData(...groups) {
   return groups.flat().filter((item) => item.timestamp);
 }
 
+// Lay gia tri hoac metadata phuc vu render UI.
 export function getLatestRecord(data) {
   if (!data.length) return null;
   return [...data].sort(
@@ -53,6 +58,7 @@ export function getLatestRecord(data) {
   )[0];
 }
 
+// Tinh gia tri trung binh theo khu vuc de dung cho chart va card.
 export function buildRegionAverages(data, metric) {
   const grouped = new Map();
 

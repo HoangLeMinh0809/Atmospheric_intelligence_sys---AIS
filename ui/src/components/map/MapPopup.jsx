@@ -1,3 +1,5 @@
+// File nay: component ban do hien thi layer PM2.5, station, trajectory va plume.
+// Render component MapPopup va gan state/props cho UI.
 export default function MapPopup({ feature, onClose }) {
   if (!feature) return null;
   const props = feature.properties || {};

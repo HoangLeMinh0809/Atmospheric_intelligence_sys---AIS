@@ -1,3 +1,4 @@
+# File này: file hỗ trợ hoặc entrypoint của hệ thống.
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from typing import Any, Iterable, Mapping, Sequence
 FUTURE_TARGET_COLUMNS = {"pm25_next_6h", "pm25_next_12h", "pm25_next_24h"}
 
 
+# Gom trạng thái chia cửa sổ lịch sử/realtime dùng chung cho orchestration.
 @dataclass(frozen=True)
 class DateSplit:
     start_date: str
@@ -18,10 +20,12 @@ class DateSplit:
     realtime_base_date: str
 
 
+# Parse chuỗi ngày `YYYY-MM-DD` thành `date`.
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
+# Chuẩn hóa nhiều kiểu thời gian đầu vào về `datetime` UTC.
 def _parse_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         parsed = value
@@ -34,6 +38,7 @@ def _parse_datetime(value: Any) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+# Tách khoảng chạy thành phần historical và ngày realtime cuối cùng.
 def compute_historical_and_realtime_dates(start_date: str, end_date: str) -> DateSplit:
     start = _parse_date(start_date)
     realtime = _parse_date(end_date)
@@ -53,6 +58,7 @@ def compute_historical_and_realtime_dates(start_date: str, end_date: str) -> Dat
     )
 
 
+# Sinh bộ biến môi trường dùng cho pha backfill lịch sử.
 def build_historical_backfill_env(start_date: str, end_date: str) -> dict[str, str]:
     split = compute_historical_and_realtime_dates(start_date, end_date)
     return {
@@ -65,6 +71,7 @@ def build_historical_backfill_env(start_date: str, end_date: str) -> dict[str, s
     }
 
 
+# Chỉ giữ các record có thời gian không vượt quá mốc `base_time`.
 def filter_records_asof(records: Iterable[Mapping[str, Any]], time_key: str, base_time: Any) -> list[dict[str, Any]]:
     base = _parse_datetime(base_time)
     result: list[dict[str, Any]] = []
@@ -77,6 +84,7 @@ def filter_records_asof(records: Iterable[Mapping[str, Any]], time_key: str, bas
     return result
 
 
+# Chọn record gần nhất nhưng vẫn không vượt quá mốc `as-of`.
 def select_asof_context(records: Iterable[Mapping[str, Any]], time_key: str, base_time: Any) -> dict[str, Any] | None:
     scoped = filter_records_asof(records, time_key, base_time)
     if not scoped:
@@ -84,24 +92,29 @@ def select_asof_context(records: Iterable[Mapping[str, Any]], time_key: str, bas
     return max(scoped, key=lambda row: _parse_datetime(row[time_key]))
 
 
+# Loại các cột target tương lai khỏi danh sách feature dùng cho infer.
 def drop_future_target_columns(columns: Sequence[str]) -> list[str]:
     return [column for column in columns if column not in FUTURE_TARGET_COLUMNS]
 
 
+# Báo lỗi nếu feature schema còn sót cột target tương lai.
 def assert_no_future_target_columns(columns: Sequence[str]) -> None:
     leaked = sorted(FUTURE_TARGET_COLUMNS.intersection(columns))
     if leaked:
         raise ValueError(f"Future target columns are not allowed in online inference features: {leaked}")
 
 
+# Tính độ trễ theo giờ giữa `base_time` và thời điểm context.
 def staleness_hours(base_time: Any, context_time: Any) -> float:
     return (_parse_datetime(base_time) - _parse_datetime(context_time)).total_seconds() / 3600.0
 
 
+# Tính độ lệch theo ngày giữa ngày gốc và ngày context.
 def staleness_days(base_date: Any, context_date: Any) -> int:
     return (_parse_datetime(base_date).date() - _parse_datetime(context_date).date()).days
 
 
+# Mô tả thứ tự logic mong muốn của luồng TODO4 near-realtime.
 def expected_todo4_online_order() -> list[str]:
     return [
         "historical backfill",
@@ -118,6 +131,7 @@ def expected_todo4_online_order() -> list[str]:
     ]
 
 
+# Quy ước nguồn dữ liệu mà UI/API latest nên đọc theo loại artifact.
 def resolve_latest_source(*, date: str | None, artifact: str) -> str:
     if date:
         return "historical_cache"

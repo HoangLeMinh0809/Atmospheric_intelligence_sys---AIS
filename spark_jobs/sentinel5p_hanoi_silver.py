@@ -1,3 +1,4 @@
+# File nay: xu ly Sentinel-5P thanh bang satellite silver/summary cho Ha Noi.
 """
 Hanoi Sentinel-5P Silver Layer Job.
 
@@ -90,6 +91,7 @@ LOCAL_SEARCH_ROOTS = [
 ]
 
 
+# Lay du lieu hoac metadata cho du lieu Sentinel-5P.
 def _get_qa_threshold(product: str) -> float:
     default_threshold = float(PRODUCTS[product]["qa_threshold"])
     override_names = [
@@ -130,8 +132,10 @@ OUTPUT_SCHEMA = StructType(
 )
 
 
+# Khoi tao SparkSession cho du lieu Sentinel-5P.
 def create_spark_session() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("hanoi-sentinel5p-silver")
         .config(f"spark.sql.catalog.{ICEBERG_CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
@@ -147,6 +151,7 @@ def create_spark_session() -> SparkSession:
     )
 
 
+# Tao bang daily summary cho tung product Sentinel-5P trong khu vuc Ha Noi.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.satellite")
     spark.sql(
@@ -176,6 +181,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Fail fast neu image Spark hien tai chua co `netCDF4`/`numpy`.
 def _require_netcdf_support() -> None:
     if nc is None or np is None:
         raise RuntimeError(
@@ -183,6 +189,7 @@ def _require_netcdf_support() -> None:
         ) from NETCDF_IMPORT_ERROR
 
 
+# Parse timestamp ISO trong bronze metadata ve `datetime` naive de group theo ngay.
 def _parse_iso_timestamp(raw_value: Any) -> datetime | None:
     if raw_value is None:
         return None
@@ -198,6 +205,7 @@ def _parse_iso_timestamp(raw_value: Any) -> datetime | None:
         return None
 
 
+# Chuan hoa record cho du lieu Sentinel-5P.
 def _normalize_product(product_value: Any) -> str:
     text = str(product_value or "").strip().upper()
     if text == "AER":
@@ -205,10 +213,12 @@ def _normalize_product(product_value: Any) -> str:
     return text
 
 
+# Chuan hoa ten file ve dang an toan de so khop giua metadata va ten file tren disk/HDFS.
 def _sanitize_fragment(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
 
 
+# Sinh danh sach ten file co kha nang khop voi granule raw tu cac truong metadata.
 def _candidate_file_names(metadata: dict[str, Any]) -> list[str]:
     names: list[str] = []
     for field_name in ("file_name", "product_name", "product_id"):
@@ -243,6 +253,7 @@ def _candidate_file_names(metadata: dict[str, Any]) -> list[str]:
     return deduped
 
 
+# Gom metadata bronze theo `(product, ngay overpass)` de moi nhom duoc tong hop thanh mot daily row.
 def _group_metadata_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, date], list[dict[str, Any]]]:
     grouped: dict[tuple[str, date], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -263,6 +274,7 @@ def _group_metadata_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, date], l
     return grouped
 
 
+# List files under an HDFS path using the Hadoop FileSystem API via the Spark JVM. Returns a mapping of basename -> full HDFS path.
 def _list_hdfs_files(root_path: str) -> dict[str, str]:
     """
     List files under an HDFS path using the Hadoop FileSystem API via the Spark JVM.
@@ -270,6 +282,7 @@ def _list_hdfs_files(root_path: str) -> dict[str, str]:
     """
     from pyspark.sql import SparkSession
 
+    # Khoi tao SparkSession voi cac config cua job hien tai.
     spark = SparkSession.builder.getOrCreate()
     index = list_hdfs_files(root_path, spark)
     for basename, path_text in list(index.items()):
@@ -277,6 +290,7 @@ def _list_hdfs_files(root_path: str) -> dict[str, str]:
     return index
 
 
+# Tim file granule thuc te theo thu tu uu tien: path trong bronze, local fallback, roi moi quet HDFS.
 def _resolve_source_file(metadata: dict[str, Any], raw_base_path: str) -> tuple[str | None, str | None]:
     raw_file_path = str(metadata.get("raw_file_path") or "").strip()
     raw_downloaded = metadata.get("raw_downloaded")
@@ -318,16 +332,19 @@ def _resolve_source_file(metadata: dict[str, Any], raw_base_path: str) -> tuple[
     return None, None
 
 
+# Copy an HDFS file to a local temporary directory using the Hadoop FileSystem API.
 def _copy_hdfs_file_to_local(remote_path: str) -> Path:
     """
     Copy an HDFS file to a local temporary directory using the Hadoop FileSystem API.
     """
     from pyspark.sql import SparkSession
 
+    # Khoi tao SparkSession voi cac config cua job hien tai.
     spark = SparkSession.builder.getOrCreate()
     return copy_hdfs_to_local(remote_path, spark, prefix="sentinel5p_", temp_base="/tmp/ais_sentinel5p")
 
 
+# Tim NetCDF group dang chua bien can doc; mot so granule dat du lieu trong `PRODUCT`, mot so dat o group khac.
 def _find_product_group(dataset: Any, variable_name: str) -> Any | None:
     group = dataset.groups.get("PRODUCT")
     if group is not None and variable_name in group.variables:
@@ -340,6 +357,7 @@ def _find_product_group(dataset: Any, variable_name: str) -> Any | None:
     return None
 
 
+# Doc mot granule, cat theo bbox Ha Noi va tra ve cac thong ke pixel hop le trong ngay.
 def _read_granule_stats(local_path: Path, product: str, bbox: dict[str, float], event_ts: datetime) -> dict[str, Any] | None:
     _require_netcdf_support()
 
@@ -362,6 +380,7 @@ def _read_granule_stats(local_path: Path, product: str, bbox: dict[str, float], 
             values = np.where(values == fill_value, np.nan, values)
         values = np.where(values < -1e30, np.nan, values)
 
+        # Chi tinh thong ke tren pixel nam trong bbox Ha Noi va co gia tri science hop le.
         base_mask = (
             np.isfinite(latitude)
             & np.isfinite(longitude)
@@ -392,6 +411,7 @@ def _read_granule_stats(local_path: Path, product: str, bbox: dict[str, float], 
         qa_variable = group.variables.get("qa_value")
         if qa_variable is not None:
             qa_values = np.asarray(qa_variable[0].data, dtype=float)
+            # QA duoc luu rieng trong granule va ap nguong theo tung product de loc pixel kem chat luong.
             qa_mask = np.isfinite(qa_values) & (qa_values >= qa_threshold)
             bbox_qa_values = qa_values[base_mask & np.isfinite(qa_values)]
             if bbox_qa_values.size > 0:
@@ -414,6 +434,7 @@ def _read_granule_stats(local_path: Path, product: str, bbox: dict[str, float], 
         }
 
 
+# Gop nhieu granule cung ngay thanh mot daily summary row cho mot product.
 def _build_output_row(
     product: str,
     day_value: date,
@@ -460,6 +481,7 @@ def _build_output_row(
     }
 
 
+# Dieu phoi toan bo flow: loc bronze metadata, resolve granule, doc thong ke, va build daily rows.
 def build_daily_rows(spark: SparkSession, start_date: date, end_date: date) -> list[dict[str, Any]]:
     allowed_products = {product.upper() for product in get_sentinel5p_products()}
     allowed_products.add("AER")
@@ -569,12 +591,14 @@ def build_daily_rows(spark: SparkSession, start_date: date, end_date: date) -> l
     return output_rows
 
 
+# Tao DataFrame dau ra cho du lieu Sentinel-5P.
 def create_output_dataframe(spark: SparkSession, rows: list[dict[str, Any]]):
     if rows:
         return spark.createDataFrame(rows, schema=OUTPUT_SCHEMA)
     return spark.createDataFrame([], schema=OUTPUT_SCHEMA)
 
 
+# Ghi output cho du lieu Sentinel-5P.
 def write_to_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: date, end_date: date) -> None:
     print(f"[INFO] Writing {df.count()} Sentinel-5P row(s) to {table_name}")
     if full_refresh:
@@ -588,6 +612,7 @@ def write_to_iceberg(spark: SparkSession, df, table_name: str, full_refresh: boo
     df.writeTo(table_name).overwritePartitions()
 
 
+# Kiem tra tinh dung dan cua du lieu Sentinel-5P.
 def validate_output(df) -> None:
     total_rows = df.count()
     print(f"[INFO] Output rows: {total_rows}")
@@ -603,6 +628,7 @@ def validate_output(df) -> None:
         "value_mean",
     ).show(truncate=False)
 
+    # Bat dau gom nhom de tinh cac chi so tong hop.
     df.groupBy("product").count().show(truncate=False)
 
     summary = df.agg(
@@ -611,6 +637,7 @@ def validate_output(df) -> None:
     print(f"[INFO] Average valid_pct: {summary}")
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hanoi Sentinel-5P Silver Layer Job")
     parser.add_argument("--start-date", required=True, help="Start date (YYYY-MM-DD)")

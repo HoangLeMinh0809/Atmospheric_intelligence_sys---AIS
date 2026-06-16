@@ -1,3 +1,4 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 from pathlib import Path
 
 from ais_architecture_logic import expected_todo4_online_order
@@ -6,12 +7,14 @@ from ais_architecture_logic import expected_todo4_online_order
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# Kiem tra index.
 def _index(script: str, needle: str) -> int:
     pos = script.find(needle)
     assert pos >= 0, f"Missing orchestration marker: {needle}"
     return pos
 
 
+# Kiem tra expected logical order contract.
 def test_expected_logical_order_contract():
     assert expected_todo4_online_order() == [
         "historical backfill",
@@ -28,6 +31,7 @@ def test_expected_logical_order_contract():
     ]
 
 
+# Kiem tra todo4 realtime dual flow order is after historical training.
 def test_todo4_realtime_dual_flow_order_is_after_historical_training():
     script = (ROOT / "scripts" / "run_todo4_stack.ps1").read_text(encoding="utf-8")
 
@@ -38,6 +42,7 @@ def test_todo4_realtime_dual_flow_order_is_after_historical_training():
     assert _index(script, 'Submit-SparkK8s "online-pm25-features"') < _index(script, "kubectl apply -f deploy/k8s/ml/online-pm25-features-cronjob.yaml")
 
 
+# Kiem tra streaming to bronze and online path both exist.
 def test_streaming_to_bronze_and_online_path_both_exist():
     script = (ROOT / "scripts" / "run_todo4_stack.ps1").read_text(encoding="utf-8")
 

@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -26,12 +27,15 @@ from visualization_common import (
 )
 
 
+# Parse va chuan hoa input cho payload visualization.
 def parse_geometry(value: str | None) -> dict | None:
     if not value:
         return None
+    # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
     return json.loads(value)
 
 
+# Tao payload GeoJSON cho payload visualization.
 def geojson_payload(rows: list[dict], id_field: str | None = None, max_features: int = 0) -> dict:
     original_count = len(rows)
     truncated = False
@@ -56,12 +60,14 @@ def geojson_payload(rows: list[dict], id_field: str | None = None, max_features:
     return payload
 
 
+# Serialize JSON an toan cho payload visualization.
 def json_safe(value):
     if hasattr(value, "isoformat"):
         return iso_z(value)
     return value
 
 
+# Ghi output cho payload visualization.
 def write_json(spark, uri: str, payload: dict, dry_run: bool = False) -> tuple[int, str]:
     text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=json_safe)
     if not dry_run:
@@ -69,11 +75,13 @@ def write_json(spark, uri: str, payload: dict, dry_run: bool = False) -> tuple[i
     return len(text.encode("utf-8")), payload_checksum(text)
 
 
+# Lay gia tri moi nhat cho payload visualization.
 def latest_value(rows: list[dict], field: str):
     values = [row.get(field) for row in rows if row.get(field) is not None]
     return max(values) if values else None
 
 
+# Tao mot dong manifest cho payload visualization.
 def manifest_row(runtime, layer_name: str, uri: str, payload_bytes: int, checksum: str, row_count: int, *,
                  base_time=None, valid_time=None, horizon_h: int | None = None, location_id: str | None = None,
                  fmt: str = "geojson", content_type: str = "application/geo+json",
@@ -112,6 +120,7 @@ def manifest_row(runtime, layer_name: str, uri: str, payload_bytes: int, checksu
     )
 
 
+# Tong hop ban ghi moi nhat cho payload visualization.
 def collect_latest(df, time_col: str, filters=None, asof_time=None, limit: int | None = None) -> tuple[list[dict], object]:
     if filters:
         for condition in filters:
@@ -127,6 +136,7 @@ def collect_latest(df, time_col: str, filters=None, asof_time=None, limit: int |
     return [r.asDict(recursive=True) for r in scoped.collect()], latest
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export visualization gold tables to API-ready cache files")
     add_common_args(parser)
@@ -147,6 +157,7 @@ def main() -> None:
     max_features = max(1, int(runtime.get("max_geojson_features", 5000)))
     max_trajectories = max(1, int(runtime.get("max_trajectories", 150)))
 
+    # Them layer unavailable vao manifest cho payload visualization.
     def add_unavailable_layer(layer_name: str, path: str, reason: str, *, horizon_h: int | None = None, location_id: str | None = None):
         unavailable_time = (asof_time or generated_at).replace(tzinfo=None)
         uri = f"{runtime['cache_base_uri']}/{path.replace('/latest', '/' + cache_scope)}"

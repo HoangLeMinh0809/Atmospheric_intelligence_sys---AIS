@@ -1,8 +1,10 @@
+// File nay: component bieu do hien thi timeseries, forecast hoac thong ke.
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 
-const SIZE = { width: 760, height: 320, margin: { top: 24, right: 24, bottom: 45, left: 58 } };
+const SIZE = { width: 860, height: 340, margin: { top: 28, right: 28, bottom: 52, left: 62 } };
 
+// Tao khung SVG chung va tieu de cho tung bieu do thong ke.
 function frame(ref, title) {
   const { width, height, margin } = SIZE;
   const root = d3.select(ref.current);
@@ -12,21 +14,25 @@ function frame(ref, title) {
   return svg;
 }
 
+// Ve truc x/y dung chung cho cac chart D3 trong man thong ke.
 function axes(svg, x, y) {
   const { height, margin } = SIZE;
   svg.append("g").attr("class", "statistics-axis").attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(6));
   svg.append("g").attr("class", "statistics-axis").attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y).ticks(6));
 }
 
+// Loai bo gia tri khong hop le truoc khi tinh phan bo hoac quantile.
 function finiteValues(values) {
   return values.map(Number).filter(Number.isFinite);
 }
 
+// Tinh phan vi cho box plot va CDF.
 function quantile(values, p) {
   if (!values.length) return null;
   return d3.quantile([...values].sort((a, b) => a - b), p);
 }
 
+// Chia PM2.5 thanh cac nhom muc do de ve chart ty trong rui ro.
 function riskBuckets(values) {
   return [
     { label: "Thấp", value: values.filter((item) => item < 25).length, color: "#5eead4" },
@@ -36,6 +42,7 @@ function riskBuckets(values) {
   ];
 }
 
+// Render component StatisticsCharts va gan state/props cho UI.
 export default function StatisticsCharts({ points, distribution, forecastBars, sourceSummary = [] }) {
   const lineRef = useRef();
   const histogramRef = useRef();
@@ -184,10 +191,10 @@ export default function StatisticsCharts({ points, distribution, forecastBars, s
 
   return (
     <div className="statistics-chart-grid">
-      <div className="statistics-chart-card" ref={lineRef} />
+      <div className="statistics-chart-card wide trend" ref={lineRef} />
       <div className="statistics-chart-card" ref={histogramRef} />
-      <div className="statistics-chart-card wide" ref={forecastRef} />
       <div className="statistics-chart-card" ref={riskPieRef} />
+      <div className="statistics-chart-card wide" ref={forecastRef} />
       <div className="statistics-chart-card" ref={cdfRef} />
       <div className="statistics-chart-card" ref={boxRef} />
       <div className="statistics-chart-card" ref={sourceRef} />

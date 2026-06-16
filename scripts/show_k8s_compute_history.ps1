@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 param(
     [string]$Namespace = "ais",
     [string]$HistoryPath = "logs/k8s_compute_history.jsonl",

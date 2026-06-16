@@ -1,4 +1,5 @@
-﻿"""Parse HYSPLIT tdump outputs from HDFS into trajectory silver Iceberg table."""
+# File nay: chay/parse HYSPLIT va tao dac trung trajectory.
+"""Parse HYSPLIT tdump outputs from HDFS into trajectory silver Iceberg table."""
 
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ SCHEMA = StructType(
 )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Parse HYSPLIT tdump outputs into Iceberg")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -52,12 +54,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("HYSPLITTrajectoryParseSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -69,6 +74,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang silver luu tung diem tren trajectory sau khi parse tdump.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.trajectory")
     spark.sql(
@@ -97,12 +103,14 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Chuan hoa nam 2 chu so trong tdump ve nam 4 chu so.
 def parse_year(value: int) -> int:
     if value < 100:
         return 2000 + value if value < 70 else 1900 + value
     return value
 
 
+# Parse dong tdump dinh dang so hoc chuan cua HYSPLIT thanh mot row trajectory.
 def parse_hysplit_numeric(run_id: str, direction: str, tokens: list[str]) -> Optional[tuple]:
     if len(tokens) < 12:
         return None
@@ -141,6 +149,7 @@ def parse_hysplit_numeric(run_id: str, direction: str, tokens: list[str]) -> Opt
     )
 
 
+# Fallback cho cac dong co timestamp ISO thay vi format so hoc chuan.
 def parse_iso_fallback(run_id: str, direction: str, line: str) -> Optional[tuple]:
     tokens = re.split(r"\s+", line.strip())
     if len(tokens) < 5:
@@ -175,6 +184,7 @@ def parse_iso_fallback(run_id: str, direction: str, line: str) -> Optional[tuple
     return None
 
 
+# Bo qua header/log lines, roi thu parse theo format tdump chuan truoc va format ISO sau.
 def parse_line(record: tuple) -> Optional[tuple]:
     run_id, direction, line = record
     text = (line or "").strip()
@@ -193,6 +203,7 @@ def parse_line(record: tuple) -> Optional[tuple]:
     return parse_iso_fallback(run_id, direction, text)
 
 
+# Lay danh sach run thanh cong co output_path de doc tdump tu HDFS.
 def load_runs(spark: SparkSession, runs_table: str, start_date: str, end_date: str):
     runs_df = spark.table(runs_table).filter(F.col("status") == F.lit("success")).filter(F.col("output_path").isNotNull())
     if start_date:
@@ -202,7 +213,9 @@ def load_runs(spark: SparkSession, runs_table: str, start_date: str, end_date: s
     return runs_df.select("run_id", "direction", "output_path").collect()
 
 
+# Gop va upsert ban ghi vao state dich cho du lieu trajectory HYSPLIT.
 def merge_trajectory_rows(spark: SparkSession, df, table_name: str) -> None:
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("hysplit_trajectory_updates")
     spark.sql(
         f"""
@@ -215,6 +228,7 @@ def merge_trajectory_rows(spark: SparkSession, df, table_name: str) -> None:
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     full_refresh = as_bool(args.full_refresh)
@@ -267,6 +281,7 @@ def main() -> None:
         return
 
     duplicate_count = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         parsed_df.groupBy("traj_id", "age_h")
         .count()
         .filter(F.col("count") > 1)

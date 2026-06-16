@@ -1,3 +1,5 @@
+// File nay: component ban do hien thi layer PM2.5, station, trajectory va plume.
+// Render component FreshnessBadge va gan state/props cho UI.
 export default function FreshnessBadge({ forecast }) {
   const freshness = forecast?.freshness || {};
   const prediction = freshness.prediction_freshness_minutes;

@@ -1,3 +1,4 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 import re
 from pathlib import Path
 
@@ -5,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# Kiem tra hourly context updater cronjob exists and is hourly not 30 seconds.
 def test_hourly_context_updater_cronjob_exists_and_is_hourly_not_30_seconds():
     manifest = (ROOT / "deploy" / "k8s" / "hourly" / "ais-hourly-context-updater-cronjob.yaml").read_text(encoding="utf-8")
 
@@ -15,6 +17,7 @@ def test_hourly_context_updater_cronjob_exists_and_is_hourly_not_30_seconds():
     assert "*/30 * * * * *" not in manifest
 
 
+# Kiem tra hourly context script orchestrates required era5 hysplit steps.
 def test_hourly_context_script_orchestrates_required_era5_hysplit_steps():
     script = (ROOT / "scripts" / "run_hourly_context_update.sh").read_text(encoding="utf-8")
     required = [
