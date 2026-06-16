@@ -1,3 +1,4 @@
+# File nay: tao feature, training table hoac serving table cho bai toan PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -25,10 +26,12 @@ DEFAULT_KEYSPACE = "ais_serving"
 DEFAULT_TARGET_TABLE = "pm25_feature_state_by_location_hour"
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Publish PM2.5 model-ready serving features to Cassandra")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -47,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     packages = os.getenv("SPARK_JARS_PACKAGES")
     if packages is None:
@@ -59,6 +63,7 @@ def build_spark() -> SparkSession:
     cassandra_host = os.getenv("CASSANDRA_HOST", "cassandra").strip() or "cassandra"
     cassandra_port = os.getenv("CASSANDRA_PORT", "9042").strip() or "9042"
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder.appName("PM25ServingFeaturesToCassandra")
         .config("spark.jars.ivy", os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2"))
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -75,6 +80,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu/du doan PM2.5.
 def apply_time_filters(df, args: argparse.Namespace):
     if args.base_hour:
         df = df.filter(F.col("base_hour") == F.to_timestamp(F.lit(args.base_hour)))
@@ -85,6 +91,7 @@ def apply_time_filters(df, args: argparse.Namespace):
     return df
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

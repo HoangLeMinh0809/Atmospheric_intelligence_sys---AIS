@@ -1,6 +1,8 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 from ais_architecture_logic import filter_records_asof
 
 
+# Kiem tra online builder filters openaq and weather to base time or earlier.
 def test_online_builder_filters_openaq_and_weather_to_base_time_or_earlier():
     base_time = "2026-05-31T14:00:00Z"
     openaq_rows = [

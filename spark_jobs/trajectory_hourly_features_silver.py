@@ -1,3 +1,4 @@
+# File nay: tao feature, training table hoac serving table cho bai toan PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -14,6 +15,7 @@ from hanoi_config import (
 )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Aggregate hourly trajectory features")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -25,12 +27,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("TrajectoryHourlyFeaturesSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -42,6 +47,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang hourly attribution rut gon tu cum trajectory va path-level satellite features.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.features")
     spark.sql(
@@ -66,6 +72,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Chon/loc tap du lieu phu hop cho du lieu trajectory.
 def filter_window(df, start_date: str, end_date: str):
     if start_date:
         df = df.filter(F.col("timestamp") >= F.to_timestamp(F.lit(f"{start_date} 00:00:00")))
@@ -74,6 +81,7 @@ def filter_window(df, start_date: str, end_date: str):
     return df
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
     predicates = []
     if start_date:
@@ -86,10 +94,12 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Upsert DataFrame vao bang Iceberg theo khoa merge duoc truyen vao.
 def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
     if full_refresh:
         delete_date_window(spark, table_name, "hour", start_date, end_date)
 
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("traj_hourly_updates")
     spark.sql(
         f"""
@@ -102,6 +112,7 @@ def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, 
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     full_refresh = as_bool(args.full_refresh)
@@ -145,12 +156,14 @@ def main() -> None:
     counts = joined.groupBy("hour", "cluster_id").agg(F.countDistinct("traj_id").alias("n_traj_cluster"))
     win = Window.partitionBy("hour").orderBy(F.col("n_traj_cluster").desc(), F.col("cluster_id").asc())
     dominant = (
+        # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
         counts.withColumn("rn", F.row_number().over(win))
         .filter(F.col("rn") == 1)
         .select("hour", F.col("cluster_id").alias("dominant_cluster"))
     )
 
     hourly = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         joined.groupBy("hour")
         .agg(
             F.countDistinct("traj_id").alias("n_traj"),
@@ -185,6 +198,7 @@ def main() -> None:
     bounds = clustered.agg(F.min("timestamp").alias("min_time"), F.max("timestamp").alias("max_time")).first()
 
     coverage = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         joined.groupBy("hour")
         .agg(
             F.countDistinct("traj_id").alias("n_traj"),

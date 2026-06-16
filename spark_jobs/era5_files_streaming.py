@@ -1,4 +1,5 @@
-﻿"""ERA5 file metadata Kafka -> Iceberg streaming processor.
+# File nay: xu ly ERA5 thanh bang khi tuong hoac dau vao ARL cho HYSPLIT.
+"""ERA5 file metadata Kafka -> Iceberg streaming processor.
 
 This job consumes JSON events from Kafka topic `era5-files` and writes them
 into Iceberg table `ais.weather.era5_files_bronze`.
@@ -75,6 +76,7 @@ ERA5_SCHEMA = StructType(
 )
 
 
+# Tao bang bronze nhan metadata file ERA5 tu Kafka.
 def ensure_table(spark: SparkSession) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.weather")
     spark.sql(
@@ -104,6 +106,7 @@ def ensure_table(spark: SparkSession) -> None:
     )
 
 
+# Merge mot micro-batch metadata ERA5 vao bronze sau khi dedupe theo `event_id`.
 def upsert_batch(batch_df: DataFrame, batch_id: int) -> None:
     if batch_df.isEmpty():
         return
@@ -115,10 +118,12 @@ def upsert_batch(batch_df: DataFrame, batch_id: int) -> None:
     updates = (
         batch_df
         .where(col("event_id").isNotNull())
+        # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
         .withColumn("_rn", row_number().over(window))
         .where(col("_rn") == 1)
         .drop("_rn")
     )
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     updates.createOrReplaceTempView("era5_file_updates")
     batch_df.sparkSession.sql(
         f"""
@@ -132,10 +137,12 @@ def upsert_batch(batch_df: DataFrame, batch_id: int) -> None:
     print(f"era5_files_batch={{'batch_id': {batch_id}, 'rows': {updates.count()}}}")
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     stop_after_batch, processing_time = parse_streaming_runtime(default_processing_time="30 seconds")
 
     spark = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("ERA5Files_Streaming")
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -151,6 +158,7 @@ def main() -> None:
     spark.sparkContext.setLogLevel("WARN")
 
     kafka_df = (
+        # Doc stream dau vao de xu ly lien tuc hoac catch-up.
         spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
         .option("subscribe", KAFKA_TOPIC)
@@ -161,6 +169,7 @@ def main() -> None:
 
     parsed_df = (
         kafka_df.selectExpr("CAST(key AS STRING) AS kafka_key", "CAST(value AS STRING) AS json_str")
+        # Parse chuoi JSON thanh cot co schema ro rang.
         .select(col("json_str"), from_json(col("json_str"), ERA5_SCHEMA).alias("data"))
         .select("json_str", "data.*")
         .withColumnRenamed("json_str", "_raw_payload")

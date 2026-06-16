@@ -1,3 +1,4 @@
+# File nay: ingest nguon du lieu va chuan hoa theo event contract cua AIS.
 from __future__ import annotations
 
 import json
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
+# Khai bao class gom state, cau hinh va quy tac xu ly dung chung.
 @dataclass(frozen=True)
 class WindowConfig:
     mode: str
@@ -19,6 +21,7 @@ class WindowConfig:
     state_file: Path
 
 
+# Khai bao class gom state, cau hinh va quy tac xu ly dung chung.
 @dataclass(frozen=True)
 class WindowRange:
     start_utc: datetime
@@ -26,10 +29,12 @@ class WindowRange:
     now_utc: datetime
 
 
+# Lay timestamp UTC hien tai cho metadata freshness.
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Parse chuoi flag thanh boolean.
 def parse_bool(raw_value: str, default: bool = False) -> bool:
     value = (raw_value or "").strip().lower()
     if value in {"1", "true", "yes", "y", "on"}:
@@ -39,6 +44,7 @@ def parse_bool(raw_value: str, default: bool = False) -> bool:
     return default
 
 
+# Parse chuoi thoi gian ISO ve datetime UTC.
 def parse_iso_datetime(value: str) -> datetime:
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
@@ -46,6 +52,7 @@ def parse_iso_datetime(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+# Xac dinh che do chay batch hay realtime.
 def resolve_mode(raw_mode: str, default_mode: str = "batch") -> str:
     mode = (raw_mode or "").strip().lower()
     if mode in {"batch", "realtime"}:
@@ -53,6 +60,7 @@ def resolve_mode(raw_mode: str, default_mode: str = "batch") -> str:
     return default_mode
 
 
+# Tinh cua so thoi gian can xu ly tu cau hinh hien tai.
 def resolve_window(config: WindowConfig, now_utc: datetime | None = None) -> WindowRange:
     now = now_utc or utc_now()
     end_utc = parse_iso_datetime(config.end_override) if config.end_override else now
@@ -70,6 +78,7 @@ def resolve_window(config: WindowConfig, now_utc: datetime | None = None) -> Win
     return WindowRange(start_utc=start_utc, end_utc=end_utc, now_utc=now)
 
 
+# Khai bao class write_window_state de gom state, cau hinh hoac hanh vi lien quan.
 def write_window_state(
     path: Path,
     source: str,
@@ -96,6 +105,7 @@ def write_window_state(
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# Khai bao class build_default_window_config de gom state, cau hinh hoac hanh vi lien quan.
 def build_default_window_config(
     *,
     mode: str,
@@ -119,10 +129,12 @@ def build_default_window_config(
     )
 
 
+# Chuyen datetime thanh chuoi UTC ISO.
 def to_utc_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
+# Rut ra cac chuoi ngay nam trong cua so xu ly.
 def day_strings_from_window(window: WindowRange) -> list[str]:
     start_day = window.start_utc.date()
     end_day = window.end_utc.date()

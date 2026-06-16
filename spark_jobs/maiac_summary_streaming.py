@@ -1,4 +1,5 @@
-﻿"""
+# File nay: xu ly aerosol MAIAC thanh bang silver/summary cho Ha Noi.
+"""
 MAIAC summary Kafka -> Iceberg streaming processor.
 
 Default mode is long-running streaming.
@@ -67,10 +68,12 @@ MAIAC_SCHEMA = StructType(
 )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     stop_after_batch, processing_time = parse_streaming_runtime(default_processing_time="60 seconds")
 
     spark = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("MAIACSummary_Streaming")
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -85,7 +88,9 @@ def main() -> None:
 
     spark.sparkContext.setLogLevel("WARN")
 
+    # Doc raw Kafka message tu topic bronze cua MAIAC.
     kafka_df = (
+        # Doc stream dau vao de xu ly lien tuc hoac catch-up.
         spark.readStream
         .format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
@@ -95,14 +100,17 @@ def main() -> None:
         .load()
     )
 
+    # Parse JSON payload va giu lai raw payload de debug neu schema thay doi.
     parsed_df = (
         kafka_df
         .selectExpr("CAST(value AS STRING) AS json_str")
+        # Parse chuoi JSON thanh cot co schema ro rang.
         .select(col("json_str"), from_json(col("json_str"), MAIAC_SCHEMA).alias("data"))
         .select("json_str", "data.*")
         .withColumnRenamed("json_str", "_raw_payload")
     )
 
+    # Chuan hoa cac cot thoi gian va bo sung partition column truoc khi ghi Iceberg.
     final_df = add_contract_columns(
         parsed_df
         .withColumn("event_time", coalesce(to_timestamp(col("time_start")), to_timestamp(col("window_end_utc"))))
@@ -119,6 +127,7 @@ def main() -> None:
         .select("*")
     )
 
+    # Tao bang dich mot lan de stream co the append/upsert lien tuc vao schema on dinh.
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.satellite")
     spark.sql(
         f"""
@@ -156,6 +165,8 @@ def main() -> None:
 
     print(f"MAIAC stream mode: {'availableNow' if stop_after_batch else processing_time}")
     print(f"Kafka startingOffsets: {KAFKA_STARTING_OFFSETS}")
+
+    # Delegate phan start stream cho helper dung chung de giu trigger/checkpoint behavior nhat quan.
     start_bronze_streams(
         final_df,
         table_name=ICEBERG_TABLE,

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 """Validate repository against requirements listed in TODO_1.md
 
 Usage:
@@ -19,20 +20,24 @@ import json
 import sys
 
 
+# Khai bao class extract_backticks de gom state, cau hinh hoac hanh vi lien quan.
 def extract_backticks(text):
     return re.findall(r"`([^`]+)`", text)
 
 
+# Khai bao class read_todo de gom state, cau hinh hoac hanh vi lien quan.
 def read_todo(todo_path: Path):
     text = todo_path.read_text(encoding="utf-8")
     items = extract_backticks(text)
     return text, items
 
 
+# Khai bao class find_requirements_files de gom state, cau hinh hoac hanh vi lien quan.
 def find_requirements_files(root: Path):
     return list(root.glob("**/requirements*.txt"))
 
 
+# Khai bao class check_paths de gom state, cau hinh hoac hanh vi lien quan.
 def check_paths(root: Path, items):
     results = {"files": [], "tables": [], "missing": []}
     for it in items:
@@ -52,6 +57,7 @@ def check_paths(root: Path, items):
     return results
 
 
+# Khai bao class check_key_dirs de gom state, cau hinh hoac hanh vi lien quan.
 def check_key_dirs(root: Path):
     dirs = ["data", "crawler/maiac_data", "ingest", "spark_jobs", "config", "scripts", "airflow/dags"]
     out = []
@@ -61,6 +67,7 @@ def check_key_dirs(root: Path):
     return out
 
 
+# Khai bao class count_sample_files de gom state, cau hinh hoac hanh vi lien quan.
 def count_sample_files(root: Path):
     counts = {}
     # data subfolders
@@ -75,6 +82,7 @@ def count_sample_files(root: Path):
     return counts
 
 
+# Khai bao class scan_requirements de gom state, cau hinh hoac hanh vi lien quan.
 def scan_requirements(req_paths):
     needed = ["cdsapi", "pyyaml"]
     found = {p.name: p.read_text(encoding="utf-8") for p in req_paths}
@@ -86,6 +94,7 @@ def scan_requirements(req_paths):
     return summary, list(found.keys())
 
 
+# Khai bao class check_spark_jobs de gom state, cau hinh hoac hanh vi lien quan.
 def check_spark_jobs(root: Path, required_jobs):
     out = []
     for job in required_jobs:
@@ -94,6 +103,7 @@ def check_spark_jobs(root: Path, required_jobs):
     return out
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".", help="Repository root (default: current directory)")

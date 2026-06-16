@@ -1,3 +1,4 @@
+# File nay: stream/catch-up event Kafka vao Iceberg.
 from __future__ import annotations
 
 import os
@@ -20,6 +21,7 @@ LINEAGE_COLUMNS = {
 }
 
 
+# Cac truong contract chung ma moi event bronze hop le phai cung cap.
 def contract_schema_fields() -> list[StructField]:
     return [
         StructField("event_time", StringType(), True),
@@ -41,6 +43,7 @@ def contract_schema_fields() -> list[StructField]:
     ]
 
 
+# Bo sung cac cot lineage/audit neu bang dich chua co.
 def ensure_columns(spark: SparkSession, table_name: str, columns: dict[str, str]) -> None:
     existing = set(spark.table(table_name).columns)
     for name, dtype in columns.items():
@@ -48,6 +51,7 @@ def ensure_columns(spark: SparkSession, table_name: str, columns: dict[str, str]
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {name} {dtype}")
 
 
+# Tao hai bang audit de giu event invalid contract va event den muon.
 def ensure_audit_tables(spark: SparkSession, catalog: str) -> tuple[str, str]:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {catalog}.audit")
     ddl = """
@@ -73,7 +77,7 @@ def ensure_audit_tables(spark: SparkSession, catalog: str) -> tuple[str, str]:
     for table in (invalid_table, late_table):
         spark.sql(
             f"""
-            CREATE TABLE IF NOT EXISTS {table} ({ddl})
+                CREATE TABLE IF NOT EXISTS {table} ({ddl})
             USING ICEBERG
             PARTITIONED BY (source_topic, year, month, day)
             TBLPROPERTIES ('format-version'='2')
@@ -82,6 +86,7 @@ def ensure_audit_tables(spark: SparkSession, catalog: str) -> tuple[str, str]:
     return invalid_table, late_table
 
 
+# Flatten trace metadata va them placeholder lineage truoc khi merge vao bronze.
 def add_contract_columns(df: DataFrame) -> DataFrame:
     return (
         df.withColumn("available_at", F.to_timestamp("available_at"))
@@ -94,6 +99,7 @@ def add_contract_columns(df: DataFrame) -> DataFrame:
     )
 
 
+# Chuan hoa event bi loai thanh schema audit chung de co the append vao bang theo doi loi.
 def _audit_rows(df: DataFrame, topic: str, reason: str) -> DataFrame:
     recorded_at = F.current_timestamp()
     return df.select(
@@ -116,6 +122,7 @@ def _audit_rows(df: DataFrame, topic: str, reason: str) -> DataFrame:
     )
 
 
+# Dedupe tung micro-batch theo `event_id`, merge vao bang bronze, va cap nhat lineage snapshot neu lay duoc.
 def _merge_batch(batch_df: DataFrame, batch_id: int, table_name: str) -> None:
     if batch_df.isEmpty():
         return
@@ -132,7 +139,9 @@ def _merge_batch(batch_df: DataFrame, batch_id: int, table_name: str) -> None:
         if name in updates.columns
     ]
     window = Window.partitionBy("event_id").orderBy(*(order_columns or [F.col("event_id")]))
+    # Neu mot micro-batch co nhieu ban ghi cung event_id thi giu ban ghi moi nhat theo available/ingest time.
     updates = updates.withColumn("_rn", F.row_number().over(window)).filter(F.col("_rn") == 1).drop("_rn")
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     updates.createOrReplaceTempView("bronze_stream_updates")
     spark.sql(
         f"""
@@ -163,6 +172,7 @@ def _merge_batch(batch_df: DataFrame, batch_id: int, table_name: str) -> None:
     print(f"bronze_merge table={table_name} batch_id={batch_id} output_count={updates.count()}")
 
 
+# Tach stream dau vao thanh 3 nhanh: invalid, late, va valid-merge; moi nhanh co checkpoint rieng.
 def start_bronze_streams(
     df: DataFrame,
     *,
@@ -202,6 +212,7 @@ def start_bronze_streams(
         "event_time", watermark
     ).dropDuplicates(["event_id"])
 
+    # Backfill dung `availableNow`, con runtime thuong thi dung trigger theo chu ky.
     def trigger(writer):
         return writer.trigger(availableNow=True) if stop_after_batch else writer.trigger(processingTime=processing_time)
 
@@ -209,17 +220,20 @@ def start_bronze_streams(
     queries = [
         trigger(
             _audit_rows(invalid, topic, "invalid_contract")
+            # Bat dau ghi ket qua streaming theo che do da cau hinh.
             .writeStream.format("iceberg").outputMode("append")
             .option("checkpointLocation", f"{checkpoint_path.rstrip('/')}/invalid")
             .queryName(f"{query_prefix}_invalid_events")
         ).toTable(invalid_table),
         trigger(
             _audit_rows(late, topic, f"older_than_{watermark.replace(' ', '_')}")
+            # Bat dau ghi ket qua streaming theo che do da cau hinh.
             .writeStream.format("iceberg").outputMode("append")
             .option("checkpointLocation", f"{checkpoint_path.rstrip('/')}/late")
             .queryName(f"{query_prefix}_late_events")
         ).toTable(late_table),
         trigger(
+            # Bat dau ghi ket qua streaming theo che do da cau hinh.
             valid.writeStream.foreachBatch(lambda batch, batch_id: _merge_batch(batch, batch_id, table_name))
             .option("checkpointLocation", f"{checkpoint_path.rstrip('/')}/valid")
             .queryName(f"{query_prefix}_bronze_merge")

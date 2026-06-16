@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 # =============================================================================
 # submit_spark.sh
 # Submit AIS Spark jobs (streaming + batch load)
@@ -181,6 +182,7 @@ PACKAGES="${ICEBERG_PACKAGES}"
 SPARK_CORES_MAX="${SPARK_CORES_MAX:-}"
 SPARK_EXECUTOR_CORES="${SPARK_EXECUTOR_CORES:-}"
 
+# Chuan hoa gia tri dau vao truoc khi tao lenh submit.
 normalize_hdfs_uri() {
   local value="$1"
   local base="${HDFS_NAMENODE%/}"
@@ -193,6 +195,7 @@ normalize_hdfs_uri() {
   fi
 }
 
+# Cho den khi tai nguyen hoac service can dung da san sang.
 wait_for_hdfs_writable() {
   local timeout_sec="${1:-300}"
   local elapsed=0
@@ -220,6 +223,7 @@ wait_for_hdfs_writable() {
   done
 }
 
+# Kiem tra Spark app muc tieu da dang ky va dang ton tai.
 spark_app_registered() {
   local app_name="$1"
 
@@ -231,7 +235,9 @@ import urllib.request
 
 app_name = os.environ.get("APP_NAME", "")
 try:
+    # Goi HTTP request truc tiep toi endpoint dich.
     raw = urllib.request.urlopen("http://localhost:8080/json", timeout=10).read().decode("utf-8")
+    # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
     payload = json.loads(raw)
 except Exception:
     sys.exit(1)

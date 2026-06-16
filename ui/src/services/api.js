@@ -1,3 +1,4 @@
+// File nay: wrapper goi API backend tu frontend.
 import {
   getForecastLatest,
   getLiveHeatmapLatest,
@@ -8,6 +9,7 @@ import {
 
 const HANOI = "ha_noi";
 
+// Uoc tinh AQI tu PM2.5 de tai su dung o dashboard tong quan.
 function pm25ToAqi(value) {
   if (value == null || value === "") return null;
   const pm25 = Number(value);
@@ -18,6 +20,7 @@ function pm25ToAqi(value) {
   return Math.min(500, Math.round(151 + (pm25 - 55.5) * 2));
 }
 
+// Chuan hoa payload timeseries tu visualization API ve shape ma UI cu dang dung.
 function timeseriesRows(payload) {
   return (payload?.points || []).map((row) => {
     const rawPm25 = row.pm25 ?? row.pm25_value ?? row.value;
@@ -34,7 +37,9 @@ function timeseriesRows(payload) {
   }).filter((row) => row.timestamp);
 }
 
+// Gom forecast, timeseries va station thanh payload OpenAQ realtime cho dashboard tong quan.
 export async function getRealtimeOpenAQ() {
+  // Tai song song nhieu payload de giam do tre cho man hinh.
   const [forecast, timeseries, stations] = await Promise.all([
     getForecastLatest("hanoi"),
     getPM25TimeseriesLatest("hanoi"),
@@ -62,6 +67,7 @@ export async function getRealtimeOpenAQ() {
   };
 }
 
+// Rut weather tu summary cua live heatmap vi backend dang gom context thoi tiet tai day.
 export async function getRealtimeWeather() {
   const heatmap = await getLiveHeatmapLatest("hanoi");
   const summary = heatmap?.summary || {};
@@ -81,11 +87,14 @@ export async function getRealtimeWeather() {
   };
 }
 
+// Tra timeseries PM2.5 lich su theo format ma dashboard cu can.
 export async function getHistoricalOpenAQ() {
   return timeseriesRows(await getPM25TimeseriesLatest("hanoi"));
 }
 
+// Tam thoi dung summary weather moi nhat de bo sung cho chuoi lich su PM2.5.
 export async function getHistoricalWeather() {
+  // Tai song song nhieu payload de giam do tre cho man hinh.
   const [timeseries, heatmap] = await Promise.all([
     getPM25TimeseriesLatest("hanoi"),
     getLiveHeatmapLatest("hanoi"),
@@ -102,6 +111,7 @@ export async function getHistoricalWeather() {
   }));
 }
 
+// Chuyen source attribution thanh danh sach "san pham" de tai dung cho historical UI.
 export async function getHistoricalSentinel() {
   const payload = await getSourceAttributionLatest("hanoi");
   return (payload?.features || []).map((feature, index) => ({

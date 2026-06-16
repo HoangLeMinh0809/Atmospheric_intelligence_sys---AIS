@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 set -euo pipefail
 
 export MSYS_NO_PATHCONV=1
@@ -7,18 +8,22 @@ export MSYS2_ARG_CONV_EXCL="*"
 NAMENODE_CONTAINER="${NAMENODE_CONTAINER:-namenode}"
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
 
+# Chay mot lan xu ly cho du lieu HDFS.
 run_hdfs() {
   docker exec "$NAMENODE_CONTAINER" hdfs dfs "$@"
 }
 
+# Kiem tra path ton tai cho du lieu HDFS.
 path_exists() {
   run_hdfs -test -e "$1" >/dev/null 2>&1
 }
 
+# Kiem tra thu muc ton tai cho du lieu HDFS.
 dir_exists() {
   run_hdfs -test -d "$1" >/dev/null 2>&1
 }
 
+# Dem so file trong thu muc cho du lieu HDFS.
 file_count() {
   local path="$1"
   local pattern="$2"
@@ -31,6 +36,7 @@ file_count() {
   run_hdfs -find "$path" -name "$pattern" 2>/dev/null | wc -l | tr -d ' '
 }
 
+# In thong tin disk usage cho du lieu HDFS.
 print_du() {
   local path="$1"
 
@@ -41,6 +47,7 @@ print_du() {
   fi
 }
 
+# In danh sach file moi gan day cho du lieu HDFS.
 print_recent_files() {
   local path="$1"
   local limit="${2:-8}"
@@ -58,6 +65,7 @@ print_recent_files() {
     || true
 }
 
+# In tong quan cau truc thu muc cho du lieu HDFS.
 print_dir_overview() {
   local path="$1"
 
@@ -69,6 +77,7 @@ print_dir_overview() {
   run_hdfs -ls "$path" 2>/dev/null | sed 's/^/  /' || true
 }
 
+# Quan ly bang Iceberg va schema cho du lieu HDFS.
 print_table() {
   local topic="$1"
   local table_path="$2"

@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File nay: xu ly du lieu lakehouse hoac tac vu Spark tien ich.
+from __future__ import annotations
 
 import os
 import sys
@@ -33,8 +34,10 @@ SOURCE_TABLES = {
 }
 
 
+# Tao payload hoac DataFrame cho serving state Cassandra.
 def build_spark_session() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("IcebergToCassandra_Load")
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -49,6 +52,7 @@ def build_spark_session() -> SparkSession:
     )
 
 
+# Bo sung weather vao serving row cho serving state Cassandra.
 def enrich_weather(df: DataFrame) -> DataFrame:
     return (
         df
@@ -86,6 +90,7 @@ def enrich_weather(df: DataFrame) -> DataFrame:
     )
 
 
+# Bo sung OpenAQ vao serving row cho serving state Cassandra.
 def enrich_openaq(df: DataFrame) -> DataFrame:
     return (
         df
@@ -119,6 +124,7 @@ def enrich_openaq(df: DataFrame) -> DataFrame:
     )
 
 
+# Ghi output cho serving state Cassandra.
 def write_to_cassandra(df: DataFrame, table_name: str) -> None:
     (
         df.write
@@ -129,6 +135,7 @@ def write_to_cassandra(df: DataFrame, table_name: str) -> None:
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     if len(sys.argv) != 2 or sys.argv[1] not in SOURCE_TABLES:
         valid = ", ".join(sorted(SOURCE_TABLES))
@@ -140,6 +147,7 @@ def main() -> None:
     spark = build_spark_session()
     spark.sparkContext.setLogLevel("WARN")
 
+    # Doc bang nguon tu Iceberg truoc khi bien doi du lieu.
     source_df = spark.read.table(table_cfg["source"])
 
     if dataset == "weather":

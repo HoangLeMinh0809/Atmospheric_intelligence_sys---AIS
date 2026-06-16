@@ -1,3 +1,4 @@
+// File nay: component ban do hien thi layer PM2.5, station, trajectory va plume.
 import { useEffect, useMemo, useState } from "react";
 import { geoCentroid } from "d3";
 import hanoiBoundariesRaw from "../../assets/maps/hanoi_boundaries.geojson?raw";
@@ -14,6 +15,7 @@ const BASE_GRID_ROWS = 32;
 const MAX_IDW_SAMPLES = 420;
 const MAX_BASEMAP_ROADS = 700;
 
+// Parse GeoJSON asset va fallback ve collection rong neu loi.
 function parseGeoJson(raw) {
   try {
     return JSON.parse(raw);
@@ -46,6 +48,7 @@ const HANOI_BBOX = {
 const DISTRICTS = hanoiLabels.map((item) => [item.name, item.lon, item.lat]);
 const DEFAULT_RECEPTOR = hanoiLabels.find((item) => item.name === "Hoàn Kiếm") || { name: "Hoàn Kiếm", lon: 105.8542, lat: 21.0285 };
 
+// Chieu toa do lon/lat Ha Noi sang toa do SVG tren ban do.
 function project(lon, lat, width, height) {
   const [west, south, east, north] = INNER_BBOX;
   const pad = { left: 38, top: 30, right: 38, bottom: 36 };
@@ -56,6 +59,7 @@ function project(lon, lat, width, height) {
   return [x, y];
 }
 
+// Lay gia tri PM2.5 tu cac property name duoc backend ho tro.
 function valueOf(feature) {
   const props = feature?.properties || feature || {};
   const candidates = [props.pm25_value, props.pm25, props.value, props.forecast_pm25, props.pm25_mean, props.pm25_ugm3];
@@ -63,6 +67,7 @@ function valueOf(feature) {
   return value == null ? null : Number(value);
 }
 
+// Lay diem dai dien cua geometry de dat marker, label hoac anchor tren ban do.
 function pointFromGeometry(geometry, width, height) {
   if (!geometry) return project(HANOI_CENTER[0], HANOI_CENTER[1], width, height);
   if (geometry.type === "Point") return project(geometry.coordinates[0], geometry.coordinates[1], width, height);
@@ -70,6 +75,7 @@ function pointFromGeometry(geometry, width, height) {
   return project(center[0], center[1], width, height);
 }
 
+// Rut toa do lon/lat tu feature, uu tien property co san roi moi fallback sang geometry.
 function lonLatFromFeature(feature) {
   const props = feature?.properties || {};
   if (Number.isFinite(Number(props.lon)) && Number.isFinite(Number(props.lat))) {
@@ -82,6 +88,7 @@ function lonLatFromFeature(feature) {
   return [Number(center[0]), Number(center[1])];
 }
 
+// Uoc luong khoang cach phang giua feature va receptor de tim diem gan nhat.
 function featureDistanceTo(feature, lon, lat) {
   const lonLat = lonLatFromFeature(feature);
   if (!lonLat) return Number.POSITIVE_INFINITY;
@@ -90,6 +97,7 @@ function featureDistanceTo(feature, lon, lat) {
   return Math.hypot(dx, dy);
 }
 
+// Tim gia tri PM2.5 gan receptor nhat khi can hien thi thong tin tai diem chon.
 function nearestPm25(heatmap, lon, lat) {
   const features = heatmap?.features || [];
   let best = null;
@@ -106,10 +114,12 @@ function nearestPm25(heatmap, lon, lat) {
   return best;
 }
 
+// Bo qua mau nam qua xa khu vuc noi thanh de heatmap khong bi lech boi outlier.
 function inUrbanBbox(lon, lat, pad = 0.025) {
   return lon >= INNER_BBOX[0] - pad && lon <= INNER_BBOX[2] + pad && lat >= INNER_BBOX[1] - pad && lat <= INNER_BBOX[3] + pad;
 }
 
+// Thu gon tap mau noi suy de vua giu chi tiet, vua tranh render qua nang.
 function samplesFromFeatures(features) {
   const samples = (features || [])
     .map((feature) => {
@@ -126,6 +136,7 @@ function samplesFromFeatures(features) {
   return samples.filter((_, index) => index % stride === 0).slice(0, MAX_IDW_SAMPLES);
 }
 
+// Noi suy PM2.5 bang inverse-distance weighting.
 function idwPm25(lon, lat, samples) {
   if (!samples.length) return null;
   let weightSum = 0;
@@ -142,55 +153,36 @@ function idwPm25(lon, lat, samples) {
   return Math.max(0, interpolated);
 }
 
-function percentile(values, p) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.max(0, (sorted.length - 1) * p));
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  const frac = idx - lo;
-  return sorted[lo] * (1 - frac) + sorted[hi] * frac;
-}
-
-function colorScale(values = []) {
-  const finite = values.filter((value) => Number.isFinite(value));
-  if (finite.length >= 6) {
-    const min = Math.max(0, percentile(finite, 0.05));
-    const p50 = percentile(finite, 0.5);
-    const p80 = percentile(finite, 0.8);
-    const max = Math.max(percentile(finite, 0.96), p80 + 4, p50 + 8);
-    return { min, p50, p80, max };
-  }
+// Dinh nghia cac nguong PM2.5 dung chung cho legend va mau heatmap.
+function colorScale() {
   return {
     min: 0,
     p50: 30,
-    p80: 40,
-    max: 55,
+    p80: 60,
+    max: 80,
   };
 }
 
+// Noi suy tung kenh mau de chuyen gradient muot hon.
 function mix(a, b, t) {
   return Math.round(a + (b - a) * t);
 }
 
+// Tao mau RGBA nam giua hai moc mau trong thang PM2.5.
 function rgbaBetween(left, right, t, alpha) {
   return `rgba(${mix(left[0], right[0], t)},${mix(left[1], right[1], t)},${mix(left[2], right[2], t)},${alpha})`;
 }
 
+// Map nong do PM2.5 sang gradient mau xanh-do-tim tren heatmap.
 function pm25Color(value, scale, alpha = 0.9) {
   if (value == null || Number.isNaN(value)) return `rgba(148,163,184,${alpha * 0.25})`;
-  const min = Number.isFinite(scale?.min) ? scale.min : 0;
-  const p50 = Number.isFinite(scale?.p50) ? scale.p50 : 30;
-  const p80 = Number.isFinite(scale?.p80) ? scale.p80 : 40;
-  const max = Number.isFinite(scale?.max) ? scale.max : 55;
-  const span = Math.max(8, max - min);
   const stops = [
-    [min, [56, 189, 248]],
-    [Math.min(p50, min + span * 0.35), [20, 184, 166]],
-    [p50, [132, 204, 22]],
-    [p80, [217, 119, 6]],
-    [max, [190, 18, 60]],
-    [max + span * 0.65, [136, 19, 55]],
+    [0, [34, 197, 94]],
+    [30, [34, 197, 94]],
+    [45, [234, 179, 8]],
+    [60, [220, 38, 38]],
+    [80, [126, 34, 206]],
+    [120, [88, 28, 135]],
   ];
   for (let i = 1; i < stops.length; i += 1) {
     if (value <= stops[i][0]) {
@@ -200,18 +192,19 @@ function pm25Color(value, scale, alpha = 0.9) {
       return rgbaBetween(c0, c1, t, alpha);
     }
   }
-  return `rgba(136,19,55,${alpha})`;
+  return `rgba(88,28,135,${alpha})`;
 }
 
+// Doi gia tri PM2.5 thanh nhan muc do de hien thi trong popup va panel.
 function riskLabel(value) {
   if (value == null || Number.isNaN(value)) return "Unknown";
-  if (value < 20) return "Low";
-  if (value < 30) return "Moderate";
-  if (value < 40) return "Elevated";
-  if (value < 55) return "High";
+  if (value <= 30) return "Low";
+  if (value < 60) return "Moderate";
+  if (value < 80) return "High";
   return "Very high";
 }
 
+// Dung luoi heatmap co dinh tren SVG va gan mau cho tung o noi suy.
 function buildPixelGrid(heatmapFeatures, stationFeatures, cols = BASE_GRID_COLS, rows = BASE_GRID_ROWS) {
   const apiSamples = samplesFromFeatures(heatmapFeatures);
   const stationSamples = samplesFromFeatures(stationFeatures);
@@ -245,6 +238,7 @@ function buildPixelGrid(heatmapFeatures, stationFeatures, cols = BASE_GRID_COLS,
   };
 }
 
+// Ve duong bao SVG cho mot o heatmap.
 function rectPath(cell, width, height) {
   const p1 = project(cell.lon0, cell.lat0, width, height);
   const p2 = project(cell.lon1, cell.lat0, width, height);
@@ -253,6 +247,7 @@ function rectPath(cell, width, height) {
   return `M ${p1[0].toFixed(1)} ${p1[1].toFixed(1)} L ${p2[0].toFixed(1)} ${p2[1].toFixed(1)} L ${p3[0].toFixed(1)} ${p3[1].toFixed(1)} L ${p4[0].toFixed(1)} ${p4[1].toFixed(1)} Z`;
 }
 
+// Chuyen bbox trung tam Ha Noi thanh hinh chu nhat de canh chinh khung ban do.
 function rectBox(width, height) {
   const [x0, y0] = project(INNER_BBOX[0], INNER_BBOX[3], width, height);
   const [x1, y1] = project(INNER_BBOX[2], INNER_BBOX[1], width, height);
@@ -264,6 +259,7 @@ function rectBox(width, height) {
   };
 }
 
+// Chuyen polygon GeoJSON thanh SVG path.
 function polygonPath(geometry, width, height) {
   const ring = geometry?.coordinates?.[0] || [];
   return ring
@@ -274,6 +270,7 @@ function polygonPath(geometry, width, height) {
     .join(" ");
 }
 
+// Chuyen mot linear ring thanh mot doan path SVG.
 function ringPath(ring, width, height) {
   if (!ring?.length) return "";
   const path = ring
@@ -285,6 +282,7 @@ function ringPath(ring, width, height) {
   return `${path} Z`;
 }
 
+// Chuyen day toa do thanh path SVG dung cho road va trajectory.
 function lineCoordsPath(coords, width, height) {
   return (coords || [])
     .filter(([lon, lat]) => Number.isFinite(Number(lon)) && Number.isFinite(Number(lat)))
@@ -295,6 +293,7 @@ function lineCoordsPath(coords, width, height) {
     .join(" ");
 }
 
+// Ho tro nhieu loai geometry de cung mot renderer co the ve boundary, water va line.
 function geometryPaths(geometry, width, height) {
   if (!geometry) return [];
   if (geometry.type === "LineString") return [lineCoordsPath(geometry.coordinates, width, height)].filter(Boolean);
@@ -308,6 +307,7 @@ function geometryPaths(geometry, width, height) {
   return [];
 }
 
+// Tao path cho mot geometry dang line.
 function linePath(geometry, width, height) {
   const coords = geometry?.coordinates || [];
   return coords
@@ -319,10 +319,12 @@ function linePath(geometry, width, height) {
     .join(" ");
 }
 
+// Tra ve danh sach feature an toan ngay ca khi payload khong hop le.
 function featureList(collection) {
   return Array.isArray(collection?.features) ? collection.features : [];
 }
 
+// Phan loai duong de base map ve duong chinh noi bat hon duong phu.
 function roadClass(feature) {
   const highway = feature.properties?.highway || "tertiary";
   if (["motorway", "trunk"].includes(highway)) return "road-major";
@@ -331,6 +333,7 @@ function roadClass(feature) {
   return "road-tertiary";
 }
 
+// Sap xep thu tu ve road theo muc do uu tien.
 function roadPriority(feature) {
   const highway = feature.properties?.highway || "tertiary";
   if (["motorway", "trunk"].includes(highway)) return 0;
@@ -367,6 +370,7 @@ const BASEMAP_BOUNDARY_PATHS = BASEMAP_BOUNDARIES.flatMap((feature, index) =>
   })),
 );
 
+// Chuan hoa text ten quan/huyen de match receptor khong bi phu thuoc dau tieng Viet.
 function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
@@ -375,6 +379,7 @@ function normalizeText(value) {
     .replace(/đ/g, "d");
 }
 
+// Kiem tra trajectory feature co thuoc receptor dang duoc chon hay khong.
 function featureMatchesReceptor(feature, receptor) {
   const props = feature.properties || {};
   const haystack = [
@@ -389,6 +394,7 @@ function featureMatchesReceptor(feature, receptor) {
   return haystack.includes(normalizeText(receptor.name));
 }
 
+// Chi giu nhom trajectory moi nhat de tranh ve chong nhieu dot cu.
 function latestTrajectoryGroup(features, receptor = DEFAULT_RECEPTOR) {
   if (!features.length) return features;
   const baseTimes = features
@@ -415,13 +421,15 @@ function latestTrajectoryGroup(features, receptor = DEFAULT_RECEPTOR) {
   return [...endpointGroups.values()].sort((a, b) => b.length - a.length)[0].slice(0, 8);
 }
 
+// Loc trajectory theo receptor hien tai, uu tien path that backend da chon san.
 function trajectoriesForReceptor(features, receptor = DEFAULT_RECEPTOR) {
   const matched = latestTrajectoryGroup(features, receptor);
   if (matched.length) return matched.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
   const latest = latestTrajectoryGroup(features, DEFAULT_RECEPTOR);
-  return latest.map((feature, index) => translateTrajectoryToReceptor(feature, receptor, index)).filter(Boolean);
+  return latest.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
 }
 
+// Tinh tien mot trajectory co san sang receptor moi ma van giu hinh dang duong di.
 function translateTrajectoryToReceptor(feature, receptor, index = 0) {
   const coords = feature?.geometry?.coordinates || [];
   if (coords.length < 2 || !Number.isFinite(Number(receptor?.lon)) || !Number.isFinite(Number(receptor?.lat))) return null;
@@ -445,6 +453,7 @@ function translateTrajectoryToReceptor(feature, receptor, index = 0) {
   };
 }
 
+// Chen them diem trung gian de duong trajectory ve ra muot hon khi phong to.
 function densifyTrajectory(feature) {
   const coords = feature?.geometry?.coordinates || [];
   if (coords.length < 2) return feature;
@@ -462,6 +471,7 @@ function densifyTrajectory(feature) {
   return { ...feature, geometry: { ...feature.geometry, coordinates: dense } };
 }
 
+// Rut gon thong ke tu payload heatmap de header va popup dung lai duoc.
 function latestHeatmapStats(cells) {
   const values = cells.map((cell) => cell.pm25).filter((v) => v != null && !Number.isNaN(v));
   if (!values.length) return { avg: null, max: null };
@@ -471,22 +481,26 @@ function latestHeatmapStats(cells) {
   };
 }
 
+// Dieu chinh kich thuoc marker tram theo muc zoom.
 function stationRadius(feature) {
   const value = valueOf(feature);
   if (value == null || Number.isNaN(value)) return 7;
   return Math.max(7, Math.min(18, 5 + value / 7));
 }
 
+// Dieu chinh ban kinh glow cua heatmap theo zoom de map khong bi bet.
 function cellGradientRadius(cell, width, height) {
   const [x0, y0] = project(cell.lon0, cell.lat0, width, height);
   const [x1, y1] = project(cell.lon1, cell.lat1, width, height);
   return Math.max(18, Math.hypot(x1 - x0, y1 - y0) * 1.65);
 }
 
+// Gioi han zoom trong khoang ma UI nay co the render on dinh.
 function clampZoom(value) {
   return Math.max(0.8, Math.min(5, Number(value)));
 }
 
+// Render ban do Ha Noi gom heatmap PM2.5, station, trajectory, plume va basemap.
 export default function MapCanvas({
   layers = {},
   enabled = {},
@@ -536,16 +550,19 @@ export default function MapCanvas({
   const viewX = (width - viewWidth) / 2;
   const viewY = (height - viewHeight) / 2;
 
+  // Cap nhat zoom khi user bam nut phong to/thu nho.
   function changeZoom(delta) {
     setZoom((current) => clampZoom(current + delta));
   }
 
+  // Map thao tac lan chuot thanh zoom in/out tren ban do.
   function handleWheel(event) {
     event.preventDefault();
     const direction = event.deltaY > 0 ? -0.16 : 0.16;
     setZoom((current) => clampZoom(current + direction));
   }
 
+  // Chon receptor moi tu marker de dashboard reload backward trajectory phu hop.
   function chooseReceptor(receptor) {
     setLocalSelectedReceptor(receptor);
     onReceptorChange(receptor);

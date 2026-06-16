@@ -1,3 +1,4 @@
+// File nay: entrypoint/cau hinh build frontend React/Vite.
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";

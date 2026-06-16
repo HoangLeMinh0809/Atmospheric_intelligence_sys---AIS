@@ -1,3 +1,4 @@
+# File nay: xu ly Sentinel-5P thanh bang satellite silver/summary cho Ha Noi.
 from __future__ import annotations
 
 import argparse
@@ -62,6 +63,7 @@ LOCAL_SEARCH_ROOTS = [
 ]
 
 
+# Doc cua so ngay va che do refresh cho job tao pixel grid Sentinel-5P.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Sentinel-5P pixel grid silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -70,10 +72,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Parse chuoi ngay `YYYY-MM-DD` thanh `date` de loc metadata bronze.
 def parse_date(raw: str) -> date | None:
     text = (raw or "").strip()
     if not text:
@@ -81,8 +85,10 @@ def parse_date(raw: str) -> date | None:
     return datetime.strptime(text, "%Y-%m-%d").date()
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("Sentinel5PGridSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -98,6 +104,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang Iceberg luu tung pixel hop le sau khi cat bbox va loc QA.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.satellite")
     spark.sql(
@@ -122,6 +129,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Fail fast neu image Spark hien tai chua co `netCDF4`/`numpy`.
 def _require_netcdf_support() -> None:
     if nc is None or np is None:
         raise RuntimeError(
@@ -129,6 +137,7 @@ def _require_netcdf_support() -> None:
         ) from NETCDF_IMPORT_ERROR
 
 
+# Parse timestamp ISO trong bronze metadata ve `datetime` naive de group theo ngay.
 def _parse_iso_timestamp(raw_value: Any) -> datetime | None:
     if raw_value is None:
         return None
@@ -144,6 +153,7 @@ def _parse_iso_timestamp(raw_value: Any) -> datetime | None:
         return None
 
 
+# Chuan hoa record cho du lieu Sentinel-5P.
 def _normalize_product(product_value: Any) -> str:
     text = str(product_value or "").strip().upper()
     if text == "AER":
@@ -151,10 +161,12 @@ def _normalize_product(product_value: Any) -> str:
     return text
 
 
+# Chuan hoa ten file ve dang an toan de so khop giua metadata va ten file tren disk/HDFS.
 def _sanitize_fragment(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
 
 
+# Sinh danh sach ten file co kha nang khop voi granule raw tu cac truong metadata.
 def _candidate_file_names(metadata: dict[str, Any]) -> list[str]:
     names: list[str] = []
     for field_name in ("file_name", "product_name", "product_id"):
@@ -181,6 +193,7 @@ def _candidate_file_names(metadata: dict[str, Any]) -> list[str]:
     return deduped
 
 
+# Gom metadata bronze theo `(product, ngay overpass)` de moi nhom duoc xu ly thanh mot lop du lieu.
 def _group_metadata_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, date], list[dict[str, Any]]]:
     grouped: dict[tuple[str, date], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -200,7 +213,9 @@ def _group_metadata_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, date], l
     return grouped
 
 
+# Lap chi muc basename -> full path tren HDFS de tim granule nhanh hon.
 def _list_hdfs_files(root_path: str) -> dict[str, str]:
+    # Khoi tao SparkSession voi cac config cua job hien tai.
     spark = SparkSession.builder.getOrCreate()
     index = list_hdfs_files(root_path, spark)
     for basename, path_text in list(index.items()):
@@ -208,6 +223,7 @@ def _list_hdfs_files(root_path: str) -> dict[str, str]:
     return index
 
 
+# Tim file granule thuc te theo thu tu uu tien: path trong bronze, local fallback, roi moi quet HDFS.
 def _resolve_source_file(metadata: dict[str, Any], raw_base_path: str) -> tuple[str | None, str | None]:
     raw_file_path = str(metadata.get("raw_file_path") or "").strip()
     raw_downloaded = metadata.get("raw_downloaded")
@@ -248,12 +264,15 @@ def _resolve_source_file(metadata: dict[str, Any], raw_base_path: str) -> tuple[
     return None, None
 
 
+# Keo granule tu HDFS ve thu muc tam local de netCDF co the mo truc tiep.
 def _copy_hdfs_file_to_local(remote_path: str) -> tuple[Path, Path]:
+    # Khoi tao SparkSession voi cac config cua job hien tai.
     spark = SparkSession.builder.getOrCreate()
     local_path = copy_hdfs_to_local(remote_path, spark, prefix="sentinel5p_grid_", temp_base="/tmp/ais_sentinel5p")
     return local_path, local_path.parent
 
 
+# Tim NetCDF group dang chua bien can doc; mot so granule dat du lieu trong `PRODUCT`, mot so dat o group khac.
 def _find_product_group(dataset: Any, variable_name: str) -> Any | None:
     group = dataset.groups.get("PRODUCT")
     if group is not None and variable_name in group.variables:
@@ -264,6 +283,7 @@ def _find_product_group(dataset: Any, variable_name: str) -> Any | None:
     return None
 
 
+# Lay du lieu hoac metadata cho du lieu Sentinel-5P.
 def _get_qa_threshold(product: str) -> float:
     default_threshold = float(PRODUCTS[product]["qa_threshold"])
     for env_name in (f"S5P_{product}_QA_THRESHOLD", "S5P_QA_THRESHOLD"):
@@ -278,6 +298,7 @@ def _get_qa_threshold(product: str) -> float:
     return default_threshold
 
 
+# Cat granule theo bbox Ha Noi, ap QA mask theo tung san pham, roi xuat tung pixel hop le thanh row.
 def _extract_grid_rows(
     local_path: Path,
     product: str,
@@ -296,6 +317,7 @@ def _extract_grid_rows(
         if group is None:
             raise ValueError(f"Variable {variable_name} not found in {local_path.name}")
 
+        # Sentinel-5P luu luoi 2D theo granule; job nay giu nguyen tung pixel thay vi tong hop theo ngay.
         latitude = np.asarray(group.variables["latitude"][0].data, dtype=float)
         longitude = np.asarray(group.variables["longitude"][0].data, dtype=float)
         values = np.asarray(group.variables[variable_name][0].data, dtype=float)
@@ -305,6 +327,7 @@ def _extract_grid_rows(
             values = np.where(values == fill_value, np.nan, values)
         values = np.where(values < -1e30, np.nan, values)
 
+        # Cat som theo bbox de metrics QA va output deu chi tinh tren khu vuc Ha Noi.
         bbox_mask = (
             np.isfinite(latitude)
             & np.isfinite(longitude)
@@ -322,6 +345,7 @@ def _extract_grid_rows(
         qa_variable = group.variables.get("qa_value")
         if qa_variable is not None:
             qa_values = np.asarray(qa_variable[0].data, dtype=float)
+            # Mỗi product co nguong QA rieng, co the override bang env de tuning nghiem chat luong.
             qa_mask = np.isfinite(qa_values) & (qa_values >= qa_threshold)
 
         valid_mask = bbox_mask & qa_mask & np.isfinite(values)
@@ -362,6 +386,7 @@ def _extract_grid_rows(
         }
 
 
+# Lay cac ban ghi bronze co product nam trong cau hinh va nam trong cua so ngay can build.
 def collect_metadata_rows(spark: SparkSession, start_date: date | None, end_date: date | None) -> list[dict[str, Any]]:
     allowed_products = {_normalize_product(product) for product in get_sentinel5p_products()}
     bronze_df = spark.table(TABLES["sentinel5p_bronze"]).withColumn(
@@ -405,6 +430,7 @@ def collect_metadata_rows(spark: SparkSession, start_date: date | None, end_date
     return [row.asDict(recursive=True) for row in rows]
 
 
+# Dieu phoi toan bo flow: doc bronze metadata, resolve file raw, parse granule, va tong hop metrics.
 def build_output_rows(
     spark: SparkSession,
     start_date: date | None,
@@ -437,6 +463,7 @@ def build_output_rows(
         group_output_count = 0
         group_valid_pct_values: list[float] = []
         for row in rows:
+            # Mỗi dong bronze co the tro toi mot granule; neu khong resolve duoc file thi bo qua va tang failure metric.
             resolved_path, provenance_path = _resolve_source_file(row, raw_base_path)
             if resolved_path is None:
                 failure_count += 1
@@ -484,6 +511,7 @@ def build_output_rows(
     return output_rows, failure_count, metrics_by_group, min_time, max_time, input_count, duplicate_count
 
 
+# Ghi output cho du lieu Sentinel-5P.
 def write_output(
     spark: SparkSession,
     rows: list[dict[str, Any]],
@@ -506,6 +534,7 @@ def write_output(
         return
 
     df = spark.createDataFrame([Row(**row) for row in rows])
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("s5p_grid_updates")
     spark.sql(
         f"""
@@ -522,6 +551,7 @@ def write_output(
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     spark = build_spark()

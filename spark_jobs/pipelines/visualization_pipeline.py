@@ -1,3 +1,4 @@
+# File nay: orchestrate cac Spark job theo dung thu tu bronze/silver/gold.
 from __future__ import annotations
 
 import argparse
@@ -17,6 +18,7 @@ LAYER_CONFIG = {
 }
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run visualization gold builders and export cache in one Spark app")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -34,10 +36,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(value: str) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     layers = [item.strip() for item in args.layers.split(",") if item.strip()]

@@ -1,3 +1,4 @@
+# File nay: tao feature, training table hoac serving table cho bai toan PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -197,6 +198,7 @@ TARGET_HORIZONS = {
 TARGET_COLUMNS = list(TARGET_HORIZONS.keys())
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi PM2.5 training dataset gold table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -207,14 +209,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("HanoiPM25TrainingDatasetGold")
         .config("spark.jars.ivy", ivy_dir)
@@ -233,6 +238,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Tao bang training dataset day du metadata split/version cho bai toan du bao PM2.5.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.features")
     spark.sql(
@@ -329,6 +335,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df, start_date: str, end_date: str):
     if start_date:
         df = df.filter(F.to_date("hour") >= F.to_date(F.lit(start_date)))
@@ -337,6 +344,7 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
+# An target vuot qua moc cat cho du lieu/du doan PM2.5.
 def mask_targets_crossing_cutoff(df, end_date: str):
     if not end_date:
         return df
@@ -350,6 +358,7 @@ def mask_targets_crossing_cutoff(df, end_date: str):
     return df
 
 
+# Bien master feature table thanh training dataset, gan split train/validation/test theo truc thoi gian.
 def build_training_dataset(master, dataset_version: str, feature_set_name: str):
     filtered = master.dropna(subset=TARGET_COLUMNS)
     order_w = Window.orderBy("hour")
@@ -358,6 +367,7 @@ def build_training_dataset(master, dataset_version: str, feature_set_name: str):
     groups_expr = F.array(*[F.lit(item) for item in FEATURE_GROUPS])
     with_index = (
         filtered
+        # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
         .withColumn("_row_num", F.row_number().over(order_w))
         .withColumn("_total_rows", F.count(F.lit(1)).over(all_w))
         .withColumn("_ratio", (F.col("_row_num") - F.lit(1)) / F.col("_total_rows"))
@@ -377,24 +387,28 @@ def build_training_dataset(master, dataset_version: str, feature_set_name: str):
     return with_index.select(*OUTPUT_COLUMNS)
 
 
+# In metric kiem tra row count, thoi gian, duplicate va null ratio.
 def log_metrics(df) -> None:
     count = df.count()
     print(f"output_count={count}")
     if not count:
         print("warning=training_dataset_empty")
         return
+    # Bat dau gom nhom de tinh cac chi so tong hop.
     split_counts = {row["split"]: row["count"] for row in df.groupBy("split").count().collect()}
     horizon_counts = df.agg(
         F.sum(F.when(F.col("pm25_next_6h").isNotNull(), F.lit(1)).otherwise(F.lit(0))).alias("pm25_next_6h"),
         F.sum(F.when(F.col("pm25_next_12h").isNotNull(), F.lit(1)).otherwise(F.lit(0))).alias("pm25_next_12h"),
         F.sum(F.when(F.col("pm25_next_24h").isNotNull(), F.lit(1)).otherwise(F.lit(0))).alias("pm25_next_24h"),
     ).first().asDict()
+    # Bat dau gom nhom de tinh cac chi so tong hop.
     bounds_by_split = df.groupBy("split").agg(F.min("hour").alias("min_hour"), F.max("hour").alias("max_hour"), F.count("*").alias("count"))
     print(f"train_validation_test_counts={split_counts}")
     print(f"target_non_null_count_by_horizon={horizon_counts}")
     bounds_by_split.show(truncate=False)
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
     predicates = []
     if start_date:
@@ -407,9 +421,11 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Ghi output cho du lieu/du doan PM2.5.
 def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
     if full_refresh:
         delete_date_window(spark, table_name, "hour", start_date, end_date)
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("hanoi_pm25_training_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
     insert_cols = ", ".join(OUTPUT_COLUMNS)
@@ -427,6 +443,7 @@ def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, 
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

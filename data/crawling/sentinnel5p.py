@@ -1,3 +1,4 @@
+# File nay: crawler tai du lieu tho tu cac nguon ben ngoai.
 import os
 import sys
 import json
@@ -107,6 +108,7 @@ ODATA_URL = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products"
 DOWNLOAD_URL = "https://download.dataspace.copernicus.eu/odata/v1/Products"
 
 
+# Fetch a short-lived access token from CDSE.
 def get_access_token(username: str, password: str) -> str:
     """Fetch a short-lived access token from CDSE."""
     resp = requests.post(AUTH_URL, data={
@@ -120,6 +122,7 @@ def get_access_token(username: str, password: str) -> str:
 
 
 # SEARCH
+# Search CDSE OData for S5P products matching bbox and date range.
 def search_products(product_key: str, cfg: dict, token: str) -> list:
     """Search CDSE OData for S5P products matching bbox and date range."""
     p = PRODUCTS[product_key]
@@ -155,6 +158,7 @@ def search_products(product_key: str, cfg: dict, token: str) -> list:
 
 
 # DOWNLOAD
+# Download a single S5P product file, skip if already on disk.
 def download_product(product: dict, cfg: dict, token: str) -> Path:
     """Download a single S5P product file, skip if already on disk."""
     out_dir = Path(cfg["download_dir"])
@@ -183,6 +187,7 @@ def download_product(product: dict, cfg: dict, token: str) -> Path:
 
 
 # READ NetCDF
+# Extract lat, lon, and the target variable from an S5P NetCDF file.
 def read_variable(filepath: Path, product_key: str):
     """Extract lat, lon, and the target variable from an S5P NetCDF file."""
     p = PRODUCTS[product_key]
@@ -223,6 +228,7 @@ def read_variable(filepath: Path, product_key: str):
 
 
 # VISUALIZE
+# Render a map for a single S5P product.
 def plot_product(lat, lon, data, product_key: str, filename: str, cfg: dict):
     """Render a map for a single S5P product."""
     p = PRODUCTS[product_key]
@@ -279,6 +285,7 @@ def plot_product(lat, lon, data, product_key: str, filename: str, cfg: dict):
 
 
 # ALL-PRODUCTS SUMMARY GRID
+# Plot all retrieved products in a single figure grid.
 def plot_summary_grid(results: dict, cfg: dict):
     """Plot all retrieved products in a single figure grid."""
     valid = {k: v for k, v in results.items() if v is not None}
@@ -331,6 +338,7 @@ def plot_summary_grid(results: dict, cfg: dict):
 
 
 # MAIN
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main(products_to_run=None, cfg=None):
     if cfg is None:
         cfg = CONFIG

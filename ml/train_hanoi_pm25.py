@@ -1,3 +1,4 @@
+# File nay: train, promote hoac predict mo hinh PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -125,6 +126,7 @@ INTEGER_FEATURES = {
 }
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train baseline Hanoi PM2.5 models from gold training dataset")
     parser.add_argument("--dataset-version", default=os.getenv("DATASET_VERSION", "hanoi_pm25_v1"))
@@ -140,10 +142,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("TrainHanoiPM25Baseline")
         .config("spark.jars.ivy", ivy_dir)
@@ -162,6 +166,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Dam bao tai nguyen va cau hinh san sang cho du lieu/du doan PM2.5.
 def ensure_model_runs_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.models")
     spark.sql(
@@ -204,6 +209,7 @@ def ensure_model_runs_table(spark: SparkSession, table_name: str) -> None:
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
+# Chuan bi DataFrame dau vao train cho du lieu/du doan PM2.5.
 def prepare_frame(pdf: pd.DataFrame, target_col: str):
     pdf = pdf.dropna(subset=[target_col]).copy()
     pdf["low_pbl"] = pdf["low_pbl"].fillna(False).astype(int)
@@ -213,6 +219,7 @@ def prepare_frame(pdf: pd.DataFrame, target_col: str):
     return pdf, features, labels
 
 
+# Tao bieu thuc default cho feature thieu cho du lieu/du doan PM2.5.
 def default_feature_expr(name: str):
     if name == "season":
         return F.lit("unknown")
@@ -223,6 +230,7 @@ def default_feature_expr(name: str):
     return F.lit(0.0)
 
 
+# Dam bao tai nguyen va cau hinh san sang cho du lieu/du doan PM2.5.
 def ensure_training_feature_columns(df):
     existing = set(df.columns)
     missing = [name for name in FEATURE_COLUMNS if name not in existing]
@@ -233,6 +241,7 @@ def ensure_training_feature_columns(df):
     return df
 
 
+# Fit mo hinh voi tap huan luyen cho du lieu/du doan PM2.5.
 def fit_model(model_type: str, x_train: pd.DataFrame, y_train: pd.Series):
     if model_type == "lightgbm":
         from lightgbm import LGBMRegressor
@@ -261,6 +270,7 @@ def fit_model(model_type: str, x_train: pd.DataFrame, y_train: pd.Series):
     return model
 
 
+# Tinh metric danh gia cho du lieu/du doan PM2.5.
 def metrics(model, x: pd.DataFrame, y: pd.Series) -> tuple[float | None, float | None, float | None]:
     if x.empty or y.empty:
         return None, None, None
@@ -273,6 +283,7 @@ def metrics(model, x: pd.DataFrame, y: pd.Series) -> tuple[float | None, float |
     return mae, rmse, mape
 
 
+# Ghi output cho du lieu/du doan PM2.5.
 def save_model(model, model_type: str, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if model_type == "lightgbm":
@@ -281,16 +292,19 @@ def save_model(model, model_type: str, path: Path) -> None:
         model.save_model(str(path))
 
 
+# Xu ly path va storage HDFS cho du lieu/du doan PM2.5.
 def is_hdfs_uri(uri: str) -> bool:
     return urlparse(uri).scheme == "hdfs"
 
 
+# Xu ly path va storage HDFS cho du lieu/du doan PM2.5.
 def hdfs_join(*parts: str) -> str:
     first = parts[0].rstrip("/")
     rest = [part.strip("/") for part in parts[1:] if part]
     return "/".join([first, *rest])
 
 
+# Xu ly path va storage HDFS cho du lieu/du doan PM2.5.
 def copy_local_to_hdfs(spark: SparkSession, local_path: Path, hdfs_uri: str) -> None:
     jvm = spark.sparkContext._jvm
     conf = spark.sparkContext._jsc.hadoopConfiguration()
@@ -300,6 +314,7 @@ def copy_local_to_hdfs(spark: SparkSession, local_path: Path, hdfs_uri: str) -> 
     fs.copyFromLocalFile(False, True, jvm.org.apache.hadoop.fs.Path(str(local_path)), target)
 
 
+# Ghi artifact cua mo hinh cho du lieu/du doan PM2.5.
 def materialize_artifact(spark: SparkSession, local_path: Path, artifact_uri: str) -> str:
     if is_hdfs_uri(artifact_uri):
         copy_local_to_hdfs(spark, local_path, artifact_uri)
@@ -314,6 +329,7 @@ def materialize_artifact(spark: SparkSession, local_path: Path, artifact_uri: st
     return str(target)
 
 
+# Ghi output cho du lieu/du doan PM2.5.
 def write_importance(model, features: list[str], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     importance = getattr(model, "feature_importances_", None)
@@ -324,6 +340,7 @@ def write_importance(model, features: list[str], path: Path) -> None:
     ).to_csv(path, index=False)
 
 
+# Xu ly gioi han khong gian/bbox cho du lieu/du doan PM2.5.
 def split_bounds(pdf: pd.DataFrame, split: str) -> tuple[datetime | None, datetime | None]:
     split_pdf = pdf[pdf["split"] == split]
     if split_pdf.empty:
@@ -331,6 +348,7 @@ def split_bounds(pdf: pd.DataFrame, split: str) -> tuple[datetime | None, dateti
     return split_pdf["hour"].min().to_pydatetime(), split_pdf["hour"].max().to_pydatetime()
 
 
+# Train mo hinh cho mot horizon cho du lieu/du doan PM2.5.
 def train_one_horizon(
     spark: SparkSession,
     pdf: pd.DataFrame,
@@ -415,6 +433,7 @@ def train_one_horizon(
     }
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     if not args.model_version:

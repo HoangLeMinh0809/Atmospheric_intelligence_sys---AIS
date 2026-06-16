@@ -1,3 +1,4 @@
+# File nay: xu ly du lieu lakehouse hoac tac vu Spark tien ich.
 from __future__ import annotations
 
 import os
@@ -7,10 +8,12 @@ from pyspark.sql import SparkSession
 from hanoi_config import HDFS_NAMENODE, ICEBERG_CATALOG, ICEBERG_WAREHOUSE, TABLES
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("AIS_EnsureIcebergTables")
         .config("spark.jars.ivy", ivy_dir)
@@ -29,6 +32,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Tao toan bo namespace Iceberg ma he thong dang su dung truoc khi bootstrap bang.
 def create_namespaces(spark: SparkSession) -> None:
     for namespace in [
         "weather",
@@ -44,6 +48,7 @@ def create_namespaces(spark: SparkSession) -> None:
         spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.{namespace}")
 
 
+# Them cot moi vao bang da ton tai ma khong can tao lai bang.
 def ensure_columns(spark: SparkSession, table_name: str, columns: dict[str, str]) -> None:
     existing = set(spark.table(table_name).columns)
     for column, dtype in columns.items():
@@ -51,6 +56,7 @@ def ensure_columns(spark: SparkSession, table_name: str, columns: dict[str, str]
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
+# Tao namespace va bang Iceberg dich neu chua ton tai.
 def ensure_tables(spark: SparkSession) -> None:
     create_namespaces(spark)
 
@@ -75,7 +81,7 @@ def ensure_tables(spark: SparkSession) -> None:
     for audit_table in ("invalid_events_bronze", "late_events_bronze"):
         spark.sql(
             f"""
-            CREATE TABLE IF NOT EXISTS {ICEBERG_CATALOG}.audit.{audit_table} ({audit_columns})
+                CREATE TABLE IF NOT EXISTS {ICEBERG_CATALOG}.audit.{audit_table} ({audit_columns})
             USING ICEBERG
             PARTITIONED BY (source_topic, year, month, day)
             TBLPROPERTIES ('format-version'='2')
@@ -1332,6 +1338,7 @@ def ensure_tables(spark: SparkSession) -> None:
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")

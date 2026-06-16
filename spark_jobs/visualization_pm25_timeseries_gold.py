@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -28,6 +29,7 @@ from visualization_common import (
 )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build PM2.5 observed/forecast visualization timeseries")
     add_common_args(parser)
@@ -74,6 +76,7 @@ def main() -> None:
                 station.filter(station.pm25.isNotNull())
                 .filter(station.hour >= start_time)
                 .filter(station.hour <= base_time)
+                # Bat dau gom nhom de tinh cac chi so tong hop.
                 .groupBy("hour")
                 .agg(
                     F.avg("pm25").alias("pm25_value"),

@@ -1,3 +1,4 @@
+# File nay: crawler tai du lieu tho tu cac nguon ben ngoai.
 import requests
 import geopandas as gpd
 

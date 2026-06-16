@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 set -euo pipefail
 
 export MSYS_NO_PATHCONV=1
@@ -7,10 +8,12 @@ export MSYS2_ARG_CONV_EXCL="*"
 NAMENODE_CONTAINER="${NAMENODE_CONTAINER:-namenode}"
 HDFS_WEBHDFS_BASE="${HDFS_WEBHDFS_BASE:-http://localhost:9870/webhdfs/v1}"
 
+# Chay mot lan xu ly cho du lieu HDFS.
 run_hdfs() {
   docker exec "$NAMENODE_CONTAINER" hdfs dfs "$@"
 }
 
+# Chay mot lan xu ly cho du lieu HDFS.
 run_hdfs_admin() {
   docker exec "$NAMENODE_CONTAINER" hdfs dfsadmin "$@"
 }

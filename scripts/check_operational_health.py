@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 from __future__ import annotations
 
 import argparse
@@ -8,6 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 
+# Parse timestamp ISO va dua ve UTC timezone-aware.
 def parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -15,6 +17,7 @@ def parse_time(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+# Khai bao class age_minutes de gom state, cau hinh hoac hanh vi lien quan.
 def age_minutes(value: str | None, *, now: datetime | None = None) -> float | None:
     parsed = parse_time(value)
     if parsed is None:
@@ -23,18 +26,23 @@ def age_minutes(value: str | None, *, now: datetime | None = None) -> float | No
     return max(0.0, (current - parsed).total_seconds() / 60)
 
 
+# Khai bao class get_json de gom state, cau hinh hoac hanh vi lien quan.
 def get_json(url: str, timeout: int) -> tuple[int, dict]:
     try:
+        # Goi HTTP request truc tiep toi endpoint dich.
         with urllib.request.urlopen(url, timeout=timeout) as response:
+            # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8")
         try:
+            # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
             return exc.code, json.loads(body)
         except json.JSONDecodeError:
             return exc.code, {"raw": body}
 
 
+# Khai bao class require_ok de gom state, cau hinh hoac hanh vi lien quan.
 def require_ok(name: str, url: str, timeout: int) -> dict:
     status, body = get_json(url, timeout)
     if status < 200 or status >= 300:
@@ -43,6 +51,7 @@ def require_ok(name: str, url: str, timeout: int) -> dict:
     return body
 
 
+# Khai bao class checkpoint_age_minutes de gom state, cau hinh hoac hanh vi lien quan.
 def checkpoint_age_minutes(webhdfs_base: str, path: str, timeout: int) -> float | None:
     encoded = urllib.parse.quote(path, safe="/")
     status, body = get_json(f"{webhdfs_base.rstrip('/')}{encoded}?op=GETFILESTATUS", timeout)
@@ -57,6 +66,7 @@ def checkpoint_age_minutes(webhdfs_base: str, path: str, timeout: int) -> float 
     return age_minutes(modified.isoformat())
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check AIS readiness, prediction freshness, and stream checkpoints")
     parser.add_argument("--visualization-url", default="http://visualization-api:8080")

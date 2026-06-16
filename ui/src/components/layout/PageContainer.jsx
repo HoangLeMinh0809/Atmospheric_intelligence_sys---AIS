@@ -1,3 +1,5 @@
+// File nay: component UI dung lai trong dashboard.
+// Render component PageContainer va gan state/props cho UI.
 function PageContainer({ title, subtitle, children }) {
   return (
     <div className="page-container">

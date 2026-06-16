@@ -1,3 +1,4 @@
+// File nay: component ban do hien thi layer PM2.5, station, trajectory va plume.
 const HORIZONS = [
   { value: 0, label: "Latest" },
   { value: 6, label: "+6h" },
@@ -5,6 +6,7 @@ const HORIZONS = [
   { value: 24, label: "+24h" },
 ];
 
+// Render component TimeSelector va gan state/props cho UI.
 export default function TimeSelector({ horizon, onChange }) {
   return (
     <div className="time-selector" aria-label="Forecast horizon">

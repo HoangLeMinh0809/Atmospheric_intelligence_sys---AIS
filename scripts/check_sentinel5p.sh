@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 set -euo pipefail
 
 SPARK_SQL="/opt/spark/bin/spark-sql --master spark://spark-master:7077 --packages 'org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1' --conf spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.ais.type=hadoop --conf spark.sql.catalog.ais.warehouse=hdfs://namenode:9000/warehouse/iceberg --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"

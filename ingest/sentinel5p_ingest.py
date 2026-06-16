@@ -1,3 +1,4 @@
+# File nay: ingest metadata san pham Sentinel-5P va day event vao Kafka.
 """
 Sentinel-5P Product Metadata Ingest
 ====================================
@@ -143,6 +144,7 @@ WINDOW_CONFIG = build_default_window_config(
 # =============================================================================
 # Utility functions
 # =============================================================================
+# Authenticate with Copernicus Data Space and get access token.
 def get_access_token(username: str, password: str) -> str:
     """Authenticate with Copernicus Data Space and get access token."""
     resp = requests.post(
@@ -159,11 +161,13 @@ def get_access_token(username: str, password: str) -> str:
     return resp.json()["access_token"]
 
 
+# Format datetime for ODATA filter (Copernicus API expects this format).
 def to_odata_datetime(dt: datetime) -> str:
     """Format datetime for ODATA filter (Copernicus API expects this format)."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+# Ep gia tri sang int an toan cho du lieu Sentinel-5P.
 def _safe_int(value) -> int | None:
     if value in (None, ""):
         return None
@@ -173,6 +177,7 @@ def _safe_int(value) -> int | None:
         return None
 
 
+# Parse va chuan hoa input cho du lieu Sentinel-5P.
 def _parse_content_date_day(content_start: str | None) -> tuple[int, int, int]:
     if content_start:
         try:
@@ -186,18 +191,22 @@ def _parse_content_date_day(content_start: str | None) -> tuple[int, int, int]:
     return now.year, now.month, now.day
 
 
+# Tao payload hoac DataFrame cho du lieu Sentinel-5P.
 def build_download_url(product_id: str) -> str:
     return f"https://download.dataspace.copernicus.eu/odata/v1/Products({product_id})/$value"
 
 
+# Xu ly path va storage HDFS cho du lieu Sentinel-5P.
 def _webhdfs_paths(path: str) -> list[str]:
     return [f"{base}/{path.strip('/')}" for base in HDFS_WEBHDFS_BASES]
 
 
+# Xu ly path va storage HDFS cho du lieu Sentinel-5P.
 def _hdfs_uri(path: str) -> str:
     return f"{HDFS_NAMENODE}/{path.strip('/')}"
 
 
+# Khai bao class is_standby_response de gom state, cau hinh hoac hanh vi lien quan.
 def _is_standby_response(response: requests.Response) -> bool:
     if response.status_code != 403:
         return False
@@ -209,12 +218,14 @@ def _is_standby_response(response: requests.Response) -> bool:
     return remote_exception.get("exception") == "StandbyException"
 
 
+# Xu ly path va storage HDFS cho du lieu Sentinel-5P.
 def _raise_last_webhdfs_error(last_response: requests.Response | None) -> None:
     if last_response is not None:
         last_response.raise_for_status()
     raise RuntimeError("No WebHDFS endpoint configured")
 
 
+# Xu ly path va storage HDFS cho du lieu Sentinel-5P.
 def webhdfs_exists(path: str) -> bool:
     last_response = None
     for url in _webhdfs_paths(path):
@@ -236,6 +247,7 @@ def webhdfs_exists(path: str) -> bool:
     return False
 
 
+# Xu ly path va storage HDFS cho du lieu Sentinel-5P.
 def webhdfs_mkdirs(path: str) -> None:
     last_response = None
     for url in _webhdfs_paths(path):
@@ -253,6 +265,7 @@ def webhdfs_mkdirs(path: str) -> None:
     _raise_last_webhdfs_error(last_response)
 
 
+# Xu ly path va storage HDFS cho du lieu Sentinel-5P.
 def upload_file_to_hdfs(local_path: Path, hdfs_path: str) -> str:
     parent = str(Path(hdfs_path).parent).replace("\\", "/")
     webhdfs_mkdirs(parent)
@@ -284,6 +297,7 @@ def upload_file_to_hdfs(local_path: Path, hdfs_path: str) -> str:
     return _hdfs_uri(hdfs_path)
 
 
+# Khai bao class download_product_to_file de gom state, cau hinh hoac hanh vi lien quan.
 def download_product_to_file(download_url: str, token: str, local_path: Path, expected_size: int | None) -> None:
     if MAX_DOWNLOAD_BYTES > 0 and expected_size and expected_size > MAX_DOWNLOAD_BYTES:
         raise RuntimeError(
@@ -303,6 +317,7 @@ def download_product_to_file(download_url: str, token: str, local_path: Path, ex
                     handle.write(chunk)
 
 
+# Khai bao class maybe_download_raw_product de gom state, cau hinh hoac hanh vi lien quan.
 def maybe_download_raw_product(product_key: str, item: dict, token: str, content_start: str | None) -> dict:
     product_id = item.get("Id", "")
     product_name = item.get("Name", "")
@@ -353,6 +368,7 @@ def maybe_download_raw_product(product_key: str, item: dict, token: str, content
     return result
 
 
+# Query Copernicus Data Space ODATA API for product granules in the given window. Returns list of product entries (metadata only, not downloaded).
 def search_products(
     product_key: str, token: str, start_utc: datetime, end_utc: datetime
 ) -> list[dict]:
@@ -398,6 +414,7 @@ def search_products(
         return []
 
 
+# Execute one ingest cycle: resolve window, search for each product, and publish events to Kafka. Returns count of events sent.
 def run_once(producer) -> int:
     """
     Execute one ingest cycle: resolve window, search for each product,
@@ -512,6 +529,7 @@ def run_once(producer) -> int:
     return sent
 
 
+# Main entry point: loop over window(s) and ingest.
 def main():
     """Main entry point: loop over window(s) and ingest."""
     logger.info("=" * 70)

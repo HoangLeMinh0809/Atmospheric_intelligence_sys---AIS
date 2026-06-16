@@ -1,3 +1,4 @@
+# File này: train, promote hoặc predict mô hình PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -20,6 +21,7 @@ for candidate in [
 from hanoi_config import MODEL_ARTIFACT_BASE_URI, get_table_names  # noqa: E402
 
 
+# Đọc tham số CLI và biến môi trường cho bước promote model.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Promote/rollback Hanoi PM2.5 model into Iceberg registry")
     parser.add_argument("--model-run-id", required=True)
@@ -35,10 +37,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Parse các cờ dạng `1/true/yes` thành boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khởi tạo SparkSession để đọc model runs và cập nhật model registry.
 def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", "ais")
     warehouse = os.getenv("ICEBERG_WAREHOUSE", "")
@@ -52,6 +56,7 @@ def build_spark() -> SparkSession:
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
     builder = (
+        # Khởi tạo SparkSession với các config cần cho job hiện tại.
         SparkSession.builder.appName("PromoteHanoiPM25Model")
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -70,6 +75,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Entry point: lấy model run, sinh bản ghi registry mới, rồi promote/demote theo trạng thái yêu cầu.
 def main() -> None:
     args = parse_args()
     dry_run = as_bool(args.dry_run)
@@ -91,7 +97,7 @@ def main() -> None:
             raise SystemExit(f"No model run found for model_run_id={args.model_run_id} horizon={args.horizon_hour}")
         run = run_row[0].asDict()
 
-        # Prefer immutable metadata written by training; fall back to the documented convention for old runs.
+        # Ưu tiên metadata bất biến do training ghi ra; nếu thiếu thì fallback theo quy ước cũ.
         model_version = (
             (args.model_version or "").strip()
             or str(run.get("model_version") or "").strip()
@@ -107,7 +113,7 @@ def main() -> None:
 
         promoted_at = datetime.now(timezone.utc)
 
-        # Some older runs may not have these fields; fall back safely.
+        # Một số model run cũ có thể thiếu vài trường mới, nên cần fallback an toàn.
         feature_schema_hash = run.get("feature_schema_hash") or run.get("schema_hash") or run.get("feature_schema")
 
         new_row = {
@@ -140,11 +146,11 @@ def main() -> None:
         )
 
         out = spark.createDataFrame([new_row], schema=spark.table(registry_table).schema)
+        # Đăng ký DataFrame tạm để có thể dùng SQL ở các bước sau.
         out.createOrReplaceTempView("src")
 
-        # Demotion behavior: when promoting to production, explicitly demote current production
-        # for the same (location_id, horizon_hour). This keeps exactly one active production
-        # unless time-windowed models are used.
+        # Khi promote lên production thì hạ model production cũ cùng horizon xuống archived,
+        # để bình thường chỉ còn đúng một model production đang hoạt động.
         if args.status == "production":
             spark.sql(
                 f"""
@@ -161,9 +167,10 @@ def main() -> None:
             print("promotion_status status=dry_run_success")
             return
 
-        # Promotion idempotency via MERGE on pointer dimensions.
+        # Dùng MERGE để promote idempotent theo bộ khóa định danh của model registry.
         spark.sql(
             f"""
+            # Dung MERGE de upsert vao bang dich ma khong mat ban ghi cu.
             MERGE INTO {registry_table} t
             USING src s
             ON t.location_id = s.location_id
@@ -177,7 +184,7 @@ def main() -> None:
 
         print("promotion_status status=success")
 
-        # Acceptance rule: production inference needs production model for all horizons.
+        # Kiểm tra hậu điều kiện: infer production lý tưởng phải có đủ model cho cả 3 horizon.
         if args.status == "production":
             required = [6, 12, 24]
             prod = (

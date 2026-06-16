@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -26,6 +27,7 @@ from visualization_common import (
 STYLE_COLORS = ["#2563eb", "#16a34a", "#f97316", "#dc2626", "#7c3aed", "#0891b2", "#475569"]
 
 
+# Giam mat do diem de payload nhe hon cho du lieu trajectory.
 def _downsample(items: list[dict], max_points: int) -> list[dict]:
     if max_points <= 0 or len(items) <= max_points:
         return items
@@ -43,6 +45,7 @@ def _downsample(items: list[dict], max_points: int) -> list[dict]:
     return chosen
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build backward trajectory visualization LineString layer")
     add_common_args(parser)
@@ -76,6 +79,7 @@ def main() -> None:
         # silently truncate or drop valid trajectory lines.
         init_df = (
             points.filter(F.col("age_h") == F.lit(0))
+            # Bat dau gom nhom de tinh cac chi so tong hop.
             .groupBy("traj_id")
             .agg(F.max("timestamp").alias("init_time"))
         )

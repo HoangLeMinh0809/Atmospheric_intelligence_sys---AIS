@@ -125,23 +125,29 @@ select option {
 
 .statistics-chart-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 22px;
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
+  gap: 22px;
+  margin-top: 28px;
+  align-items: stretch;
 }
 
 .statistics-chart-card {
   min-width: 0;
-  padding: 16px;
+  min-height: 360px;
+  padding: 18px;
   overflow: hidden;
   border: 1px solid rgba(15, 23, 42, 0.1);
-  border-radius: 14px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
 }
 
 .statistics-chart-card.wide {
   grid-column: 1 / -1;
+}
+
+.statistics-chart-card.trend {
+  min-height: 400px;
 }
 
 .statistics-chart-card svg {
@@ -180,6 +186,21 @@ select option {
 .statistics-value {
   text-anchor: middle;
   font-weight: 700;
+}
+
+.statistics-page .card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+}
+
+.statistics-page .stat-card {
+  min-height: 104px;
+  border-radius: 10px;
+}
+
+.statistics-page .stat-card p,
+.statistics-page .stat-card-value {
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 900px) {
@@ -1639,8 +1660,8 @@ select option {
 .legend-ramp {
   height: 12px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #2563eb 0%, #0f766e 28%, #65a30d 48%, #b45309 70%, #9f1239 100%);
-  box-shadow: 0 0 18px rgba(15, 118, 110, 0.18);
+  background: linear-gradient(90deg, #22c55e 0%, #22c55e 30%, #eab308 45%, #dc2626 60%, #7e22ce 82%, #581c87 100%);
+  box-shadow: 0 0 18px rgba(126, 34, 206, 0.18);
 }
 
 .legend-ticks {

@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 # =============================================================================
 # Start AIS Infrastructure + Monitoring UI only (NO automatic backfill)
 # User can trigger backfill via Monitoring UI button
@@ -10,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$ROOT_DIR"
 
+# In thong tin chan doan container de de debug ha tang.
 print_container_diagnostics() {
   local container_name="$1"
 
@@ -20,6 +22,7 @@ print_container_diagnostics() {
   docker logs --tail 120 "$container_name" 2>&1 || true
 }
 
+# Cho den khi tai nguyen hoac service can dung da san sang.
 wait_for_healthy() {
   local container_name="$1"
   local timeout_sec="${2:-300}"
@@ -67,7 +70,9 @@ DETACH=true STOP_AFTER_BATCH=false bash scripts/submit_spark.sh maiac
 
 echo "=== [5/7] Ensure Cassandra schema ==="
 docker exec cassandra cqlsh -e "CREATE KEYSPACE IF NOT EXISTS ais_serving WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" || true
+# Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
 docker exec cassandra cqlsh -e "CREATE TABLE IF NOT EXISTS ais_serving.weather_hourly_by_province_day (province text, day text, event_time timestamp, event_id text, query_date text, location_name text, lat double, lon double, temp_c double, temp_f double, humidity int, wind_kph double, wind_degree int, wind_dir text, precip_mm double, condition_text text, source text, ingest_time text, PRIMARY KEY ((province, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);" || true
+# Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
 docker exec cassandra cqlsh -e "CREATE TABLE IF NOT EXISTS ais_serving.openaq_hourly_by_city_parameter_day (city text, parameter text, day text, event_time timestamp, event_id text, location_id bigint, location_name text, provider text, sensor_id bigint, unit text, value double, min double, max double, sd double, coverage_pct double, source text, ingest_time text, PRIMARY KEY ((city, parameter, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);" || true
 bash scripts/ensure_cassandra_online_schema.sh || true
 

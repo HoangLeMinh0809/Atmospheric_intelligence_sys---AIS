@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 param(
     [switch]$SkipBuildImages,
     [switch]$SkipVisualizationApi,
@@ -15,6 +16,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Resolve-Path (Join-Path $scriptDir "..")
 Set-Location $rootDir
 
+# Khai bao class Step de gom state, cau hinh hoac hanh vi lien quan.
 function Step {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -27,6 +29,7 @@ function Step {
     Write-Host "[OK] $Name" -ForegroundColor Green
 }
 
+# Khai bao class Require de gom state, cau hinh hoac hanh vi lien quan.
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$CommandName)
     if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
@@ -34,6 +37,7 @@ function Require-Command {
     }
 }
 
+# Khai bao class Stop de gom state, cau hinh hoac hanh vi lien quan.
 function Stop-UiPortForward {
     param([Parameter(Mandatory = $true)][int]$Port)
 
@@ -47,6 +51,7 @@ function Stop-UiPortForward {
     }
 }
 
+# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
 function Start-UiPortForward {
     param([Parameter(Mandatory = $true)][int]$Port)
 
@@ -75,6 +80,7 @@ function Start-UiPortForward {
     Write-Host ("[INFO] UI URL: http://127.0.0.1:{0}" -f $Port) -ForegroundColor Yellow
 }
 
+# Khai bao class Get de gom state, cau hinh hoac hanh vi lien quan.
 function Get-RuntimeConfigValues {
     $json = kubectl -n ais get configmap ais-runtime-config -o json 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) {
@@ -90,6 +96,7 @@ function Get-RuntimeConfigValues {
     return $result
 }
 
+# Khai bao class Patch de gom state, cau hinh hoac hanh vi lien quan.
 function Patch-RuntimeConfig {
     param([Parameter(Mandatory = $true)][hashtable]$Data)
     if ($Data.Count -eq 0) {

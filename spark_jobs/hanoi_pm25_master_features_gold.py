@@ -1,3 +1,4 @@
+# File nay: tao feature, training table hoac serving table cho bai toan PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -179,6 +180,7 @@ OUTPUT_COLUMN_TYPES = {
 }
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi PM2.5 master feature gold table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -188,14 +190,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("HanoiPM25MasterFeaturesGold")
         .config("spark.jars.ivy", ivy_dir)
@@ -214,8 +219,10 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Tao bang feature hop nhat lam nguon chung cho training, serving va du bao.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.features")
+    # Day la bang feature hop nhat dung cho train, serving va debug attribution.
     spark.sql(
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
@@ -305,6 +312,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df, time_col: str, start_date: str, end_date: str, asof_time=None):
     if start_date:
         df = df.filter(F.to_date(time_col) >= F.to_date(F.lit(start_date)))
@@ -314,15 +322,18 @@ def apply_date_range(df, time_col: str, start_date: str, end_date: str, asof_tim
     return df
 
 
+# Tao day gio lien tuc tu min/max OpenAQ de cac nguon khac co the left join theo hour.
 def build_hour_grid(aq):
     bounds = aq.agg(F.min("hour").alias("min_hour"), F.max("hour").alias("max_hour")).first()
     if not bounds or bounds["min_hour"] is None or bounds["max_hour"] is None:
         return None
+    # Tao day gio lien tuc de sau do left join tung nguon, tranh mat gio khi mot datasource bi thua/thieu.
     return aq.sparkSession.range(1).select(
         F.explode(F.sequence(F.lit(bounds["min_hour"]), F.lit(bounds["max_hour"]), F.expr("interval 1 hour"))).alias("hour")
     )
 
 
+# Lay feature Sentinel-5P daily gan nhat ma tung gio duoc phep nhin thay.
 def build_s5p_asof_features(hours, s5p):
     s5p_norm = (
         s5p
@@ -334,15 +345,18 @@ def build_s5p_asof_features(hours, s5p):
         hours.select("hour", F.to_date("hour").alias("hour_date"))
         .join(
             s5p_norm,
+            # Mỗi gio chi duoc nhin thay overpass xay ra truoc no, khong leak thong tin tu tuong lai.
             (F.col("date") < F.col("hour_date"))
             | ((F.col("date") == F.col("hour_date")) & (F.col("overpass_time_utc").isNotNull()) & (F.col("overpass_time_utc") <= F.col("hour"))),
             "left",
         )
     )
     w = Window.partitionBy("hour", "product_norm").orderBy(F.col("date").desc_nulls_last(), F.col("overpass_time_utc").desc_nulls_last())
+    # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
     latest = candidates.withColumn("rn", F.row_number().over(w)).filter(F.col("rn") == 1)
     return (
         latest
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         .groupBy("hour")
         .agg(
             F.max(F.when(F.col("product_norm") == "NO2", F.col("value_mean"))).alias("s5p_no2_mean"),
@@ -356,12 +370,15 @@ def build_s5p_asof_features(hours, s5p):
     )
 
 
+# Lay feature MAIAC daily gan nhat truoc moi gio dich.
 def build_maiac_asof_features(hours, maiac):
     candidates = (
         hours.select("hour", F.to_date("hour").alias("hour_date"))
+        # MAIAC la daily cadence nen chi lay ban do ngay gan nhat truoc gio can du bao.
         .join(maiac, F.col("date") < F.col("hour_date"), "left")
     )
     w = Window.partitionBy("hour").orderBy(F.col("date").desc_nulls_last())
+    # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
     latest = candidates.withColumn("rn", F.row_number().over(w)).filter(F.col("rn") == 1)
     return latest.select(
         "hour",
@@ -373,14 +390,18 @@ def build_maiac_asof_features(hours, maiac):
     )
 
 
+# Lay snapshot ERA5 moi nhat <= gio dich de can bang voi cadence hourly.
 def build_era5_asof_features(hours, era5, era5_cols: list[str]):
     era5_selected = era5.select(*era5_cols).withColumnRenamed("hour", "era5_hour")
+    # Chon snapshot ERA5 moi nhat <= gio dich, phong truong hop hourly weather den cham hon OpenAQ.
     candidates = hours.select("hour").join(era5_selected, F.col("era5_hour") <= F.col("hour"), "left")
     w = Window.partitionBy("hour").orderBy(F.col("era5_hour").desc_nulls_last())
+    # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
     latest = candidates.withColumn("rn", F.row_number().over(w)).filter(F.col("rn") == 1)
     return latest.drop("rn", "era5_hour")
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu/du doan PM2.5.
 def add_time_lag_target_features(df):
     order_w = Window.orderBy("hour")
     df = (
@@ -406,16 +427,19 @@ def add_time_lag_target_features(df):
     )
 
     for lag in get_gold_lag_hours():
+        # Lag features giu memory ngan han cua PM2.5, la nhom bien quan trong nhat cho du bao ngan han.
         df = df.withColumn(f"pm25_lag_{lag}h", F.lag("pm25_mean", lag).over(order_w))
 
     for window_hours in get_gold_rolling_hours():
         roll_w = order_w.rowsBetween(-(window_hours - 1), 0)
+        # Rolling windows tom tat xu huong ngan han va do bien dong cua pollutant.
         df = df.withColumn(f"pm25_roll_mean_{window_hours}h", F.avg("pm25_mean").over(roll_w))
         if window_hours == 24:
             df = df.withColumn("pm25_roll_max_24h", F.max("pm25_mean").over(roll_w))
             df = df.withColumn("pm25_roll_std_24h", F.stddev_samp("pm25_mean").over(roll_w))
 
     for horizon in get_gold_horizons_hours():
+        # Lead columns la label supervision; serving builder se loai bo de tranh leak.
         df = df.withColumn(f"pm25_next_{horizon}h", F.lead("pm25_mean", horizon).over(order_w))
 
     return (
@@ -426,6 +450,7 @@ def add_time_lag_target_features(df):
     )
 
 
+# Join tat ca nguon feature ve cung hourly grid va xuat schema master gold.
 def build_master(
     spark: SparkSession,
     tables: dict[str, str],
@@ -445,7 +470,7 @@ def build_master(
     if end_date:
         era5 = era5.filter(F.to_date("hour") <= F.to_date(F.lit(end_date)))
     era5 = apply_asof_time(era5, "hour", asof_time)
-    # Keep satellite scans bounded to the requested window to reduce join cost.
+    # Giu satellite scans trong cua so can thiet de join daily as-of nhe hon.
     s5p = apply_date_range(spark.table(tables["sentinel5p_silver"]), "date", start_date, end_date)
     maiac = apply_date_range(spark.table(tables["maiac_silver"]), "date", start_date, end_date)
 
@@ -497,7 +522,7 @@ def build_master(
     gradient_hourly = gradient.repartition("hour")
     traj_hourly = traj_hourly.repartition("hour")
 
-    # Broadcast daily as-of features; they are small and avoid wide shuffles.
+    # Daily features nho hon nhieu so voi hourly grid nen broadcast se re hon shuffle.
     base = (
         hours
         .join(aq_hourly, "hour", "left")
@@ -511,6 +536,7 @@ def build_master(
     return add_time_lag_target_features(base).select(*OUTPUT_COLUMNS)
 
 
+# In metric kiem tra row count, thoi gian, duplicate va null ratio.
 def log_metrics(df) -> None:
     count = df.count()
     bounds = df.agg(F.min("hour").alias("min_time"), F.max("hour").alias("max_time")).first()
@@ -532,6 +558,7 @@ def log_metrics(df) -> None:
     print(f"lag_null_count_by_lag={lag_nulls}")
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
     predicates = []
     if start_date:
@@ -544,9 +571,11 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Ghi output cho du lieu/du doan PM2.5.
 def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
     if full_refresh:
         delete_date_window(spark, table_name, "hour", start_date, end_date)
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("hanoi_pm25_master_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
     insert_cols = ", ".join(OUTPUT_COLUMNS)
@@ -562,6 +591,7 @@ def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, 
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

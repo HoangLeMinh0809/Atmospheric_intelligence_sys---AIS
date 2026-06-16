@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -21,6 +22,7 @@ from visualization_common import (
 )
 
 
+# Tao xac suat plume cho tung o cho payload visualization.
 def cell_for(lat: float, lon: float, bbox: dict[str, float], resolution: float) -> dict | None:
     if lat < bbox["south"] or lat > bbox["north"] or lon < bbox["west"] or lon > bbox["east"]:
         return None
@@ -37,6 +39,7 @@ def cell_for(lat: float, lon: float, bbox: dict[str, float], resolution: float) 
     }
 
 
+# Chuan hoa va loc moc thoi gian cho payload visualization.
 def _age_hours(point: dict, base_time) -> int | None:
     raw = point.get("age_h")
     if raw is not None:
@@ -54,6 +57,7 @@ def _age_hours(point: dict, base_time) -> int | None:
     return None
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build optional forward plume probability grid")
     add_common_args(parser)

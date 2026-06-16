@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 set -euo pipefail
 
 CASSANDRA_CONTAINER="${CASSANDRA_CONTAINER:-cassandra}"
@@ -7,6 +8,7 @@ CASSANDRA_K8S_NAMESPACE="${CASSANDRA_K8S_NAMESPACE:-ais}"
 CASSANDRA_K8S_POD="${CASSANDRA_K8S_POD:-cassandra-0}"
 CASSANDRA_SCHEMA_TARGET="${CASSANDRA_SCHEMA_TARGET:-docker}"
 
+# Doc hoac ghi serving state Cassandra cho serving state Cassandra.
 use_k8s_cassandra() {
   case "$CASSANDRA_SCHEMA_TARGET" in
     k8s) return 0 ;;
@@ -22,6 +24,7 @@ use_k8s_cassandra() {
   esac
 }
 
+# Gui cau lenh CQL qua stdin cho serving state Cassandra.
 cqlsh_stdin() {
   if use_k8s_cassandra; then
     kubectl -n "$CASSANDRA_K8S_NAMESPACE" exec -i "$CASSANDRA_K8S_POD" -- cqlsh
@@ -30,6 +33,7 @@ cqlsh_stdin() {
   fi
 }
 
+# Thuc thi lenh CQL bang cqlsh cho serving state Cassandra.
 cqlsh_exec() {
   local cql="$1"
   if use_k8s_cassandra; then
@@ -43,6 +47,7 @@ cqlsh_stdin <<CQL
 CREATE KEYSPACE IF NOT EXISTS ${CASSANDRA_KEYSPACE}
 WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 
+# Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
 CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_feature_state_by_location_hour (
   location_id text,
   feature_version text,
@@ -137,6 +142,7 @@ CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_feature_state_by_location_
   PRIMARY KEY ((location_id, feature_version), base_hour)
 ) WITH CLUSTERING ORDER BY (base_hour DESC);
 
+# Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
 CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_forecast_latest_by_location (
   location_id text PRIMARY KEY,
   base_hour timestamp,
@@ -170,6 +176,7 @@ CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_forecast_latest_by_locatio
 );
 CQL
 
+# Dam bao tai nguyen va cau hinh san sang cho serving state Cassandra.
 ensure_column() {
   local table="$1"
   local column="$2"

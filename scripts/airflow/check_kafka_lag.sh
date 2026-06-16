@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: helper cho Airflow de giam sat stream hoac Kafka lag.
 set -euo pipefail
 
 GROUP_ID="${1:-}"

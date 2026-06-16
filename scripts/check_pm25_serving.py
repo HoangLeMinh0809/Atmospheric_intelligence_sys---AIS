@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 from __future__ import annotations
 
 import argparse
@@ -16,6 +17,7 @@ REQUIRED_CONFIG = [
 ]
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check PM2.5 serving runtime configuration and dependencies")
     parser.add_argument(
@@ -28,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Kiem tra tinh dung dan cua du lieu/du doan PM2.5.
 def check_config() -> None:
     missing = [name for name in REQUIRED_CONFIG if not os.getenv(name)]
     if missing:
@@ -40,6 +43,7 @@ def check_config() -> None:
     )
 
 
+# Kiem tra tinh dung dan cua du lieu/du doan PM2.5.
 def check_api_readiness() -> None:
     base_url = os.getenv("PM25_API_BASE_URL", "").rstrip("/")
     if not base_url:
@@ -55,6 +59,7 @@ def check_api_readiness() -> None:
     print(f"pm25_api_readiness status=ok url={url}")
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     checks = args.check or ["config"]

@@ -1,3 +1,4 @@
+// File nay: helper frontend cho format, mapping hoac adapter du lieu.
 export const PROVINCE_MAP = {
   ha_noi: "Hà Nội",
   hai_phong: "Hải Phòng",
@@ -34,6 +35,7 @@ export const PROVINCE_MAP = {
   ca_mau: "Cà Mau",
 };
 
+// Lay gia tri hoac metadata phuc vu render UI.
 export function getProvinceName(key) {
   return PROVINCE_MAP[key] || key;
 }

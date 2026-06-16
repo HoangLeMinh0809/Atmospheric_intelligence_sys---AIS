@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File nay: tinh gradient khong gian PM2.5 tu cac tram OpenAQ.
+from __future__ import annotations
 
 import argparse
 import os
@@ -16,6 +17,7 @@ from hanoi_config import (
 )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build OpenAQ spatial gradient silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -25,12 +27,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("OpenAQSpatialGradientSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -42,6 +47,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang hourly gradient PM2.5 quanh tam Ha Noi de bo sung spatial signal cho model/UI.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.features")
     spark.sql(
@@ -65,6 +71,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df, start_date: str, end_date: str, asof_time=None):
     if start_date:
         df = df.filter(F.to_date("hour") >= F.to_date(F.lit(start_date)))
@@ -74,6 +81,7 @@ def apply_date_range(df, start_date: str, end_date: str, asof_time=None):
     return df
 
 
+# Tinh toan chi so dan xuat cho du lieu OpenAQ PM2.5.
 def compute_spatial_gradient(station, center_lat: float, center_lon: float):
     offset = 0.25
 
@@ -82,6 +90,7 @@ def compute_spatial_gradient(station, center_lat: float, center_lon: float):
         & F.col("longitude").isNotNull()
         & F.col("pm25").isNotNull()
     )
+    # Bat dau gom nhom de tinh cac chi so tong hop.
     hour_stats = valid.groupBy("hour").agg(
         F.countDistinct("location_id").alias("location_count"),
         F.stddev_samp("pm25").alias("pm25_spatial_std_raw"),
@@ -118,11 +127,14 @@ def compute_spatial_gradient(station, center_lat: float, center_lon: float):
 
     nearest_window = Window.partitionBy("hour", "target").orderBy(F.col("distance").asc())
     idw = (
+        # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
         expanded.withColumn("rank", F.row_number().over(nearest_window))
         .filter(F.col("rank") <= 3)
         .withColumn("weight", F.lit(1.0) / F.greatest(F.col("distance"), F.lit(1e-6)))
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         .groupBy("hour", "target")
         .agg((F.sum(F.col("weight") * F.col("pm25")) / F.sum("weight")).alias("pm25_idw"))
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         .groupBy("hour")
         .pivot("target", ["n", "s", "e", "w"])
         .agg(F.first("pm25_idw"))
@@ -151,12 +163,14 @@ def compute_spatial_gradient(station, center_lat: float, center_lon: float):
     )
 
 
+# Doc station silver, tinh gradient khong gian, va tra them duplicate metric de log chat luong.
 def build_output_df(spark: SparkSession, source_table: str, start_date: str, end_date: str, asof_time=None):
     station = spark.table(source_table)
     station = apply_date_range(station, start_date, end_date, asof_time)
     station = station.filter(F.col("hour").isNotNull())
 
     duplicate_count_row = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         station.groupBy("hour", "location_id", "sensor_id")
         .count()
         .filter(F.col("count") > 1)
@@ -170,6 +184,7 @@ def build_output_df(spark: SparkSession, source_table: str, start_date: str, end
     return station, output, duplicate_count
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
     predicates = []
     if start_date:
@@ -182,10 +197,12 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Upsert DataFrame vao bang Iceberg theo khoa merge duoc truyen vao.
 def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
     if full_refresh:
         delete_date_window(spark, table_name, "hour", start_date, end_date)
 
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("openaq_gradient_updates")
     spark.sql(
         f"""
@@ -198,6 +215,7 @@ def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, 
     )
 
 
+# In metric kiem tra row count, thoi gian, duplicate va null ratio.
 def log_metrics(station_df, output_df, duplicate_count: int) -> None:
     input_count = station_df.count()
     output_count = output_df.count()
@@ -225,6 +243,7 @@ def log_metrics(station_df, output_df, duplicate_count: int) -> None:
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

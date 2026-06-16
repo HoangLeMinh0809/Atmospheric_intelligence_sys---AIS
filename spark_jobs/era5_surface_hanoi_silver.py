@@ -1,3 +1,4 @@
+# File nay: xu ly ERA5 thanh bang khi tuong hoac dau vao ARL cho HYSPLIT.
 from __future__ import annotations
 
 import argparse
@@ -104,6 +105,7 @@ VAR_ALIASES = {
     "mean_sea_level_pressure": ["msl", "msl_pressure", "mean_sea_level_pressure"],
 }
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi ERA5 surface hourly silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -114,20 +116,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Parse va chuan hoa input cho du lieu ERA5.
 def parse_date(raw: str) -> date | None:
     return datetime.strptime(raw, "%Y-%m-%d").date() if raw else None
 
 
 
 
+# Doc phan cuoi file/log cho du lieu ERA5.
 def _tail(value: str | None, limit: int = 2000) -> str:
     return (value or "")[-limit:]
 
 
+# Chay mot lan xu ly cho du lieu ERA5.
 def run_external_command(command: list[str], timeout_sec: int) -> None:
     try:
         proc = subprocess.run(
@@ -151,14 +157,17 @@ def run_external_command(command: list[str], timeout_sec: int) -> None:
             f"stdout_tail={_tail(proc.stdout)}\nstderr_tail={_tail(proc.stderr)}"
         )
 
+# Kiem tra ho tro NetCDF cho du lieu ERA5.
 def require_netcdf() -> None:
     if nc is None or np is None:
         raise RuntimeError("ERA5 surface silver requires netCDF4 and numpy in the Spark Python environment") from NETCDF_IMPORT_ERROR
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     default_fs = hdfs_default_fs()
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("ERA5SurfaceHanoiSilver")
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -175,8 +184,10 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang hourly ERA5 surface da cat ve Ha Noi.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.weather")
+    # Bang silver nay la hourly weather backbone cho feature builder va trajectory attribution.
     spark.sql(
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
@@ -206,6 +217,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu ERA5.
 def collect_candidate_files(spark: SparkSession, source_table: str, start_date: date | None, end_date: date | None) -> list[dict[str, Any]]:
     df = spark.table(source_table).filter(F.col("dataset_type") == F.lit("surface"))
     if start_date:
@@ -220,6 +232,7 @@ def collect_candidate_files(spark: SparkSession, source_table: str, start_date: 
     return [row.asDict(recursive=True) for row in rows if row["file_path"]]
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def hdfs_default_fs() -> str:
     return (
         os.getenv("HDFS_NAMENODE")
@@ -230,6 +243,7 @@ def hdfs_default_fs() -> str:
     ).rstrip("/")
 
 
+# Chuan hoa record cho du lieu ERA5.
 def normalize_hdfs_path(path: str, spark: SparkSession | None = None) -> str:
     raw = str(path or "").strip()
     if not raw:
@@ -246,11 +260,13 @@ def normalize_hdfs_path(path: str, spark: SparkSession | None = None) -> str:
     return raw
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _hdfs_remote_path(path: str) -> str:
     parsed = urlparse.urlparse(path)
     return parsed.path if parsed.scheme == "hdfs" else path
 
 
+# Lay kich thuoc file local cho du lieu ERA5.
 def _local_file_size(path: Path) -> int:
     try:
         return path.stat().st_size
@@ -258,6 +274,7 @@ def _local_file_size(path: Path) -> int:
         return -1
 
 
+# Xac nhan file local copy tu HDFS ton tai, khong rong, va san sang de doc NetCDF.
 def _ensure_valid_local_copy(local_path: Path, source: str, diagnostics: list[str]) -> Path:
     if not local_path.exists():
         raise RuntimeError(f"copy completed but local file is missing: {local_path}")
@@ -269,6 +286,7 @@ def _ensure_valid_local_copy(local_path: Path, source: str, diagnostics: list[st
     return local_path
 
 
+# Thu thap thong tin chan doan Hadoop cho du lieu ERA5.
 def _hadoop_diagnostics(spark: SparkSession | None, source: str, local_path: Path) -> list[str]:
     diagnostics = [
         f"source={source}",
@@ -298,6 +316,7 @@ def _hadoop_diagnostics(spark: SparkSession | None, source: str, local_path: Pat
     return diagnostics
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
     original = str(path or "").strip()
     source = normalize_hdfs_path(path, spark=spark)
@@ -321,6 +340,7 @@ def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
 
     if spark is not None:
         try:
+            # Thu copy bang Hadoop API truoc vi day la cach on dinh nhat khi job dang chay trong cluster.
             jvm = spark._jvm
             conf = spark.sparkContext._jsc.hadoopConfiguration()
             fs = jvm.org.apache.hadoop.fs.FileSystem.get(jvm.java.net.URI.create(source), conf)
@@ -343,6 +363,7 @@ def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
         try:
             if local_path.exists():
                 local_path.unlink()
+            # Fallback sang hdfs cli de giai quyet cac case JVM API bi loi classpath/quyen.
             run_external_command(command, timeout)
             return _ensure_valid_local_copy(local_path, source, diagnostics)
         except Exception:
@@ -353,9 +374,11 @@ def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
         try:
             if local_path.exists():
                 local_path.unlink()
+            # Fallback cuoi cung qua WebHDFS de van keo duoc file tu container khong co hdfs cli.
             quoted_remote = urlparse.quote(_hdfs_remote_path(source), safe="/")
             metadata_url = f"{webhdfs_base}{quoted_remote}?op=OPEN&noredirect=true"
             with urlrequest.urlopen(metadata_url, timeout=120) as response:  # nosec B310
+                # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
                 payload = json.loads(response.read().decode("utf-8"))
             data_url = payload.get("Location", "")
             if not data_url:
@@ -370,6 +393,7 @@ def copy_hdfs_to_local(path: str, spark: SparkSession | None = None) -> Path:
     raise RuntimeError(f"Unable to copy HDFS file to local path\n{details}")
 
 
+# Xac dinh duong dan NetCDF can doc cho du lieu ERA5.
 def resolve_netcdf_path(path: Path) -> Path:
     try:
         header = path.read_bytes()[:4]
@@ -391,6 +415,7 @@ def resolve_netcdf_path(path: Path) -> Path:
     return extract_dir / target_member
 
 
+# Tim bien can doc trong file cho du lieu ERA5.
 def _find_variable(dataset, aliases: list[str]):
     lowered = {name.lower(): name for name in dataset.variables}
     for alias in aliases:
@@ -400,6 +425,7 @@ def _find_variable(dataset, aliases: list[str]):
     return None
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu ERA5.
 def _time_values(dataset) -> list[datetime]:
     time_var = dataset.variables.get("valid_time") or dataset.variables.get("time")
     if time_var is None:
@@ -413,6 +439,7 @@ def _time_values(dataset) -> list[datetime]:
     return [datetime.fromtimestamp(float(v), tz=timezone.utc) for v in raw]
 
 
+# Rut luoi lat/lon cho du lieu ERA5.
 def _lat_lon(dataset):
     lat_var = dataset.variables.get("latitude") or dataset.variables.get("lat")
     lon_var = dataset.variables.get("longitude") or dataset.variables.get("lon")
@@ -428,6 +455,7 @@ def _lat_lon(dataset):
     return lat, lon, lat_grid, lon_grid
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu ERA5.
 def _to_time_lat_lon(variable, arr, time_len: int, lat_len: int, lon_len: int):
     dims = list(getattr(variable, "dimensions", []))
     data = np.ma.filled(np.ma.asarray(arr), np.nan).astype(float)
@@ -456,6 +484,7 @@ def _to_time_lat_lon(variable, arr, time_len: int, lat_len: int, lon_len: int):
     return data
 
 
+# Tao mask cho grid hop le cho du lieu ERA5.
 def _grid_mask(lat_grid, lon_grid, bbox: dict[str, float], center: dict[str, float]):
     mask = (
         (lat_grid >= bbox["south"])
@@ -472,6 +501,7 @@ def _grid_mask(lat_grid, lon_grid, bbox: dict[str, float], center: dict[str, flo
     return mask, 1
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu ERA5.
 def _mean_at_time(cube, time_index: int, mask):
     if cube is None:
         return None
@@ -483,6 +513,7 @@ def _mean_at_time(cube, time_index: int, mask):
     return float(np.nanmean(selected))
 
 
+# Doc mot file ERA5 surface, cat theo bbox/grid gan Ha Noi, va xuat chuoi ban ghi hourly.
 def read_era5_file(
     path: Path,
     source_file: str,
@@ -500,6 +531,7 @@ def read_era5_file(
     with nc.Dataset(str(resolved_path)) as dataset:
         times = _time_values(dataset)
         lat, lon, lat_grid, lon_grid = _lat_lon(dataset)
+        # Cat grid theo bbox Ha Noi, neu bbox khong an diem nao thi roi ve diem gan tam nhat.
         mask, grid_count = _grid_mask(lat_grid, lon_grid, bbox, center)
 
         cubes = {}
@@ -509,6 +541,7 @@ def read_era5_file(
                 cubes[output_name] = None
                 print(f"warning=era5_missing_variable output={output_name} aliases={aliases}")
                 continue
+            # Chuan hoa moi bien ve chung shape [time, lat, lon] de tinh mean theo grid de dang hon.
             cubes[output_name] = _to_time_lat_lon(variable, variable[:], len(times), len(lat), len(lon))
 
         for idx, hour in enumerate(times):
@@ -526,6 +559,7 @@ def read_era5_file(
             wind_speed = None
             wind_dir = None
             if wind_u10 is not None and wind_v10 is not None:
+                # Doi vector gio u/v thanh toc do va huong gio khi dua sang feature/visual layer.
                 wind_speed = float(math.sqrt(wind_u10 ** 2 + wind_v10 ** 2))
                 wind_dir = float((270.0 - math.degrees(math.atan2(wind_v10, wind_u10))) % 360.0)
 
@@ -544,6 +578,7 @@ def read_era5_file(
                     "pbl_height_m": pbl,
                     "low_pbl": bool(pbl < 300.0) if pbl is not None else None,
                     "surface_pressure": _mean_at_time(cubes["surface_pressure"], idx, mask),
+                    # ERA5 thuong luu nhiet do theo Kelvin va mua theo met, doi ve don vi UI/model dang dung.
                     "temperature_2m_c": float(t2m - 273.15) if t2m is not None and t2m > 150 else t2m,
                     "dewpoint_2m_c": float(d2m - 273.15) if d2m is not None and d2m > 150 else d2m,
                     "total_precipitation_mm": float(tp * 1000.0) if tp is not None and abs(tp) < 10 else tp,
@@ -559,6 +594,7 @@ def read_era5_file(
     return rows
 
 
+# Dedupe cac ban ghi hourly trung nhau tu nhieu file nguon va dong bo ve schema output cuoi.
 def build_output_df(spark: SparkSession, rows: list[dict[str, Any]]):
     if rows:
         raw_df = spark.createDataFrame(rows, OUTPUT_SCHEMA)
@@ -568,6 +604,7 @@ def build_output_df(spark: SparkSession, rows: list[dict[str, Any]]):
         raw_df
         .withColumn(
             "rn",
+            # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
             F.row_number().over(Window.partitionBy("hour").orderBy(F.col("source_file").desc_nulls_last())),
         )
         .filter(F.col("rn") == 1)
@@ -576,6 +613,7 @@ def build_output_df(spark: SparkSession, rows: list[dict[str, Any]]):
     )
 
 
+# In metric kiem tra row count, thoi gian, duplicate va null ratio.
 def log_metrics(file_count: int, rows: list[dict[str, Any]], df) -> None:
     output_count = df.count()
     duplicate_count = max(0, len(rows) - output_count)
@@ -596,6 +634,7 @@ def log_metrics(file_count: int, rows: list[dict[str, Any]], df) -> None:
     print(f"era5_checks={checks}")
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: date | None, end_date: date | None) -> None:
     predicates = []
     if start_date:
@@ -608,9 +647,11 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Ghi output cho du lieu ERA5.
 def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: date | None, end_date: date | None) -> None:
     if full_refresh:
         delete_date_window(spark, table_name, "hour", start_date, end_date)
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("era5_surface_hanoi_silver_updates")
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
     insert_cols = ", ".join(OUTPUT_COLUMNS)
@@ -626,6 +667,7 @@ def write_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, 
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

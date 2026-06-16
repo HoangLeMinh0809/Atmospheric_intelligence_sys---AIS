@@ -1,3 +1,4 @@
+# File này: train, promote hoặc predict mô hình PM2.5.
 from __future__ import annotations
 
 import argparse
@@ -41,10 +42,12 @@ RISK_BANDS = [
 ]
 
 
+# Parse các cờ dạng `1/true/yes` thành boolean.
 def parse_bool(raw: Any) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Đọc tham số CLI và biến môi trường cho job suy luận.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Hanoi PM2.5 forecast inference")
     parser.add_argument("--base-hour", default=os.getenv("BASE_HOUR", ""))
@@ -97,6 +100,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Khởi tạo SparkSession có đủ Iceberg, HDFS và Cassandra connector cho bước predict.
 def build_spark() -> SparkSession:
     catalog = os.getenv("ICEBERG_CATALOG", ICEBERG_CATALOG)
     warehouse = os.getenv("ICEBERG_WAREHOUSE", ICEBERG_WAREHOUSE)
@@ -112,6 +116,7 @@ def build_spark() -> SparkSession:
     ivy_dir = os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2")
 
     builder = (
+        # Khởi tạo SparkSession với các config cần cho job hiện tại.
         SparkSession.builder.appName("PredictHanoiPM25")
         .config("spark.jars.ivy", ivy_dir)
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -131,6 +136,7 @@ def build_spark() -> SparkSession:
     return builder.getOrCreate()
 
 
+# Ánh xạ giá trị PM2.5 sang mức rủi ro để API/UI dùng trực tiếp.
 def risk_level(pm25: float | None) -> str | None:
     if pm25 is None:
         return None
@@ -140,6 +146,7 @@ def risk_level(pm25: float | None) -> str | None:
     return "very_high"
 
 
+# Tạo prediction id ổn định từ location, base hour, feature version và model version.
 def prediction_id(location_id: str, base_hour: Any, feature_version: str, model_versions: dict[int, str]) -> str:
     if hasattr(base_hour, "isoformat"):
         base_hour_value = base_hour.isoformat()
@@ -158,6 +165,7 @@ def prediction_id(location_id: str, base_hour: Any, feature_version: str, model_
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+# Resolve đường dẫn artifact model, hỗ trợ local path và copy tạm từ HDFS.
 def resolve_model_path(spark: SparkSession, raw_path: str) -> str:
     path = (raw_path or "").strip()
     if not path:
@@ -187,6 +195,7 @@ def resolve_model_path(spark: SparkSession, raw_path: str) -> str:
     )
 
 
+# Lấy đúng bộ model production cho đủ 3 horizon 6h/12h/24h.
 def load_production_models(spark: SparkSession, table: str, args: argparse.Namespace) -> dict[int, dict[str, Any]]:
     now = datetime.utcnow()
     rows = (
@@ -217,6 +226,7 @@ def load_production_models(spark: SparkSession, table: str, args: argparse.Names
     return models
 
 
+# Tải một feature row serving phù hợp nhất theo location, version và base hour.
 def load_feature_row(spark: SparkSession, table: str, args: argparse.Namespace) -> dict[str, Any]:
     base_df = spark.table(table)
     candidates = []
@@ -264,8 +274,10 @@ def load_feature_row(spark: SparkSession, table: str, args: argparse.Namespace) 
     return row
 
 
+# Doc du lieu cho du lieu/du doan PM2.5.
 def load_feature_row_from_cassandra(spark: SparkSession, args: argparse.Namespace) -> dict[str, Any]:
     base_df = (
+        # Doc serving state tu Cassandra de doi chieu hoac phuc vu online.
         spark.read.format("org.apache.spark.sql.cassandra")
         .options(table=args.cassandra_feature_table, keyspace=args.cassandra_keyspace)
         .load()
@@ -307,6 +319,7 @@ def load_feature_row_from_cassandra(spark: SparkSession, args: argparse.Namespac
     return row
 
 
+# Chuan bi feature dau vao cho predict cho du lieu/du doan PM2.5.
 def prepare_features(row: dict[str, Any], model_feature_names: list[str]) -> pd.DataFrame:
     pdf = pd.DataFrame([{name: row.get(name) for name in FEATURE_COLUMNS}])
     pdf["low_pbl"] = pdf["low_pbl"].fillna(False).astype(int)
@@ -321,6 +334,7 @@ def prepare_features(row: dict[str, Any], model_feature_names: list[str]) -> pd.
     return features.apply(pd.to_numeric, errors="coerce").astype("float64")
 
 
+# Chay predict cho mot horizon cho du lieu/du doan PM2.5.
 def predict_one(spark: SparkSession, model_meta: dict[str, Any], feature_row: dict[str, Any]) -> float:
     model_type = str(model_meta.get("model_type") or "").lower()
     raw_path = model_meta.get("artifact_uri") or model_meta.get("model_path")
@@ -348,6 +362,7 @@ def predict_one(spark: SparkSession, model_meta: dict[str, Any], feature_row: di
     raise RuntimeError(f"Unsupported model_type in registry: {model_type!r}")
 
 
+# Kiem tra tinh dung dan cua du lieu/du doan PM2.5.
 def validate_schema(feature_row: dict[str, Any], models: dict[int, dict[str, Any]]) -> str:
     feature_schema_hash = feature_row.get("schema_hash") or feature_row.get("feature_schema_hash")
     if not feature_schema_hash:
@@ -372,6 +387,7 @@ def validate_schema(feature_row: dict[str, Any], models: dict[int, dict[str, Any
     return str(feature_schema_hash)
 
 
+# Dam bao tai nguyen va cau hinh san sang cho du lieu/du doan PM2.5.
 def ensure_prediction_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.predictions")
     spark.sql(
@@ -420,6 +436,7 @@ def ensure_prediction_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Tao payload hoac DataFrame cho du lieu/du doan PM2.5.
 def build_prediction_row(
     args: argparse.Namespace,
     feature_row: dict[str, Any],
@@ -466,18 +483,21 @@ def build_prediction_row(
     }
 
 
+# Ep gia tri sang float cho du lieu/du doan PM2.5.
 def as_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
 
 
+# Ep gia tri sang int cho du lieu/du doan PM2.5.
 def as_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
 
 
+# Ghi output cho du lieu/du doan PM2.5.
 def write_prediction(spark: SparkSession, table: str, row: dict[str, Any]) -> None:
     ensure_prediction_table(spark, table)
     schema = StructType(
@@ -514,9 +534,11 @@ def write_prediction(spark: SparkSession, table: str, row: dict[str, Any]) -> No
             StructField("month_partition", IntegerType(), False),
         ]
     )
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     spark.createDataFrame([row], schema=schema).createOrReplaceTempView("prediction_src")
     spark.sql(
         f"""
+        # Dung MERGE de upsert vao bang dich ma khong mat ban ghi cu.
         MERGE INTO {table} t
         USING prediction_src s
         ON t.prediction_id = s.prediction_id
@@ -526,6 +548,7 @@ def write_prediction(spark: SparkSession, table: str, row: dict[str, Any]) -> No
     )
 
 
+# Ghi output cho du lieu/du doan PM2.5.
 def write_prediction_to_cassandra(spark: SparkSession, args: argparse.Namespace, row: dict[str, Any]) -> None:
     schema = StructType(
         [
@@ -600,6 +623,7 @@ def write_prediction_to_cassandra(spark: SparkSession, args: argparse.Namespace,
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     dry_run = parse_bool(args.dry_run)

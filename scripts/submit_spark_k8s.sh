@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 # =============================================================================
 # submit_spark_k8s.sh
 # Submit AIS Spark jobs through Spark-on-Kubernetes.
@@ -158,6 +159,7 @@ KAFKA_TOPIC="${KAFKA_TOPIC:-}"
 ICEBERG_TABLE="${ICEBERG_TABLE:-}"
 CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 
+# Chuan hoa gia tri dau vao truoc khi tao lenh submit.
 normalize_hdfs_uri() {
   local value="$1"
   local base="${HDFS_NAMENODE%/}"
@@ -504,6 +506,7 @@ esac
 JOB_ARGS+=("${STREAM_ARGS[@]}")
 JOB_ARGS+=("$@")
 
+# Kiem tra command bat buoc da ton tai trong moi truong.
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "[ERROR] Required command not found: $1" >&2
@@ -511,6 +514,7 @@ require_command() {
   fi
 }
 
+# Escape gia tri de truyen an toan qua shell.
 shell_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
@@ -523,6 +527,7 @@ for arg in "${JOB_ARGS[@]}"; do
   job_args_string+="$(shell_quote "$arg")"
 done
 
+# Chuan hoa ten de dung an toan trong resource name.
 sanitize_name() {
   printf "%s" "$1" \
     | tr '[:upper:]' '[:lower:]' \
@@ -892,6 +897,7 @@ spec:
               exec /opt/spark/bin/spark-submit "\${submit_args[@]}"
 YAML
 
+# Chuan hoa tham so thoi gian truoc khi truy van latest hoac historical.
 timeout_to_seconds() {
   local raw="${1:-1800s}"
   case "$raw" in
@@ -902,6 +908,7 @@ timeout_to_seconds() {
   esac
 }
 
+# Cho den khi tai nguyen hoac service can dung da san sang.
 wait_for_job_terminal() {
   local timeout_sec
   timeout_sec="$(timeout_to_seconds "$KUBECTL_TIMEOUT")"

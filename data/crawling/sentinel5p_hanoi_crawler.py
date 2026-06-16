@@ -1,3 +1,4 @@
+# File nay: crawler tai du lieu tho tu cac nguon ben ngoai.
 """Sentinel-5P crawler for Vietnam area (3-day window by default).
 
 This script queries Copernicus Data Space Ecosystem (CDSE) OData catalogue
@@ -49,6 +50,7 @@ DEFAULT_GAS_PRODUCT_TYPES = (
 )
 
 
+# Khai bao class gom state va cau hinh cho du lieu Sentinel-5P.
 @dataclass(frozen=True)
 class CrawlConfig:
     bbox: tuple[float, float, float, float]
@@ -65,10 +67,12 @@ class CrawlConfig:
     download_report: Path
 
 
+# Lay timestamp UTC hien tai cho metadata freshness.
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Parse va chuan hoa input cho du lieu Sentinel-5P.
 def parse_iso_datetime(value: str) -> datetime:
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
@@ -76,10 +80,12 @@ def parse_iso_datetime(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu Sentinel-5P.
 def to_odata_datetime(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+# Xu ly gioi han khong gian/bbox cho du lieu Sentinel-5P.
 def bbox_to_wkt_polygon(bbox: tuple[float, float, float, float]) -> str:
     min_lon, min_lat, max_lon, max_lat = bbox
     return (
@@ -93,6 +99,7 @@ def bbox_to_wkt_polygon(bbox: tuple[float, float, float, float]) -> str:
     )
 
 
+# Tao payload hoac DataFrame cho du lieu Sentinel-5P.
 def build_filter(
     bbox: tuple[float, float, float, float],
     start_utc: datetime,
@@ -112,6 +119,7 @@ def build_filter(
     )
 
 
+# Lay du lieu hoac metadata cho du lieu Sentinel-5P.
 def fetch_products_for_type(
     session: requests.Session,
     cfg: CrawlConfig,
@@ -148,6 +156,7 @@ def fetch_products_for_type(
     return all_items
 
 
+# Chuan hoa record cho du lieu Sentinel-5P.
 def normalize_item(item: dict[str, Any]) -> dict[str, Any]:
     content_date = item.get("ContentDate", {}) or {}
     return {
@@ -164,12 +173,14 @@ def normalize_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Ghi output cho du lieu Sentinel-5P.
 def save_json(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
 
+# Ghi output cho du lieu Sentinel-5P.
 def save_csv(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -190,6 +201,7 @@ def save_csv(path: Path, records: list[dict[str, Any]]) -> None:
             writer.writerow({k: row.get(k) for k in fieldnames})
 
 
+# Ghi output cho du lieu Sentinel-5P.
 def save_download_report(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["id", "name", "product_type", "status", "file_path", "error"]
@@ -200,6 +212,7 @@ def save_download_report(path: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow({k: row.get(k) for k in fieldnames})
 
 
+# Khai bao class download_products de gom state, cau hinh hoac hanh vi lien quan.
 def download_products(
     session: requests.Session,
     cfg: CrawlConfig,
@@ -335,6 +348,7 @@ def download_products(
     print(f"[INFO] Download summary => downloaded={downloaded}, skipped={skipped}, failed={failed}")
 
 
+# Tao payload hoac DataFrame cho du lieu Sentinel-5P.
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Crawl Sentinel-5P gas metadata for Vietnam from CDSE OData.",
@@ -407,6 +421,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Ghep tham so thanh cau hinh crawl cho du lieu Sentinel-5P.
 def make_config(args: argparse.Namespace) -> CrawlConfig:
     now = utc_now()
     end_utc = parse_iso_datetime(args.end) if args.end else now
@@ -428,6 +443,7 @@ def make_config(args: argparse.Namespace) -> CrawlConfig:
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = build_arg_parser().parse_args()
     cfg = make_config(args)

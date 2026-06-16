@@ -1,3 +1,4 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 from ais_architecture_logic import (
     assert_no_future_target_columns,
     compute_historical_and_realtime_dates,
@@ -6,6 +7,7 @@ from ais_architecture_logic import (
 from unittest.mock import Mock
 
 
+# Kiem tra end to end logical realtime flow uses cassandra latest without future leakage.
 def test_end_to_end_logical_realtime_flow_uses_cassandra_latest_without_future_leakage():
     split = compute_historical_and_realtime_dates("2026-05-29", "2026-05-31")
     assert split.historical_end_date == "2026-05-30"

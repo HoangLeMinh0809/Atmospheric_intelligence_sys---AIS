@@ -1,8 +1,11 @@
+// File nay: component bieu do hien thi timeseries, forecast hoac thong ke.
+// Tinh khoang gia tri PM2.5 de scale chart cho du lieu/du doan PM2.5.
 function valueRange(points) {
   const values = points.map((point) => Number(point.pm25_value)).filter(Number.isFinite);
   return [0, Math.max(120, ...values)];
 }
 
+// Render component PM25ForecastChart va gan state/props cho UI.
 export default function PM25ForecastChart({ timeseries }) {
   const points = timeseries?.points || [];
   const [minValue, maxValue] = valueRange(points);
@@ -11,7 +14,9 @@ export default function PM25ForecastChart({ timeseries }) {
   const pad = 22;
   const sorted = [...points].sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
 
+  // Tinh vi tri truc x cho du lieu/du doan PM2.5.
   const x = (idx) => pad + (idx / Math.max(sorted.length - 1, 1)) * (width - pad * 2);
+  // Tinh vi tri truc y cho du lieu/du doan PM2.5.
   const y = (value) => height - pad - ((Number(value) - minValue) / (maxValue - minValue || 1)) * (height - pad * 2);
   const path = sorted
     .filter((point) => point.pm25_value != null)

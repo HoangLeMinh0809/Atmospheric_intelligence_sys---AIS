@@ -1,3 +1,4 @@
+# File nay: orchestrate cac Spark job theo dung thu tu bronze/silver/gold.
 from __future__ import annotations
 
 import argparse
@@ -6,6 +7,7 @@ import os
 from _pipeline_shared import build_pipeline_spark, invoke_module_main
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run post-HYSPLIT trajectory Spark stages in one app")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -17,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     spark = build_pipeline_spark("AISTrajectoryPostPipeline")

@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File nay: xu ly du lieu lakehouse hoac tac vu Spark tien ich.
+from __future__ import annotations
 
 import argparse
 import os
@@ -34,8 +35,10 @@ DATASETS = {
 }
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("AIS_ReconcileServing")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -49,6 +52,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Reconcile Iceberg historical vs Cassandra serving")
     parser.add_argument("--lookback-hours", type=int, default=24)
@@ -57,9 +61,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Dem ban ghi moi gan day cho serving state Cassandra.
 def count_recent(df, time_col: str, key_col: str, window_start_utc: datetime) -> int:
     window_start_text = window_start_utc.strftime("%Y-%m-%d %H:%M:%S")
     return (
+        # Chi doi soat cua so gan day de bat kip do tre serving thay vi quet toan bo bang.
         df.where(col(time_col) >= to_timestamp(lit(window_start_text)))
         .select(key_col)
         .dropna()
@@ -68,6 +74,7 @@ def count_recent(df, time_col: str, key_col: str, window_start_utc: datetime) ->
     )
 
 
+# Doi soat du lieu giua hai he thong cho serving state Cassandra.
 def reconcile_dataset(
     spark: SparkSession,
     dataset: str,
@@ -80,13 +87,16 @@ def reconcile_dataset(
     if not spark.catalog.tableExists(cfg["iceberg_table"]):
         raise RuntimeError(f"Iceberg table missing for dataset={dataset}: {cfg['iceberg_table']}")
 
+    # Iceberg dai dien cho su that lich su; Cassandra dai dien cho state phuc vu online hien tai.
     iceberg_df = spark.read.table(cfg["iceberg_table"])
     cassandra_df = (
+        # Doc serving state tu Cassandra de doi chieu hoac phuc vu online.
         spark.read.format("org.apache.spark.sql.cassandra")
         .options(table=cfg["cassandra_table"], keyspace=CASSANDRA_KEYSPACE)
         .load()
     )
 
+    # Dem theo key distinct de tranh sai so do duplicate row hoac overwrite trong serving store.
     iceberg_count = count_recent(
         iceberg_df,
         time_col=cfg["time_col"],
@@ -100,6 +110,7 @@ def reconcile_dataset(
         window_start_utc=window_start,
     )
 
+    # Ti le nay cho biet Cassandra co bi roi mat du lieu so voi nguon Iceberg trong cua so gan day hay khong.
     ratio = 1.0 if iceberg_count == 0 else (cassandra_count / iceberg_count)
     print(
         f"dataset={dataset} window_hours={lookback_hours} "
@@ -112,10 +123,12 @@ def reconcile_dataset(
         )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     selected = [item.strip() for item in args.datasets.split(",") if item.strip()]
 
+    # Validate ten dataset som de job fail ro rang thay vi chay nua chung moi loi.
     for ds in selected:
         if ds not in DATASETS:
             raise SystemExit(f"Unsupported dataset: {ds}. Supported: {','.join(sorted(DATASETS))}")
@@ -124,6 +137,7 @@ def main() -> None:
     spark.sparkContext.setLogLevel("WARN")
 
     try:
+        # Chay doi soat tung dataset doc lap de log duoc so lieu rieng cho weather va OpenAQ.
         for ds in selected:
             reconcile_dataset(
                 spark=spark,

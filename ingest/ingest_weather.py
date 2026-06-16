@@ -1,3 +1,4 @@
+# File nay: ingest weather theo gio va day event thoi tiet vao Kafka.
 import os
 import json
 import glob
@@ -13,6 +14,7 @@ try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
     # Allow running without python-dotenv in minimal images.
+    # Doc du lieu cho du lieu thoi tiet.
     def load_dotenv(*_args, **_kwargs):
         return False
 
@@ -103,6 +105,7 @@ DEFAULT_WEATHER_QUERIES = [
 # =============================================================================
 # Utility functions
 # =============================================================================
+# Lay ten tinh/thanh tu folder cha. Vi du: ./data/weather/Ha_Noi/2025-01-02.json -> Ha Noi
 def extract_province_from_path(filepath: str) -> str:
     """
     Lấy tên tỉnh/thành từ folder cha.
@@ -113,6 +116,7 @@ def extract_province_from_path(filepath: str) -> str:
     return parent.replace("_", " ")
 
 
+# Lay ngay tu ten file. Vi du: 2025-01-02.json -> 2025-01-02
 def extract_query_date_from_filename(filepath: str) -> str:
     """
     Lấy ngày từ tên file.
@@ -122,11 +126,13 @@ def extract_query_date_from_filename(filepath: str) -> str:
     return Path(filepath).stem
 
 
+# Parse va chuan hoa input cho du lieu thoi tiet.
 def parse_query_list(raw: str) -> list[str]:
     parsed = [item.strip() for item in raw.split(",") if item.strip()]
     return parsed if parsed else DEFAULT_WEATHER_QUERIES
 
 
+# Tao payload hoac DataFrame cho du lieu thoi tiet.
 def build_date_range(start_date: str, end_date: str) -> list[str]:
     start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
     end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
@@ -140,6 +146,7 @@ def build_date_range(start_date: str, end_date: str) -> list[str]:
     ]
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu thoi tiet.
 def resolve_weather_dates(window) -> list[str]:
     # Backward-compatible override for legacy env names.
     if WEATHER_START_DATE and WEATHER_END_DATE:
@@ -149,6 +156,7 @@ def resolve_weather_dates(window) -> list[str]:
     return build_date_range(local_start, local_end)
 
 
+# Khai bao class safe_get de gom state, cau hinh hoac hanh vi lien quan.
 def safe_get(d: dict, *keys, default=None):
     cur = d
     for key in keys:
@@ -160,6 +168,7 @@ def safe_get(d: dict, *keys, default=None):
     return cur
 
 
+# Lay du lieu hoac metadata cho du lieu thoi tiet.
 def fetch_weather_history(query: str, date_str: str) -> dict:
     endpoint = f"{WEATHER_API_BASE_URL.rstrip('/')}/history.json"
     response = requests.get(
@@ -175,6 +184,7 @@ def fetch_weather_history(query: str, date_str: str) -> dict:
     return response.json()
 
 
+# Doc du lieu cho du lieu thoi tiet.
 def load_api_payloads(window) -> list[tuple[str, str, dict, str]]:
     if not WEATHER_API_KEY:
         raise ValueError("Thiếu WEATHER_API_KEY cho SOURCE_MODE=api")
@@ -207,6 +217,7 @@ def load_api_payloads(window) -> list[tuple[str, str, dict, str]]:
     return payloads
 
 
+# Doc du lieu cho du lieu thoi tiet.
 def load_local_payloads(window) -> list[tuple[str, str, dict, str]]:
     json_files = sorted(glob.glob(os.path.join(DATA_DIR, "*", "*.json")))
     if not json_files:
@@ -243,6 +254,7 @@ def load_local_payloads(window) -> list[tuple[str, str, dict, str]]:
     return payloads
 
 
+# Khai bao class resolve_source_mode de gom state, cau hinh hoac hanh vi lien quan.
 def resolve_source_mode() -> str:
     if SOURCE_MODE in {"local", "api"}:
         return SOURCE_MODE
@@ -256,6 +268,7 @@ def resolve_source_mode() -> str:
 # =============================================================================
 # Normalizer chính cho weather history
 # =============================================================================
+# Normalize 1 file JSON WeatherAPI history thanh list event. Moi gio = 1 Kafka message.
 def normalize_weather_history(
     data: dict,
     province: str,
@@ -370,6 +383,7 @@ def normalize_weather_history(
     return events
 
 
+# Gui list events vao Kafka topic. Tra ve so message gui thanh cong.
 def send_events_to_kafka(producer, topic: str, events: list[dict]) -> int:
     """
     Gửi list events vào Kafka topic. Trả về số message gửi thành công.
@@ -385,6 +399,7 @@ def send_events_to_kafka(producer, topic: str, events: list[dict]) -> int:
     )
 
 
+# Chay mot lan xu ly cho du lieu thoi tiet.
 def run_once(producer, mode: str) -> tuple[int, int]:
     window = resolve_window(WINDOW_CONFIG)
     ingest_time = utc_now().isoformat()
@@ -445,6 +460,7 @@ def run_once(producer, mode: str) -> tuple[int, int]:
 # =============================================================================
 # Main — Luồng chạy chính
 # =============================================================================
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main():
     logger.info("=" * 60)
     logger.info("WEATHER HISTORY — INGEST SERVICE")

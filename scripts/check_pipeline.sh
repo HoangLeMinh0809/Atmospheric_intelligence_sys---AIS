@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 # =============================================================================
 # End-to-end pipeline health check
 # =============================================================================
@@ -9,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAG_CHECK_SCRIPT="${SCRIPT_DIR}/airflow/check_kafka_lag.sh"
 SPARK_MASTER_API="${SPARK_MASTER_API:-http://spark-master:8080/json}"
 
+# Kiem tra Spark app muc tieu da dang ky va dang ton tai.
 spark_app_registered() {
   local app_name="$1"
 
@@ -19,7 +21,9 @@ import urllib.request
 
 app_name = os.environ.get("APP_NAME", "")
 try:
+  # Goi HTTP request truc tiep toi endpoint dich.
   raw = urllib.request.urlopen("http://localhost:8080/json", timeout=10).read().decode("utf-8")
+  # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
   payload = json.loads(raw)
 except Exception:
   raise SystemExit(1)

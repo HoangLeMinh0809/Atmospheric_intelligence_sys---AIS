@@ -1,3 +1,4 @@
+# File nay: crawler tai du lieu tho tu cac nguon ben ngoai.
 import os
 import time
 import requests
@@ -22,6 +23,7 @@ HEADERS = {
     "Accept":    "application/json",
 }
 
+# GET request voi exponential-backoff retry.
 def get_with_retry(url: str, params: dict, max_retries: int = 4) -> dict | None:
     """GET request với exponential-backoff retry."""
     for attempt in range(max_retries):
@@ -40,6 +42,7 @@ def get_with_retry(url: str, params: dict, max_retries: int = 4) -> dict | None:
             time.sleep(5 * (attempt + 1))
     return None
 
+# Lap qua tat ca cac trang va tra ve danh sach ket qua.
 def fetch_all_pages(url: str, base_params: dict) -> list:
     """Lặp qua tất cả các trang và trả về danh sách kết quả."""
     results, page = [], 1
@@ -67,6 +70,7 @@ def fetch_all_pages(url: str, base_params: dict) -> list:
         time.sleep(REQUEST_DELAY)
     return results
 
+# Buoc 1: Lay tat ca tram o tai Viet Nam.
 def get_vietnam_locations() -> list[dict]:
     """Bước 1: Lấy tất cả trạm đo tại Việt Nam."""
     locs = fetch_all_pages(f"{BASE_URL}/locations", {"countries_id": 220})
@@ -75,12 +79,14 @@ def get_vietnam_locations() -> list[dict]:
     print(f" Tìm thấy {len(locs)} trạm\n")
     return locs
 
+# Buoc 2: Lay sensors (tung chi so) cua mot tram.
 def get_sensors(location_id: int) -> list[dict]:
     """Bước 2: Lấy sensors (từng chỉ số) của một trạm."""
     data = get_with_retry(f"{BASE_URL}/locations/{location_id}/sensors", {})
     return data.get("results", []) if data else []
 
 
+# Buoc 3: Lay du lieu theo gio trong N gio gan nhat cho mot sensor.
 def get_hourly_data(sensor_id: int) -> list[dict]:
     """Bước 3: Lấy dữ liệu theo giờ trong N giờ gần nhất cho một sensor."""
     return fetch_all_pages(
@@ -92,6 +98,7 @@ def get_hourly_data(sensor_id: int) -> list[dict]:
         },
     )
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main():
     print(f"  Tu : {DATE_FROM.strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"  Den: {DATE_TO.strftime('%Y-%m-%d %H:%M UTC')}")

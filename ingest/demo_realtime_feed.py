@@ -1,3 +1,4 @@
+# File nay: ingest nguon du lieu va chuan hoa theo event contract cua AIS.
 import json
 import logging
 import math
@@ -80,21 +81,25 @@ OPENAQ_STATIONS = [
 ]
 
 
+# Khai bao class env_int de gom state, cau hinh hoac hanh vi lien quan.
 def env_int(name: str, default: int) -> int:
     value = os.getenv(name, "").strip()
     return int(value) if value else default
 
 
+# Khai bao class env_float de gom state, cau hinh hoac hanh vi lien quan.
 def env_float(name: str, default: float) -> float:
     value = os.getenv(name, "").strip()
     return float(value) if value else default
 
 
+# Khai bao class parse_sources de gom state, cau hinh hoac hanh vi lien quan.
 def parse_sources() -> set[str]:
     raw = os.getenv("DEMO_FEED_SOURCES", "weather,openaq")
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
+# Khai bao class parse_base_time de gom state, cau hinh hoac hanh vi lien quan.
 def parse_base_time() -> datetime:
     raw = os.getenv("DEMO_FEED_BASE_TIME", "").strip()
     if not raw:
@@ -106,32 +111,39 @@ def parse_base_time() -> datetime:
     return parsed.astimezone(timezone.utc).replace(microsecond=0)
 
 
+# Format datetime thanh chuoi ISO UTC ket thuc bang Z.
 def iso_z(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+# Khai bao class clamp de gom state, cau hinh hoac hanh vi lien quan.
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+# Khai bao class round1 de gom state, cau hinh hoac hanh vi lien quan.
 def round1(value: float) -> float:
     return round(value, 1)
 
 
+# Khai bao class noisy de gom state, cau hinh hoac hanh vi lien quan.
 def noisy(rng: random.Random, value: float, ratio: float, absolute_floor: float = 0.05) -> float:
     width = max(abs(value) * ratio, absolute_floor)
     return value + rng.uniform(-width, width)
 
 
+# Khai bao class tick_wave de gom state, cau hinh hoac hanh vi lien quan.
 def tick_wave(tick_index: int, phase: float = 0.0, amplitude: float = 1.0) -> float:
     return amplitude * math.sin(tick_index * 0.72 + phase)
 
 
+# Khai bao class location_phase de gom state, cau hinh hoac hanh vi lien quan.
 def location_phase(*parts: object) -> float:
     token = "|".join(str(part) for part in parts)
     return (sum(ord(ch) for ch in token) % 628) / 100.0
 
 
+# Khai bao class build_weather_events de gom state, cau hinh hoac hanh vi lien quan.
 def build_weather_events(ticks: list[datetime], noise_ratio: float, rng: random.Random, replay_id: str) -> list[dict]:
     events: list[dict] = []
     for tick_index, tick in enumerate(ticks):
@@ -221,6 +233,7 @@ def build_weather_events(ticks: list[datetime], noise_ratio: float, rng: random.
     return events
 
 
+# Khai bao class build_openaq_events de gom state, cau hinh hoac hanh vi lien quan.
 def build_openaq_events(ticks: list[datetime], noise_ratio: float, rng: random.Random, replay_id: str) -> list[dict]:
     events: list[dict] = []
     for tick_index, tick in enumerate(ticks):
@@ -272,6 +285,7 @@ def build_openaq_events(ticks: list[datetime], noise_ratio: float, rng: random.R
     return events
 
 
+# Khai bao class write_jsonl de gom state, cau hinh hoac hanh vi lien quan.
 def write_jsonl(path: Path, events: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -279,6 +293,7 @@ def write_jsonl(path: Path, events: list[dict]) -> None:
             handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+# Khai bao class read_jsonl de gom state, cau hinh hoac hanh vi lien quan.
 def read_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         LOGGER.warning("Demo feed file does not exist: %s", path)
@@ -291,6 +306,7 @@ def read_jsonl(path: Path) -> list[dict]:
             if not raw:
                 continue
             try:
+                # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
                 event = json.loads(raw)
             except json.JSONDecodeError as exc:
                 LOGGER.warning("Skip invalid JSON in %s:%s: %s", path, line_no, exc)
@@ -301,6 +317,7 @@ def read_jsonl(path: Path) -> list[dict]:
     return events
 
 
+# Khai bao class group_by_tick de gom state, cau hinh hoac hanh vi lien quan.
 def group_by_tick(events: list[dict]) -> dict[int, list[dict]]:
     grouped: dict[int, list[dict]] = {}
     for event in events:
@@ -308,6 +325,7 @@ def group_by_tick(events: list[dict]) -> dict[int, list[dict]]:
     return grouped
 
 
+# Khai bao class replay_interval_seconds de gom state, cau hinh hoac hanh vi lien quan.
 def replay_interval_seconds() -> int:
     requested = env_int("DEMO_FEED_BATCH_INTERVAL_SECONDS", 30)
     minimum = env_int("DEMO_FEED_MIN_BATCH_INTERVAL_SECONDS", 30)
@@ -327,6 +345,7 @@ def replay_interval_seconds() -> int:
     return interval
 
 
+# Khai bao class replay_events de gom state, cau hinh hoac hanh vi lien quan.
 def replay_events(weather_events: list[dict], openaq_events: list[dict]) -> None:
     from kafka_utils import create_kafka_producer, flush_producer, send_events
 
@@ -389,6 +408,7 @@ def replay_events(weather_events: list[dict], openaq_events: list[dict]) -> None
         producer.close()
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     mode = os.getenv("DEMO_FEED_MODE", "prepare-and-replay").strip().lower()

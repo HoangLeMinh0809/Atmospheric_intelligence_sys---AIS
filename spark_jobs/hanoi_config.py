@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File nay: xu ly du lieu lakehouse hoac tac vu Spark tien ich.
+from __future__ import annotations
 
 import os
 from copy import deepcopy
@@ -168,6 +169,7 @@ TABLES = {
 }
 
 
+# Gop de quy config override vao default ma khong lam mat cac khoa con.
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in override.items():
@@ -178,6 +180,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+# Tra ve danh sach duong dan config theo thu tu uu tien de job thu nap.
 def _candidate_config_paths() -> list[Path]:
     explicit = os.getenv("HANOI_PIPELINE_CONFIG", "").strip()
     paths = []
@@ -194,6 +197,7 @@ def _candidate_config_paths() -> list[Path]:
     return paths
 
 
+# Nap config mac dinh, chen them YAML neu co, roi ap env overrides cuoi cung.
 def load_config() -> dict[str, Any]:
     cfg = DEFAULT_CONFIG
     if yaml is None:
@@ -210,6 +214,7 @@ def load_config() -> dict[str, Any]:
     return _apply_env_overrides(cfg)
 
 
+# Ap bien moi truong len config va chuan hoa cac URI/nguong hay thay doi theo moi truong chay.
 def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     cfg = deepcopy(cfg)
     bbox = cfg["hanoi"]["bbox"]
@@ -273,103 +278,126 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+# Doc bien moi truong dang chuoi, neu rong thi dung gia tri mac dinh.
 def _env_str(name: str, default: str) -> str:
     value = os.getenv(name, "").strip()
     return value if value else default
 
 
+# Thay host HDFS mac dinh trong config bang endpoint dang duoc job su dung.
 def _normalize_hdfs_default(value: str, hdfs_base: str) -> str:
     if value.startswith("hdfs://namenode:9000/") and hdfs_base != "hdfs://namenode:9000":
         return f"{hdfs_base}{value[len('hdfs://namenode:9000'):]}"
     return value
 
 
+# Parse bien moi truong dang so thuc voi fallback tu config.
 def _env_float(name: str, default: Any) -> float:
     value = os.getenv(name, "").strip()
     return float(value) if value else float(default)
 
 
+# Parse bien moi truong dang so nguyen voi fallback tu config.
 def _env_int(name: str, default: Any) -> int:
     value = os.getenv(name, "").strip()
     return int(value) if value else int(default)
 
 
+# Tra ve bbox Ha Noi da chuan hoa ve float.
 def get_hanoi_bbox() -> dict[str, float]:
     bbox = load_config()["hanoi"]["bbox"]
     return {k: float(v) for k, v in bbox.items()}
 
 
+# Tra ve tam ban do Ha Noi dung cho gradient, trajectory va visualization.
 def get_hanoi_center() -> dict[str, float]:
     center = load_config()["hanoi"]["center"]
     return {k: float(v) for k, v in center.items()}
 
 
+# Tra ve cac nguong QC PM2.5 ap dung cho silver/gold jobs.
 def get_pm25_qc() -> dict[str, float]:
     qc = load_config()["pm25_qc"]
     return {k: float(v) for k, v in qc.items()}
 
 
+# Tra ve mien cat ERA5 rong hon Ha Noi de ingest/cut file.
 def get_era5_region() -> dict[str, float]:
     region = load_config()["era5"]["region"]
     return {k: float(v) for k, v in region.items()}
 
 
+# Tra ve thu muc goc luu raw ERA5.
 def get_era5_raw_base_path() -> str:
     return str(load_config()["era5"]["raw_base_path"]).rstrip("/")
 
 
+# Danh sach bien ERA5 surface can crawl va parse.
 def get_era5_surface_variables() -> list[str]:
     return [str(v) for v in load_config()["era5"]["surface_variables"]]
 
 
+# Tra ve thu muc goc luu raw Sentinel-5P.
 def get_sentinel5p_raw_base_path() -> str:
     return str(load_config()["sentinel5p"]["raw_base_path"]).rstrip("/")
 
 
+# Danh sach product Sentinel-5P duoc pipeline bat.
 def get_sentinel5p_products() -> list[str]:
     return [str(v) for v in load_config()["sentinel5p"]["products"]]
 
 
+# Tra ve thu muc goc luu raw MAIAC.
 def get_maiac_raw_base_path() -> str:
     return str(load_config()["maiac"]["raw_base_path"]).rstrip("/")
 
 
+# Tra ve duong dan local fallback khi khong doc duoc MAIAC tu HDFS.
 def get_maiac_local_fallback_path() -> str:
     return str(load_config()["maiac"]["local_fallback_path"])
 
 
+# He so scale doi gia tri raster MAIAC ve don vi pipeline dang dung.
 def get_maiac_scale_factor() -> float:
     return float(load_config()["maiac"]["scale_factor"])
 
 
+# Cac horizon du bao dung cho label/prediction tables.
 def get_gold_horizons_hours() -> list[int]:
     return [int(v) for v in load_config()["gold"]["horizons_hours"]]
 
 
+# Cac do tre PM2.5 dung de tao lag features.
 def get_gold_lag_hours() -> list[int]:
     return [int(v) for v in load_config()["gold"]["lag_hours"]]
 
 
+# Cac cua so rolling dung de tao feature xu huong ngan han.
 def get_gold_rolling_hours() -> list[int]:
     return [int(v) for v in load_config()["gold"]["rolling_hours"]]
 
 
+# Tra ve toan bo config HYSPLIT duoi dang ban sao de caller co the sua cuc bo.
 def get_hysplit_config() -> dict[str, Any]:
     return deepcopy(load_config().get("hysplit", {}))
 
 
+# Tra ve config gom anchor/cluster cho post-processing trajectory.
 def get_trajectory_config() -> dict[str, Any]:
     return deepcopy(load_config().get("trajectory", {}))
 
 
+# Tra ve config sampling pixel theo duong trajectory.
 def get_sampling_config() -> dict[str, Any]:
     return deepcopy(load_config().get("sampling", {}))
 
 
+# Tra ve config visualization/cache duoi dang ban sao an toan.
 def get_visualization_config() -> dict[str, Any]:
     return deepcopy(load_config().get("visualization", {}))
 
 
+# Bbox vung hien thi tren visualization jobs/UI.
 def get_visualization_region_bbox() -> dict[str, float]:
     bbox = get_visualization_config().get("region_bbox", {})
     return {
@@ -380,10 +408,12 @@ def get_visualization_region_bbox() -> dict[str, float]:
     }
 
 
+# Horizon du bao ma visualization layer can sinh cache.
 def get_visualization_horizons() -> list[int]:
     return [int(v) for v in get_visualization_config().get("horizons_hours", [0, 6, 12, 24])]
 
 
+# Thu muc goc luu payload cache cho serving/UI.
 def get_visualization_cache_base_uri() -> str:
     cfg = get_visualization_config()
     cache = cfg.get("cache", {})
@@ -393,27 +423,33 @@ def get_visualization_cache_base_uri() -> str:
     ).rstrip("/")
 
 
+# Mapping cluster id -> nhan giai thich dung cho source attribution.
 def get_visualization_cluster_labels() -> dict[int, str]:
     labels = get_visualization_config().get("source_cluster_labels", {})
     return {int(k): str(v) for k, v in labels.items()}
 
 
+# Danh sach pressure levels dung de tao ARL/HYSPLIT inputs.
 def get_era5_pressure_levels() -> list[int]:
     return [int(v) for v in load_config()["era5"].get("pressure_levels", [])]
 
 
+# Danh sach bien pressure-level can crawl tu ERA5.
 def get_era5_pressure_level_variables() -> list[str]:
     return [str(v) for v in load_config()["era5"].get("pressure_level_variables", [])]
 
 
+# Cac moc gio UTC ma ERA5 pressure-level duoc lay.
 def get_era5_pressure_level_times() -> list[str]:
     return [str(v) for v in load_config()["era5"].get("pressure_levels_time_utc", [])]
 
 
+# Tra ve ban sao mapping logical name -> ten bang Iceberg.
 def get_table_names() -> dict[str, str]:
     return TABLES.copy()
 
 
+# Parse ASOF_TIME/SIMULATED_NOW ve moc gio UTC naive de replay pipeline nhat quan.
 def parse_asof_time(raw: str | None = None) -> datetime | None:
     value = (raw or os.getenv("ASOF_TIME") or os.getenv("SIMULATED_NOW") or os.getenv("BASE_TIME") or os.getenv("BASE_HOUR") or "").strip()
     if not value:
@@ -424,6 +460,7 @@ def parse_asof_time(raw: str | None = None) -> datetime | None:
     return parsed.replace(minute=0, second=0, microsecond=0)
 
 
+# Cat bo cac ban ghi xay ra sau moc as-of de mo phong near-realtime/history replay.
 def apply_asof_time(df: DataFrame, time_col: str, asof_time: datetime | str | None) -> DataFrame:
     if not asof_time:
         return df
@@ -435,6 +472,7 @@ def apply_asof_time(df: DataFrame, time_col: str, asof_time: datetime | str | No
     return df.filter(F.col(time_col) <= F.to_timestamp(F.lit(value)))
 
 
+# Loc DataFrame spatially vao trong bbox Ha Noi.
 def filter_hanoi_bbox(df: DataFrame, lat_col: str, lon_col: str) -> DataFrame:
     bbox = get_hanoi_bbox()
     return df.filter(

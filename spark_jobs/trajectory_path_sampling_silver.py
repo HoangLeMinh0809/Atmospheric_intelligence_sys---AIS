@@ -1,3 +1,4 @@
+# File nay: chay/parse HYSPLIT va tao dac trung trajectory.
 from __future__ import annotations
 
 import argparse
@@ -16,6 +17,7 @@ from hanoi_config import (
 )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     cfg = get_sampling_config()
     parser = argparse.ArgumentParser(description="Sample Sentinel-5P pixels along backward HYSPLIT paths")
@@ -38,12 +40,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("TrajectoryPathSamplingSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -55,6 +60,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang luu thong ke satellite doc theo tung backward trajectory.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.features")
     spark.sql(
@@ -85,6 +91,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df, start_date: str, end_date: str):
     if start_date:
         df = df.filter(F.to_date("timestamp") >= F.to_date(F.lit(start_date)))
@@ -93,6 +100,7 @@ def apply_date_range(df, start_date: str, end_date: str):
     return df
 
 
+# Xoa cua so ngay cu truoc khi full refresh ghi lai du lieu.
 def delete_date_window(spark: SparkSession, table_name: str, time_col: str, start_date: str, end_date: str) -> None:
     columns = set(spark.table(table_name).columns)
     if time_col not in columns:
@@ -109,10 +117,12 @@ def delete_date_window(spark: SparkSession, table_name: str, time_col: str, star
         spark.sql(f"DELETE FROM {table_name}")
 
 
+# Upsert DataFrame vao bang Iceberg theo khoa merge duoc truyen vao.
 def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, start_date: str, end_date: str) -> None:
     if full_refresh:
         delete_date_window(spark, table_name, "init_time", start_date, end_date)
 
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("traj_path_updates")
     spark.sql(
         f"""
@@ -125,6 +135,7 @@ def merge_iceberg(spark: SparkSession, df, table_name: str, full_refresh: bool, 
     )
 
 
+# Join backward trajectory voi pixel Sentinel-5P lan can, roi tong hop feature theo tung `traj_id`.
 def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: argparse.Namespace):
     # 1) Load backward trajectories and compute init_time (age_h=0)
     traj = (
@@ -236,11 +247,13 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
         "traj_lon",
     ).orderBy(F.col("dist_deg").asc())
 
+    # Dung row_number de giu lai ban ghi uu tien nhat trong moi nhom.
     nearest = joined.withColumn("rn", F.row_number().over(nearest_w)).filter(F.col("rn") == 1)
 
-    # 5) Aggregate per traj_id
+    # 5) Gom lai ve cap trajectory sau khi moi diem tren duong da duoc gan pixel gan nhat.
     no2 = (
         nearest.filter(F.col("product") == F.lit("NO2"))
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         .groupBy("traj_id")
         .agg(
             F.avg("value").alias("path_no2_mean"),
@@ -250,6 +263,7 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
     )
     aer = (
         nearest.filter(F.col("product") == F.lit("AER_AI"))
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         .groupBy("traj_id")
         .agg(F.avg("value").alias("path_aer_mean"))
     )
@@ -283,6 +297,7 @@ def build_output(spark: SparkSession, traj_table: str, grid_table: str, args: ar
     return init_times.select("traj_id").distinct(), matched_traj, output
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

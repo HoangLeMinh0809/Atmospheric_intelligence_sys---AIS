@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# File này: xử lý ERA5 thành bảng khí tượng hoặc đầu vào ARL cho HYSPLIT.
+from __future__ import annotations
 
 import argparse
 import hashlib
@@ -19,6 +20,7 @@ from hanoi_config import ICEBERG_CATALOG, ICEBERG_WAREHOUSE, get_era5_raw_base_p
 DEFAULT_BINARY = "/opt/hysplit/exec/era5_2arl"
 
 
+# Đọc tham số CLI và biến môi trường cho job chuyển đổi ARL.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert ERA5 pressure-level GRIB files to HYSPLIT ARL files")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -37,10 +39,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Parse các cờ dạng `1/true/yes` thành boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Parse chuỗi ngày `YYYY-MM-DD` thành `date`.
 def parse_date(raw: str) -> date | None:
     raw = (raw or "").strip()
     if not raw:
@@ -48,8 +52,10 @@ def parse_date(raw: str) -> date | None:
     return datetime.strptime(raw, "%Y-%m-%d").date()
 
 
+# Khởi tạo SparkSession dùng để đọc metadata ERA5 và ghi metadata ARL.
 def build_spark() -> SparkSession:
     return (
+        # Khởi tạo SparkSession với các config cần cho job hiện tại.
         SparkSession.builder
         .appName("ERA5PressureLevelsToARL")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -61,6 +67,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tạo bảng metadata lưu kết quả chuyển file pressure-level ERA5 sang ARL.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.weather")
     spark.sql(
@@ -88,21 +95,25 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
             spark.sql(f"ALTER TABLE {table_name} ADD COLUMN {column} {dtype}")
 
 
+# Rút đường dẫn HDFS đầy đủ về phần path để làm việc với Hadoop FS.
 def hdfs_remote_path(path: str) -> str:
     if path.startswith("hdfs://"):
         return "/" + path.split("/", 3)[3]
     return path
 
 
+# Tạo đối tượng `Path` của Hadoop JVM từ chuỗi path.
 def _hadoop_path(spark: SparkSession, path: str):
     return spark._jvm.org.apache.hadoop.fs.Path(path)
 
 
+# Tạo đối tượng Hadoop `FileSystem` tương ứng với path đang thao tác.
 def _hadoop_fs(spark: SparkSession, path: str):
     uri = spark._jvm.java.net.URI.create(path if path.startswith("hdfs://") else f"hdfs://namenode:9000{path}")
     return spark._jvm.org.apache.hadoop.fs.FileSystem.get(uri, spark._jsc.hadoopConfiguration())
 
 
+# Copy file ERA5 từ HDFS về thư mục tạm local để converter nhị phân có thể đọc.
 def copy_hdfs_to_local(spark: SparkSession, path: str, local_dir: Path) -> Path:
     remote = hdfs_remote_path(path)
     local_path = local_dir / Path(remote).name
@@ -111,6 +122,7 @@ def copy_hdfs_to_local(spark: SparkSession, path: str, local_dir: Path) -> Path:
     return local_path
 
 
+# Upload file ARL local lên HDFS và ghi đè nếu target đã tồn tại.
 def upload_local_to_hdfs(spark: SparkSession, local_path: Path, hdfs_path: str) -> None:
     remote = hdfs_remote_path(hdfs_path)
     fs = _hadoop_fs(spark, hdfs_path)
@@ -123,6 +135,7 @@ def upload_local_to_hdfs(spark: SparkSession, local_path: Path, hdfs_path: str) 
     fs.copyFromLocalFile(False, True, _hadoop_path(spark, str(local_path)), target)
 
 
+# Tính checksum SHA256 của file để lưu metadata và phát hiện thay đổi.
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -131,6 +144,7 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Chọn các file pressure-level cần chuyển đổi trong cửa sổ ngày yêu cầu, và bỏ qua file đã xử lý nếu không full refresh.
 def collect_candidates(
     spark: SparkSession,
     source_table: str,
@@ -180,6 +194,7 @@ def collect_candidates(
     return [item for item in candidates if item["file_path"] not in existing_paths], len(existing_paths)
 
 
+# Sinh đường dẫn ARL đích ổn định từ tên file pressure-level gốc.
 def build_arl_path(output_base_path: str, year: int, month: int, source_nc: str) -> str:
     base = output_base_path.rstrip("/")
     source_name = Path(hdfs_remote_path(source_nc)).stem
@@ -188,10 +203,12 @@ def build_arl_path(output_base_path: str, year: int, month: int, source_nc: str)
 
 
 
+# Cắt đuôi stdout/stderr để log lỗi ngắn gọn hơn.
 def _tail(value: str | None, limit: int = 2000) -> str:
     return (value or "")[-limit:]
 
 
+# Chạy một lệnh ngoài với timeout và gom log lỗi nếu converter thất bại.
 def run_external_command(command: list[str], env: dict[str, str], timeout_sec: int) -> None:
     try:
         proc = subprocess.run(
@@ -216,6 +233,7 @@ def run_external_command(command: list[str], env: dict[str, str], timeout_sec: i
             f"stdout_tail={_tail(proc.stdout)}\nstderr_tail={_tail(proc.stderr)}"
         )
 
+# Chạy binary `era5_2arl` hoặc command template để chuyển một file ERA5 sang ARL.
 def run_converter(
     binary: str,
     command_template: str,
@@ -227,6 +245,7 @@ def run_converter(
     if not converter_env.get("ECCODES_DEFINITION_PATH") and Path("/usr/share/eccodes/definitions").exists():
         converter_env["ECCODES_DEFINITION_PATH"] = "/usr/share/eccodes/definitions"
 
+    # Hoan thien output truoc khi ghi cho du lieu ERA5.
     def finalize_output() -> bool:
         if output_arl.exists() and output_arl.stat().st_size > 0:
             return True
@@ -273,11 +292,13 @@ def run_converter(
     ) from last_error
 
 
+# Ghi output cho du lieu ERA5.
 def write_metadata(spark: SparkSession, rows: list[dict[str, Any]], target_table: str) -> None:
     if not rows:
         return
 
     df = spark.createDataFrame([Row(**row) for row in rows])
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("era5_arl_updates")
     spark.sql(
         f"""
@@ -290,6 +311,7 @@ def write_metadata(spark: SparkSession, rows: list[dict[str, Any]], target_table
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

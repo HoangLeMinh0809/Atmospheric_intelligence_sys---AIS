@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 <#
 .SYNOPSIS
   Helper script to run Spark SQL commands against Iceberg from PowerShell.
@@ -43,6 +44,7 @@ if (-not $script:ComposeCmd -and (Get-Command docker-compose -ErrorAction Silent
     $script:ComposeArgs = @()
 }
 
+# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
 function Invoke-Compose {
     param([string[]]$ComposeCommandArgs)
     if (-not $script:ComposeCmd) {
@@ -53,6 +55,7 @@ function Invoke-Compose {
     return $LASTEXITCODE
 }
 
+# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
 function Invoke-SparkSql {
     param([string]$Query)
 

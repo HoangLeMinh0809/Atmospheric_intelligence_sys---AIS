@@ -1,3 +1,4 @@
+# File nay: tai file ERA5 va phat event file-san-sang vao Kafka.
 from __future__ import annotations
 
 import argparse
@@ -32,6 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger("era5_ingest")
 
 
+# Khai bao class gom state va cau hinh cho du lieu ERA5.
 @dataclass(frozen=True)
 class Era5Region:
     west: float
@@ -40,31 +42,37 @@ class Era5Region:
     north: float
 
 
+# Khai bao class utc de gom state, cau hinh hoac hanh vi lien quan.
 def _utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
 
+# Parse va chuan hoa input cho du lieu ERA5.
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
+# Parse va chuan hoa input cho du lieu ERA5.
 def _parse_hhmm(value: str) -> tuple[int, int]:
     hour_text, minute_text = value.split(":", 1)
     return int(hour_text), int(minute_text)
 
 
+# Khai bao class month_start de gom state, cau hinh hoac hanh vi lien quan.
 def _month_start(d: date) -> date:
     return d.replace(day=1)
 
 
+# Khai bao class next_month de gom state, cau hinh hoac hanh vi lien quan.
 def _next_month(d: date) -> date:
     if d.month == 12:
         return d.replace(year=d.year + 1, month=1, day=1)
     return d.replace(month=d.month + 1, day=1)
 
 
+# Khai bao class iter_months de gom state, cau hinh hoac hanh vi lien quan.
 def _iter_months(start: date, end: date) -> list[tuple[int, int]]:
     cur = _month_start(start)
     last = _month_start(end)
@@ -75,6 +83,7 @@ def _iter_months(start: date, end: date) -> list[tuple[int, int]]:
     return months
 
 
+# Doc du lieu cho du lieu ERA5.
 def _load_yaml(path: str) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
@@ -86,6 +95,7 @@ def _load_yaml(path: str) -> dict[str, Any]:
     return cfg
 
 
+# Khai bao class require_mapping de gom state, cau hinh hoac hanh vi lien quan.
 def _require_mapping(obj: dict[str, Any], key: str) -> dict[str, Any]:
     value = obj.get(key)
     if not isinstance(value, dict):
@@ -93,6 +103,7 @@ def _require_mapping(obj: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
+# Khai bao class require_list de gom state, cau hinh hoac hanh vi lien quan.
 def _require_list(obj: dict[str, Any], key: str) -> list[Any]:
     value = obj.get(key)
     if not isinstance(value, list):
@@ -100,6 +111,7 @@ def _require_list(obj: dict[str, Any], key: str) -> list[Any]:
     return value
 
 
+# Khai bao class region_from_cfg de gom state, cau hinh hoac hanh vi lien quan.
 def _region_from_cfg(cfg: dict[str, Any]) -> Era5Region:
     era5 = _require_mapping(cfg, "era5")
     region = _require_mapping(era5, "region")
@@ -111,30 +123,35 @@ def _region_from_cfg(cfg: dict[str, Any]) -> Era5Region:
     )
 
 
+# Khai bao class surface_vars_from_cfg de gom state, cau hinh hoac hanh vi lien quan.
 def _surface_vars_from_cfg(cfg: dict[str, Any]) -> list[str]:
     era5 = _require_mapping(cfg, "era5")
     variables = _require_list(era5, "surface_variables")
     return [str(v) for v in variables]
 
 
+# Khai bao class pressure_level_vars_from_cfg de gom state, cau hinh hoac hanh vi lien quan.
 def _pressure_level_vars_from_cfg(cfg: dict[str, Any]) -> list[str]:
     era5 = _require_mapping(cfg, "era5")
     variables = _require_list(era5, "pressure_level_variables")
     return [str(v) for v in variables]
 
 
+# Khai bao class pressure_levels_from_cfg de gom state, cau hinh hoac hanh vi lien quan.
 def _pressure_levels_from_cfg(cfg: dict[str, Any]) -> list[str]:
     era5 = _require_mapping(cfg, "era5")
     levels = _require_list(era5, "pressure_levels")
     return [str(v) for v in levels]
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu ERA5.
 def _pressure_level_times_from_cfg(cfg: dict[str, Any]) -> list[str]:
     era5 = _require_mapping(cfg, "era5")
     times = _require_list(era5, "pressure_levels_time_utc")
     return [str(v) for v in times]
 
 
+# Khai bao class raw_base_path_from_cfg de gom state, cau hinh hoac hanh vi lien quan.
 def _raw_base_path_from_cfg(cfg: dict[str, Any]) -> str:
     era5 = _require_mapping(cfg, "era5")
     raw_base_path = era5.get("raw_base_path")
@@ -143,6 +160,7 @@ def _raw_base_path_from_cfg(cfg: dict[str, Any]) -> str:
     return str(raw_base_path).rstrip("/")
 
 
+# Khai bao class sha256_of_file de gom state, cau hinh hoac hanh vi lien quan.
 def _sha256_of_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -151,6 +169,7 @@ def _sha256_of_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _split_hdfs_uri(uri: str) -> tuple[str, str]:
     if not uri.startswith("hdfs://"):
         raise ValueError(f"Expected hdfs:// URI, got: {uri}")
@@ -159,10 +178,12 @@ def _split_hdfs_uri(uri: str) -> tuple[str, str]:
     return host_port, "/" + path
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _webhdfs_base() -> str:
     return os.getenv("WEBHDFS_BASE", os.getenv("HDFS_WEBHDFS_BASE", "http://namenode:9870/webhdfs/v1")).rstrip("/")
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _webhdfs_bases() -> list[str]:
     return [
         base.strip().rstrip("/")
@@ -171,11 +192,13 @@ def _webhdfs_bases() -> list[str]:
     ]
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _webhdfs_path_urls(hdfs_uri: str) -> list[str]:
     _, abs_path = _split_hdfs_uri(hdfs_uri)
     return [f"{base}{abs_path}" for base in _webhdfs_bases()]
 
 
+# Khai bao class is_standby_response de gom state, cau hinh hoac hanh vi lien quan.
 def _is_standby_response(response: requests.Response) -> bool:
     if response.status_code != 403:
         return False
@@ -187,12 +210,14 @@ def _is_standby_response(response: requests.Response) -> bool:
     return remote_exception.get("exception") == "StandbyException"
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _raise_last_webhdfs_error(last_response: requests.Response | None) -> None:
     if last_response is not None:
         last_response.raise_for_status()
     raise RuntimeError("No WebHDFS endpoint configured")
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _hdfs_path_exists(hdfs_uri: str) -> bool:
     last_response = None
     for url in _webhdfs_path_urls(hdfs_uri):
@@ -214,6 +239,7 @@ def _hdfs_path_exists(hdfs_uri: str) -> bool:
     return False
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _hdfs_file_length(hdfs_uri: str) -> int:
     last_response = None
     for url in _webhdfs_path_urls(hdfs_uri):
@@ -236,6 +262,7 @@ def _hdfs_file_length(hdfs_uri: str) -> int:
     return 0
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _hdfs_mkdirs(hdfs_uri: str) -> None:
     _, abs_path = _split_hdfs_uri(hdfs_uri)
     parent = posixpath.dirname(abs_path)
@@ -256,6 +283,7 @@ def _hdfs_mkdirs(hdfs_uri: str) -> None:
     _raise_last_webhdfs_error(last_response)
 
 
+# Xu ly path va storage HDFS cho du lieu ERA5.
 def _hdfs_put(local_path: Path, hdfs_uri: str) -> None:
     _hdfs_mkdirs(hdfs_uri)
     params = {
@@ -276,6 +304,7 @@ def _hdfs_put(local_path: Path, hdfs_uri: str) -> None:
     _raise_last_webhdfs_error(last_response)
 
 
+# Tao payload hoac DataFrame cho du lieu ERA5.
 def _build_surface_request(
     *,
     variables: list[str],
@@ -312,6 +341,7 @@ def _build_surface_request(
     }
 
 
+# Tao payload hoac DataFrame cho du lieu ERA5.
 def _build_pressure_levels_request(
     *,
     variables: list[str],
@@ -349,6 +379,7 @@ def _build_pressure_levels_request(
     }
 
 
+# Tao payload event cho du lieu ERA5.
 def _event_payload(
     *,
     dataset_type: str,
@@ -384,6 +415,7 @@ def _event_payload(
     }
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download ERA5 files and publish metadata to Kafka")
     parser.add_argument("--start-date", default=os.getenv("ERA5_START_DATE", ""), help="YYYY-MM-DD")

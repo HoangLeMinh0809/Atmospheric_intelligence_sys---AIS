@@ -1,3 +1,4 @@
+# File nay: chay/parse HYSPLIT va tao dac trung trajectory.
 """Cluster HYSPLIT trajectories and write per-point clustered silver rows."""
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from hanoi_config import (
 )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     cfg = get_trajectory_config()
     parser = argparse.ArgumentParser(description="Cluster HYSPLIT trajectories")
@@ -42,17 +44,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Tao cot anchor cho trajectory cho du lieu trajectory HYSPLIT.
 def anchor_col(prefix: str, hour: int) -> str:
     label = f"m{abs(hour)}" if hour < 0 else f"p{hour}"
     return f"{prefix}_{label}"
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("HYSPLITTrajectoryClusterSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -64,6 +70,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang luu cluster id va toa do nguon dai dien cho tung diem trajectory.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.trajectory")
     spark.sql(
@@ -89,6 +96,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Chon/loc tap du lieu phu hop cho du lieu trajectory HYSPLIT.
 def filter_window(df, start_date: str, end_date: str):
     if start_date:
         df = df.filter(F.col("timestamp") >= F.to_timestamp(F.lit(f"{start_date} 00:00:00")))
@@ -97,6 +105,7 @@ def filter_window(df, start_date: str, end_date: str):
     return df
 
 
+# Chon/loc tap du lieu phu hop cho du lieu trajectory HYSPLIT.
 def filter_by_init_window(df, start_date: str, end_date: str):
     if not start_date and not end_date:
         return df
@@ -106,6 +115,7 @@ def filter_by_init_window(df, start_date: str, end_date: str):
     return df.join(init_ids, on="traj_id", how="inner")
 
 
+# Xoa cac direction cu trong cua so can refresh cho du lieu trajectory HYSPLIT.
 def delete_target_directions(spark: SparkSession, table_name: str, directions: list[str], start_date: str, end_date: str) -> None:
     if not directions:
         return
@@ -118,10 +128,12 @@ def delete_target_directions(spark: SparkSession, table_name: str, directions: l
     spark.sql(f"DELETE FROM {table_name} WHERE {' AND '.join(predicates)}")
 
 
+# Them cac dong cluster moi cho du lieu trajectory HYSPLIT.
 def append_cluster_rows(df, table_name: str) -> None:
     df.writeTo(table_name).append()
 
 
+# Chi giu dong co feature huu han cho du lieu trajectory HYSPLIT.
 def keep_finite_feature_rows(df, feature_cols: list[str]):
     condition = None
     for col_name in feature_cols:
@@ -130,6 +142,7 @@ def keep_finite_feature_rows(df, feature_cols: list[str]):
     return df.filter(condition) if condition is not None else df
 
 
+# Chay clustering tren tap feature anchor cua trajectory va gan nhan cum cho tung diem.
 def build_sklearn_assignments(spark: SparkSession, df, feature_cols: list[str], args, source_cols: tuple[str, str, str]):
     source_lat_name, source_lon_name, source_alt_name = source_cols
     selected_cols = [
@@ -209,6 +222,7 @@ def build_sklearn_assignments(spark: SparkSession, df, feature_cols: list[str], 
     return spark.createDataFrame(assignment_rows)
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     full_refresh = as_bool(args.full_refresh)
@@ -247,6 +261,7 @@ def main() -> None:
             ]
         )
 
+    # Bat dau gom nhom de tinh cac chi so tong hop.
     grouped = points.groupBy("traj_id", "direction").agg(*agg_exprs)
     input_count = grouped.count()
     bounds = points.agg(F.min("timestamp").alias("min_time"), F.max("timestamp").alias("max_time")).first()
@@ -322,6 +337,7 @@ def main() -> None:
     )
 
     duplicate_count = (
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         output.groupBy("traj_id", "age_h")
         .count()
         .filter(F.col("count") > 1)
@@ -346,6 +362,7 @@ def main() -> None:
     if output_count:
         append_cluster_rows(output, target_table)
 
+    # Bat dau gom nhom de tinh cac chi so tong hop.
     cluster_rows = output.groupBy("cluster_id").count().orderBy("cluster_id").collect()
     cluster_distribution = {
         int(row["cluster_id"]): int(row["count"])

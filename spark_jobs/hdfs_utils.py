@@ -1,3 +1,4 @@
+# File nay: xu ly du lieu lakehouse hoac tac vu Spark tien ich.
 from __future__ import annotations
 
 import json
@@ -11,6 +12,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 
+# Tra ve HDFS endpoint dang duoc job/cluster su dung.
 def hdfs_default_fs() -> str:
     return (
         os.getenv("HDFS_NAMENODE")
@@ -20,6 +22,7 @@ def hdfs_default_fs() -> str:
     ).rstrip("/")
 
 
+# Chuan hoa record cho du lieu HDFS.
 def normalize_hdfs_path(path: str) -> str:
     raw = str(path or "").strip()
     if not raw:
@@ -36,15 +39,18 @@ def normalize_hdfs_path(path: str) -> str:
     return raw
 
 
+# Rut gon `hdfs://host/path` thanh `/path` de dung voi Hadoop FS APIs khi can.
 def hdfs_remote_path(path: str) -> str:
     parsed = urlparse.urlparse(path)
     return parsed.path if parsed.scheme == "hdfs" else path
 
 
+# Doc phan cuoi file/log cho du lieu HDFS.
 def _tail(value: str | None, limit: int = 2000) -> str:
     return (value or "")[-limit:]
 
 
+# Chay mot lan xu ly cho du lieu HDFS.
 def _run_external_command(command: list[str], timeout_sec: int) -> None:
     try:
         proc = subprocess.run(
@@ -69,6 +75,7 @@ def _run_external_command(command: list[str], timeout_sec: int) -> None:
         )
 
 
+# Lay kich thuoc file local cho du lieu HDFS.
 def _local_file_size(path: Path) -> int:
     try:
         return path.stat().st_size
@@ -76,6 +83,7 @@ def _local_file_size(path: Path) -> int:
         return -1
 
 
+# Xac nhan file local sau khi copy ton tai va co kich thuoc > 0.
 def _ensure_valid_local_copy(local_path: Path, source: str) -> Path:
     if not local_path.exists():
         raise RuntimeError(f"copy completed but local file is missing: {local_path}")
@@ -86,6 +94,7 @@ def _ensure_valid_local_copy(local_path: Path, source: str) -> Path:
     return local_path
 
 
+# Thu thap thong tin chan doan Hadoop cho du lieu HDFS.
 def _hadoop_diagnostics(spark, source: str, local_path: Path) -> list[str]:
     diagnostics = [
         f"source={source}",
@@ -115,6 +124,7 @@ def _hadoop_diagnostics(spark, source: str, local_path: Path) -> list[str]:
     return diagnostics
 
 
+# Quet de quy HDFS va lap chi muc basename -> full path cho cac file ben duoi root.
 def list_hdfs_files(root_path: str, spark) -> dict[str, str]:
     source = normalize_hdfs_path(root_path)
     jvm = spark._jvm
@@ -137,6 +147,7 @@ def list_hdfs_files(root_path: str, spark) -> dict[str, str]:
     return index
 
 
+# Copy file tu HDFS/local ve thu muc tam, thu lan luot bang Hadoop API, CLI, roi WebHDFS.
 def copy_hdfs_to_local(path: str, spark, *, prefix: str = "hdfs_", temp_base: str = "/tmp/ais_hdfs") -> Path:
     original = str(path or "").strip()
     source = normalize_hdfs_path(path)
@@ -195,6 +206,7 @@ def copy_hdfs_to_local(path: str, spark, *, prefix: str = "hdfs_", temp_base: st
             quoted_remote = urlparse.quote(hdfs_remote_path(source), safe="/")
             metadata_url = f"{webhdfs_base}{quoted_remote}?op=OPEN&noredirect=true"
             with urlrequest.urlopen(metadata_url, timeout=120) as response:  # nosec B310
+                # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
                 payload = json.loads(response.read().decode("utf-8"))
             data_url = payload.get("Location", "")
             if not data_url:

@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 param(
     [int]$LookbackDays = 2,
     [string]$StartDate = "2026-05-29",
@@ -29,7 +30,7 @@ param(
     [int]$RealtimeLookbackMinutes = 180,
     [int]$RealtimePollSeconds = 60,
     [string]$RealtimeProcessingTime = "30 seconds",
-    [switch]$EnableWeatherRealtimeStream,
+    [switch]$EnableWeatherRealtimeStream = $true,
     [switch]$UseComposeRealtimeBronze,
     [switch]$SkipDemoRealtimeFeed,
     [int]$DemoFeedStepMinutes = 1,
@@ -46,6 +47,7 @@ param(
     [ValidateSet("Static", "Refresh")][string]$HourlyContextMode = "Static",
     [switch]$EnableOnlineCron,
     [switch]$RunOnlineCycleNow,
+    [switch]$SkipInitialRuntimeCleanup,
     [switch]$KeepFinishedBatchJobs = $true,
     [switch]$UseComposeCassandra = $true,
     [switch]$AllowTrajectoryDegraded = $true,
@@ -61,6 +63,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Resolve-Path (Join-Path $scriptDir "..")
 Set-Location $rootDir
 
+# Khai bao class Step de gom state, cau hinh hoac hanh vi lien quan.
 function Step {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -80,6 +83,7 @@ function Step {
     }
 }
 
+# Khai bao class Require de gom state, cau hinh hoac hanh vi lien quan.
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$CommandName)
     if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
@@ -87,6 +91,7 @@ function Require-Command {
     }
 }
 
+# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
 function Resolve-DateRange {
     $today = (Get-Date).Date
 
@@ -121,6 +126,7 @@ function Resolve-DateRange {
     }
 }
 
+# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
 function Invoke-Bash {
     param([Parameter(Mandatory = $true)][string]$Command)
     & bash -lc $Command | Out-Host
@@ -129,6 +135,7 @@ function Invoke-Bash {
     }
 }
 
+# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
 function Invoke-Kubectl {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     & kubectl @Arguments | Out-Host
@@ -137,6 +144,7 @@ function Invoke-Kubectl {
     }
 }
 
+# Khai bao class Set de gom state, cau hinh hoac hanh vi lien quan.
 function Set-K8sCronJobSuspended {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -154,6 +162,7 @@ function Set-K8sCronJobSuspended {
     }
 }
 
+# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
 function Invoke-DockerCompose {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     & docker compose @Arguments | Out-Host
@@ -162,6 +171,7 @@ function Invoke-DockerCompose {
     }
 }
 
+# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
 function Test-HostPortInUse {
     param([Parameter(Mandatory = $true)][int]$Port)
 
@@ -169,6 +179,7 @@ function Test-HostPortInUse {
     return $connections.Count -gt 0
 }
 
+# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
 function Resolve-HdfsHostPort {
     param([int]$RequestedPort = 0)
 
@@ -213,6 +224,7 @@ function Resolve-HdfsHostPort {
     throw "No free HDFS host port found. Tried: $($candidatePorts -join ', ')"
 }
 
+# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
 function Resolve-SparkMasterUiHostPort {
     param([int]$RequestedPort = 0)
 
@@ -230,6 +242,7 @@ function Resolve-SparkMasterUiHostPort {
     throw "No free Spark Master UI host port found. Tried: $($candidatePorts -join ', ')"
 }
 
+# Khai bao class Patch de gom state, cau hinh hoac hanh vi lien quan.
 function Patch-RuntimeConfig {
     param([Parameter(Mandatory = $true)][hashtable]$Data)
 
@@ -244,6 +257,7 @@ function Patch-RuntimeConfig {
     }
 }
 
+# Khai bao class Patch de gom state, cau hinh hoac hanh vi lien quan.
 function Patch-ComposeBridgeEndpoints {
     param([Parameter(Mandatory = $true)][string]$HostAddress)
 
@@ -292,6 +306,24 @@ subsets:
     }
 }
 
+# Khai bao class Repair de gom state, cau hinh hoac hanh vi lien quan.
+function Repair-HdfsWritePath {
+    Write-Host "[WARN] Refreshing HDFS write path for Spark-on-Kubernetes." -ForegroundColor Yellow
+    Invoke-DockerCompose @("up", "-d", "namenode", "datanode")
+    Invoke-DockerCompose @("restart", "datanode")
+    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("namenode", "datanode")
+    Patch-ComposeBridgeEndpoints -HostAddress $k8sHostBridge
+    Invoke-Bash "bash scripts/init_hdfs_layout.sh"
+    docker exec namenode hdfs dfsadmin -fs hdfs://namenode:9000 -safemode leave 2>$null | Out-Host
+    docker exec namenode hdfs dfs -fs hdfs://namenode:9000 -mkdir -p /tmp/spark | Out-Host
+    docker exec namenode hdfs dfs -fs hdfs://namenode:9000 -chmod -R 777 /tmp /tmp/spark /warehouse /warehouse/iceberg /visualization_cache | Out-Host
+    $probePath = "/tmp/spark/ais_hdfs_repair_probe_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
+    "ais-hdfs-repair" | docker exec -i namenode hdfs dfs -fs hdfs://namenode:9000 -put -f - $probePath
+    docker exec namenode hdfs dfs -fs hdfs://namenode:9000 -test -s $probePath
+    docker exec namenode hdfs dfs -fs hdfs://namenode:9000 -rm -f $probePath | Out-Host
+}
+
+# Khai bao class Wait de gom state, cau hinh hoac hanh vi lien quan.
 function Wait-ComposeHealthy {
     param(
         [int]$TimeoutSeconds = 300,
@@ -334,6 +366,7 @@ function Wait-ComposeHealthy {
     throw "Timeout waiting for Docker Compose services to become healthy/running within ${TimeoutSeconds}s"
 }
 
+# Khai bao class Show de gom state, cau hinh hoac hanh vi lien quan.
 function Show-ComposeDiagnostics {
     param([Parameter(Mandatory = $true)][string[]]$Services)
 
@@ -349,6 +382,7 @@ function Show-ComposeDiagnostics {
     }
 }
 
+# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
 function Resolve-K8sHostAddress {
     param([string]$RequestedHost = "")
 
@@ -401,6 +435,7 @@ function Resolve-K8sHostAddress {
     return $resolved
 }
 
+# Khai bao class Replace de gom state, cau hinh hoac hanh vi lien quan.
 function Replace-EndpointHost {
     param(
         [Parameter(Mandatory = $true)][string]$Endpoint,
@@ -409,6 +444,7 @@ function Replace-EndpointHost {
     return $Endpoint.Replace("host.docker.internal", $TargetHost)
 }
 
+# Khai bao class Remove de gom state, cau hinh hoac hanh vi lien quan.
 function Remove-HdfsHaLeftovers {
     $haContainers = @(
         "zkfc1",
@@ -433,6 +469,7 @@ function Remove-HdfsHaLeftovers {
     }
 }
 
+# Khai bao class Clear de gom state, cau hinh hoac hanh vi lien quan.
 function Clear-KafkaBrokerRegistration {
     param([int]$BrokerId = 1)
 
@@ -454,6 +491,7 @@ function Clear-KafkaBrokerRegistration {
     }
 }
 
+# Khai bao class Ensure de gom state, cau hinh hoac hanh vi lien quan.
 function Ensure-K8sCassandra {
     if ($UseComposeCassandra) {
         Write-Host "[INFO] UseComposeCassandra enabled; keeping Cassandra on Docker Compose." -ForegroundColor Yellow
@@ -469,6 +507,7 @@ function Ensure-K8sCassandra {
     Invoke-Kubectl @("wait", "--for=condition=ready", "pod/cassandra-0", "-n", "ais", "--timeout=${HealthWaitTimeoutSeconds}s")
 }
 
+# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
 function Start-CoreInfra {
     $volatileServices = @("kafka", "zookeeper", "namenode", "datanode", "spark-master", "spark-worker")
     $recreateServices = @("namenode", "datanode", "spark-master", "spark-worker")
@@ -501,6 +540,7 @@ function Start-CoreInfra {
     Invoke-Bash "bash scripts/init_hdfs_layout.sh"
 }
 
+# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
 function Start-RealtimeNewData {
     $envNames = @(
         "WEATHER_WINDOW_MODE",
@@ -551,12 +591,14 @@ function Start-RealtimeNewData {
 
 }
 
+# Khai bao class Stop de gom state, cau hinh hoac hanh vi lien quan.
 function Stop-ComposeKafkaProducers {
     $producerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest", "demo-realtime-feed")
     Write-Host "[INFO] Stopping Compose Kafka producer services before historical catch-up." -ForegroundColor Yellow
     Invoke-DockerCompose (@("stop") + $producerServices)
 }
 
+# Khai bao class Ensure de gom state, cau hinh hoac hanh vi lien quan.
 function Ensure-ComposeKafkaProducersDoNotAutoRestart {
     $sourceProducerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest")
     Write-Host "[INFO] Recreating source producer containers with restart=no and leaving them stopped." -ForegroundColor Yellow
@@ -564,6 +606,7 @@ function Ensure-ComposeKafkaProducersDoNotAutoRestart {
     Invoke-DockerCompose (@("stop") + $sourceProducerServices)
 }
 
+# Khai bao class Cleanup de gom state, cau hinh hoac hanh vi lien quan.
 function Cleanup-FinishedK8sCompute {
     param(
         [int]$KeepNewestJobs = 8,
@@ -593,6 +636,118 @@ function Cleanup-FinishedK8sCompute {
     }
 }
 
+# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
+function Invoke-NativeBestEffort {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [string]$WarningMessage = ""
+    )
+
+    $stdoutFile = New-TemporaryFile
+    $stderrFile = New-TemporaryFile
+    try {
+        $process = Start-Process -FilePath $FilePath `
+            -ArgumentList $Arguments `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutFile.FullName `
+            -RedirectStandardError $stderrFile.FullName
+
+        $stdout = Get-Content -LiteralPath $stdoutFile.FullName -ErrorAction SilentlyContinue
+        $stderr = Get-Content -LiteralPath $stderrFile.FullName -ErrorAction SilentlyContinue
+        if ($stdout) { $stdout | Out-Host }
+        if ($stderr) { $stderr | Out-Host }
+
+        if ($process.ExitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($WarningMessage)) {
+            Write-Host "[WARN] $WarningMessage" -ForegroundColor Yellow
+        }
+        return $process.ExitCode
+    }
+    finally {
+        Remove-Item -LiteralPath $stdoutFile.FullName -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrFile.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Khai bao class Stop de gom state, cau hinh hoac hanh vi lien quan.
+function Stop-ExistingRuntimeWorkloads {
+    Write-Host "[INFO] Stopping existing realtime/UI runtime workloads before TODO4 rerun." -ForegroundColor Yellow
+
+    $portForwardProcesses = Get-CimInstance Win32_Process -Filter "name = 'kubectl.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match "port-forward.*svc/(ais-ui|visualization-api|pm25-api)" }
+    foreach ($process in @($portForwardProcesses)) {
+        Write-Host ("[INFO] Stopping old port-forward pid={0}" -f $process.ProcessId) -ForegroundColor Yellow
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+
+    $composeServices = @(
+        "ingest",
+        "openaq-ingest",
+        "sentinel5p-ingest",
+        "maiac-ingest",
+        "demo-realtime-feed"
+    )
+    Invoke-NativeBestEffort `
+        -FilePath "docker" `
+        -Arguments (@("compose", "stop") + $composeServices) `
+        -WarningMessage "Some Compose producer services could not be stopped; continuing cleanup." | Out-Null
+
+    foreach ($deployment in @("ais-ui", "visualization-api", "pm25-api")) {
+        Invoke-NativeBestEffort `
+            -FilePath "kubectl" `
+            -Arguments @("-n", "ais", "scale", "deployment", $deployment, "--replicas=0") `
+            -WarningMessage "Could not scale deployment $deployment to zero; it may not exist yet." | Out-Null
+    }
+
+    foreach ($selector in @(
+        "spark-role=driver",
+        "spark-role=executor",
+        "app.kubernetes.io/name=spark-submit"
+    )) {
+        Invoke-NativeBestEffort -FilePath "kubectl" -Arguments @("-n", "ais", "delete", "pod", "-l", $selector, "--ignore-not-found", "--wait=false") | Out-Null
+        Invoke-NativeBestEffort -FilePath "kubectl" -Arguments @("-n", "ais", "delete", "job", "-l", $selector, "--ignore-not-found", "--wait=false") | Out-Null
+        Invoke-NativeBestEffort -FilePath "kubectl" -Arguments @("-n", "ais", "delete", "svc", "-l", $selector, "--ignore-not-found", "--wait=false") | Out-Null
+    }
+
+    $runtimeJobPatterns = @(
+        "^ais-realtime-",
+        "^online-pm25-features-manual-",
+        "^pm25-predict-manual-"
+    )
+    $jobs = @(kubectl -n ais get jobs -o name 2>$null)
+    foreach ($job in $jobs) {
+        $name = $job -replace "^job.batch/", ""
+        if ($runtimeJobPatterns | Where-Object { $name -match $_ }) {
+            Invoke-NativeBestEffort -FilePath "kubectl" -Arguments @("-n", "ais", "delete", $job, "--ignore-not-found", "--wait=false") | Out-Null
+        }
+    }
+
+    $streamingPodPatterns = @(
+        "openaqhourly-streaming",
+        "weatherhistory-streaming",
+        "sentinel5psummary-streaming",
+        "maiacsummary-streaming"
+    )
+    $pods = @(kubectl -n ais get pods -o name 2>$null)
+    foreach ($pod in $pods) {
+        $name = $pod -replace "^pod/", ""
+        if ($streamingPodPatterns | Where-Object { $name -like "*$_*" }) {
+            Invoke-NativeBestEffort -FilePath "kubectl" -Arguments @("-n", "ais", "delete", $pod, "--ignore-not-found", "--wait=false") | Out-Null
+        }
+    }
+
+    $services = @(kubectl -n ais get svc -o name 2>$null)
+    foreach ($svc in $services) {
+        $name = $svc -replace "^service/", ""
+        if ($streamingPodPatterns | Where-Object { $name -like "*$_*" }) {
+            Invoke-NativeBestEffort -FilePath "kubectl" -Arguments @("-n", "ais", "delete", $svc, "--ignore-not-found", "--wait=false") | Out-Null
+        }
+    }
+}
+
+# Khai bao class Reset de gom state, cau hinh hoac hanh vi lien quan.
 function Reset-BackfillKafkaTopics {
     $topics = Get-BackfillKafkaTopics
     Write-Host ("[INFO] Resetting Kafka backfill topics: {0}" -f ($topics -join ", ")) -ForegroundColor Yellow
@@ -605,6 +760,7 @@ function Reset-BackfillKafkaTopics {
     Start-Sleep -Seconds 5
 }
 
+# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
 function Test-ComposeSparkAppRunning {
     param([Parameter(Mandatory = $true)][string]$AppName)
 
@@ -618,11 +774,13 @@ function Test-ComposeSparkAppRunning {
     }
 }
 
+# Khai bao class ConvertTo de gom state, cau hinh hoac hanh vi lien quan.
 function ConvertTo-K8sNameToken {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
     return ($Value.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
 }
 
+# Khai bao class Stop de gom state, cau hinh hoac hanh vi lien quan.
 function Stop-ComposeSparkAppsByName {
     param([Parameter(Mandatory = $true)][string[]]$AppNames)
 
@@ -647,6 +805,7 @@ function Stop-ComposeSparkAppsByName {
     }
 }
 
+# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
 function Test-K8sRealtimeStreamRunning {
     param([Parameter(Mandatory = $true)][string]$AppName)
 
@@ -673,6 +832,7 @@ function Test-K8sRealtimeStreamRunning {
     return $false
 }
 
+# Khai bao class Wait de gom state, cau hinh hoac hanh vi lien quan.
 function Wait-K8sRealtimeDriverRunning {
     param(
         [Parameter(Mandatory = $true)][string]$AppName,
@@ -692,6 +852,7 @@ function Wait-K8sRealtimeDriverRunning {
     throw "Timed out waiting for K8s realtime Spark driver: $AppName"
 }
 
+# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
 function Submit-K8sRealtimeBronzeStream {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -734,6 +895,7 @@ function Submit-K8sRealtimeBronzeStream {
     Wait-K8sRealtimeDriverRunning -AppName $AppName
 }
 
+# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
 function Submit-ComposeRealtimeBronzeStream {
     param(
         [Parameter(Mandatory = $true)][string]$AppName,
@@ -802,6 +964,7 @@ function Submit-ComposeRealtimeBronzeStream {
     Write-Host "[INFO] Submitted realtime Spark stream without bash: $AppName" -ForegroundColor Yellow
 }
 
+# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
 function Start-RealtimeBronzeStreaming {
     $runId = Get-Date -Format "yyyyMMddHHmmss"
     if (-not $UseComposeRealtimeBronze) {
@@ -850,6 +1013,7 @@ function Start-RealtimeBronzeStreaming {
     }
 }
 
+# Khai bao class Ensure de gom state, cau hinh hoac hanh vi lien quan.
 function Ensure-OnlineServingInfra {
     Write-Host "[INFO] Ensuring Cassandra and HDFS are running for online serving." -ForegroundColor Yellow
     Ensure-K8sCassandra
@@ -859,6 +1023,7 @@ function Ensure-OnlineServingInfra {
     Invoke-Bash "bash scripts/init_hdfs_layout.sh"
 }
 
+# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
 function Start-DemoRealtimeFeed {
     $envNames = @(
         "DEMO_FEED_MODE",
@@ -903,10 +1068,12 @@ function Start-DemoRealtimeFeed {
     }
 }
 
+# Khai bao class Should de gom state, cau hinh hoac hanh vi lien quan.
 function Should-RunStep {
     param([int]$StepNumber)
     return $StepNumber -ge $ResumeFromStep
 }
+# Khai bao class Assert de gom state, cau hinh hoac hanh vi lien quan.
 function Assert-KafkaTopicHasMessages {
     param(
         [Parameter(Mandatory = $true)]
@@ -977,10 +1144,12 @@ function Assert-KafkaTopicHasMessages {
     }
 }
 
+# Khai bao class Get de gom state, cau hinh hoac hanh vi lien quan.
 function Get-BackfillCacheDir {
     return Join-Path $rootDir ("cache/backfill/{0}_{1}" -f $resolvedStartDate, $resolvedEndDate)
 }
 
+# Khai bao class Get de gom state, cau hinh hoac hanh vi lien quan.
 function Get-BackfillKafkaTopics {
     return @(
         "openaq-hourly",
@@ -991,6 +1160,7 @@ function Get-BackfillKafkaTopics {
     )
 }
 
+# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
 function Test-BackfillKafkaCache {
     param([Parameter(Mandatory = $true)][string]$CacheDir)
 
@@ -1013,6 +1183,7 @@ function Test-BackfillKafkaCache {
     return $true
 }
 
+# Khai bao class Restore de gom state, cau hinh hoac hanh vi lien quan.
 function Restore-BackfillKafkaCache {
     param([Parameter(Mandatory = $true)][string]$CacheDir)
 
@@ -1028,6 +1199,7 @@ function Restore-BackfillKafkaCache {
     }
 }
 
+# Khai bao class Save de gom state, cau hinh hoac hanh vi lien quan.
 function Save-BackfillKafkaCache {
     param([Parameter(Mandatory = $true)][string]$CacheDir)
 
@@ -1084,6 +1256,7 @@ function Save-BackfillKafkaCache {
     [System.IO.File]::WriteAllText((Join-Path $CacheDir "manifest.json"), $manifest, $utf8NoBom)
 }
 
+# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
 function Submit-SparkK8s {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1098,15 +1271,24 @@ function Submit-SparkK8s {
 
     # Spark pods run inside K8s network namespace; never pass localhost broker.
     $kafkaEnv = "KAFKA_BOOTSTRAP_SERVERS='$K8sKafkaBootstrapServers' "
-    $hdfsEnv = "HDFS_NAMENODE='$k8sHdfsNamenode' HDFS_DEFAULT_FS='$k8sHdfsNamenode' HADOOP_DEFAULT_FS='$k8sHdfsNamenode' ICEBERG_WAREHOUSE='$k8sIcebergWarehouse' HDFS_WEBHDFS_BASE='$k8sWebHdfsBase' "
+    $hdfsEnv = "HDFS_NAMENODE='$k8sHdfsNamenode' HDFS_DEFAULT_FS='$k8sHdfsNamenode' HADOOP_DEFAULT_FS='$k8sHdfsNamenode' ICEBERG_WAREHOUSE='$k8sIcebergWarehouse' HDFS_WEBHDFS_BASE='$k8sWebHdfsBase' HDFS_CLIENT_USE_DATANODE_HOSTNAME='true' "
 
     # Large jobs can take time while Spark driver/executors are scheduled.
-    Invoke-Bash "${kafkaEnv}${hdfsEnv}${dateEnv}${ExtraEnv}FULL_REFRESH=1 KUBECTL_TIMEOUT=3600s SPARK_SUBMIT_IMAGE_PULL_POLICY=IfNotPresent bash scripts/submit_spark_k8s.sh $Job"
+    try {
+        Invoke-Bash "${kafkaEnv}${hdfsEnv}${dateEnv}${ExtraEnv}FULL_REFRESH=1 KUBECTL_TIMEOUT=3600s SPARK_SUBMIT_IMAGE_PULL_POLICY=IfNotPresent bash scripts/submit_spark_k8s.sh $Job"
+    }
+    catch {
+        Write-Host "[WARN] Spark K8s job failed once: $Job" -ForegroundColor Yellow
+        Write-Host "[WARN] Repairing HDFS write path and retrying once." -ForegroundColor Yellow
+        Repair-HdfsWritePath
+        Invoke-Bash "${kafkaEnv}${hdfsEnv}${dateEnv}${ExtraEnv}FULL_REFRESH=1 KUBECTL_TIMEOUT=3600s SPARK_SUBMIT_IMAGE_PULL_POLICY=IfNotPresent DELETE_EXISTING=true bash scripts/submit_spark_k8s.sh $Job"
+    }
     if (-not $KeepFinishedBatchJobs) {
         Cleanup-FinishedK8sCompute -DeleteAllFinished -BestEffort
     }
 }
 
+# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
 function Submit-SparkK8sBestEffort {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1123,6 +1305,7 @@ function Submit-SparkK8sBestEffort {
     }
 }
 
+# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
 function Start-SparkK8sAsync {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1137,11 +1320,12 @@ function Start-SparkK8sAsync {
     }
 
     $kafkaEnv = "KAFKA_BOOTSTRAP_SERVERS='$K8sKafkaBootstrapServers' "
-    $hdfsEnv = "HDFS_NAMENODE='$k8sHdfsNamenode' HDFS_DEFAULT_FS='$k8sHdfsNamenode' HADOOP_DEFAULT_FS='$k8sHdfsNamenode' ICEBERG_WAREHOUSE='$k8sIcebergWarehouse' HDFS_WEBHDFS_BASE='$k8sWebHdfsBase' "
+    $hdfsEnv = "HDFS_NAMENODE='$k8sHdfsNamenode' HDFS_DEFAULT_FS='$k8sHdfsNamenode' HADOOP_DEFAULT_FS='$k8sHdfsNamenode' ICEBERG_WAREHOUSE='$k8sIcebergWarehouse' HDFS_WEBHDFS_BASE='$k8sWebHdfsBase' HDFS_CLIENT_USE_DATANODE_HOSTNAME='true' "
     Invoke-Bash "${kafkaEnv}${hdfsEnv}${dateEnv}${ExtraEnv}FULL_REFRESH=1 WAIT_FOR_COMPLETION=false FOLLOW_LOGS=false SPARK_SUBMIT_JOB_NAME='$SubmitJobName' KUBECTL_TIMEOUT=3600s SPARK_SUBMIT_IMAGE_PULL_POLICY=IfNotPresent bash scripts/submit_spark_k8s.sh $Job"
     return $SubmitJobName
 }
 
+# Khai bao class Wait de gom state, cau hinh hoac hanh vi lien quan.
 function Wait-K8sSubmitJobs {
     param(
         [Parameter(Mandatory = $true)][string[]]$JobNames,
@@ -1201,6 +1385,7 @@ function Wait-K8sSubmitJobs {
     }
 }
 
+# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
 function Submit-SparkCompose {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1215,6 +1400,7 @@ function Submit-SparkCompose {
     Invoke-Bash "${dateEnv}${ExtraEnv}FULL_REFRESH=1 bash scripts/submit_spark.sh $Job"
 }
 
+# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
 function Submit-Todo1Job {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1229,6 +1415,7 @@ function Submit-Todo1Job {
     }
 }
 
+# Khai bao class Promote de gom state, cau hinh hoac hanh vi lien quan.
 function Promote-LatestModels {
     $horizons = @(6, 12, 24)
     foreach ($horizon in $horizons) {
@@ -1275,6 +1462,7 @@ function Promote-LatestModels {
     }
 }
 
+# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
 function Resolve-VisualizationBaseTime {
     param(
         [Parameter(Mandatory = $true)][string]$RequestedEndDate,
@@ -1390,6 +1578,13 @@ Write-Host "K8s Cassandra endpoint: ${k8sCassandraHost}:9042" -ForegroundColor Y
 Write-Host "HDFS host endpoint: $k8sHdfsNamenode" -ForegroundColor Yellow
 Write-Host "HDFS topology: single Compose NameNode + DataNode" -ForegroundColor Yellow
 Write-Host "Spark Master UI host endpoint: http://localhost:$resolvedSparkMasterUiHostPort" -ForegroundColor Yellow
+
+if (-not $SkipInitialRuntimeCleanup) {
+    Stop-ExistingRuntimeWorkloads
+}
+else {
+    Write-Host "[INFO] Skip initial runtime cleanup due to -SkipInitialRuntimeCleanup" -ForegroundColor Yellow
+}
 
 if (Should-RunStep 1) {
     Step "1) Start core infra" {

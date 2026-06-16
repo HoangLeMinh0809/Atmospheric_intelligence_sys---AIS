@@ -1,3 +1,4 @@
+# File nay: test bao ve contract du lieu, realtime flow, serving hoac orchestration.
 import re
 from pathlib import Path
 
@@ -5,7 +6,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# Kiem tra column names.
 def _column_names(cql: str, table_name: str) -> set[str]:
+    # Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
     match = re.search(rf"CREATE TABLE IF NOT EXISTS .*\.{table_name} \((.*?)\n\)\s*(?:WITH|;)", cql, re.DOTALL)
     assert match, f"Missing CREATE TABLE for {table_name}"
     names = set()
@@ -17,6 +20,7 @@ def _column_names(cql: str, table_name: str) -> set[str]:
     return names
 
 
+# Kiem tra feature state schema contains online serving fields.
 def test_feature_state_schema_contains_online_serving_fields():
     cql = (ROOT / "scripts" / "ensure_cassandra_online_schema.sh").read_text(encoding="utf-8")
     columns = _column_names(cql, "pm25_feature_state_by_location_hour")
@@ -42,6 +46,7 @@ def test_feature_state_schema_contains_online_serving_fields():
     assert required <= columns
 
 
+# Kiem tra forecast latest schema contains latest query fields.
 def test_forecast_latest_schema_contains_latest_query_fields():
     cql = (ROOT / "scripts" / "ensure_cassandra_online_schema.sh").read_text(encoding="utf-8")
     columns = _column_names(cql, "pm25_forecast_latest_by_location")

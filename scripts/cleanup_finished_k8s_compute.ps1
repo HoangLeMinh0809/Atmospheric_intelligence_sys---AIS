@@ -1,3 +1,4 @@
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 param(
     [string]$Namespace = "ais",
     [int]$KeepNewestJobs = 20,
@@ -7,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Khai bao class Remove de gom state, cau hinh hoac hanh vi lien quan.
 function Remove-Names {
     param(
         [Parameter(Mandatory = $true)][string]$Kind,
@@ -21,6 +23,7 @@ function Remove-Names {
 
 $historyFullPath = Join-Path (Get-Location) $HistoryPath
 
+# Khai bao class Add de gom state, cau hinh hoac hanh vi lien quan.
 function Add-HistoryRecord {
     param(
         [Parameter(Mandatory = $true)][string]$Kind,

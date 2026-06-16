@@ -1,3 +1,4 @@
+// File nay: page React gom API calls, state va layout man hinh.
 import { useEffect, useMemo, useState } from "react";
 import PageContainer from "../components/layout/PageContainer";
 import StatCard from "../components/cards/StatCard";
@@ -15,6 +16,7 @@ import {
   getRealtimeWeather,
 } from "../services/api";
 
+// Render component RealtimeDashboard va gan state/props cho UI.
 function RealtimeDashboard() {
   const [openaqOverview, setOpenaqOverview] = useState(null);
   const [weatherOverview, setWeatherOverview] = useState(null);
@@ -23,8 +25,10 @@ function RealtimeDashboard() {
   const [weatherMetric, setWeatherMetric] = useState("temp");
 
   useEffect(() => {
+    // Tai du lieu can thiet truoc khi render man hinh.
     async function load() {
       try {
+        // Tai song song nhieu payload de giam do tre cho man hinh.
         const [openaqData, weatherData] = await Promise.all([
           getRealtimeOpenAQ(),
           getRealtimeWeather(),

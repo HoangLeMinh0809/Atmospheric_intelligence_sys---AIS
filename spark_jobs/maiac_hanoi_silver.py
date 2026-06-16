@@ -1,3 +1,4 @@
+# File nay: xu ly aerosol MAIAC thanh bang silver/summary cho Ha Noi.
 from __future__ import annotations
 
 import argparse
@@ -75,6 +76,7 @@ OUTPUT_SCHEMA = StructType(
 )
 
 
+# Doc tham so CLI va bien moi truong de cau hinh job.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Hanoi MAIAC/MODIS AOD silver table")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -88,18 +90,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(raw: str) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Parse va chuan hoa input cho du lieu MAIAC aerosol.
 def parse_date(raw: str) -> date | None:
     if not raw:
         return None
     return datetime.strptime(raw, "%Y-%m-%d").date()
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark() -> SparkSession:
     return (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("MAIACHanoiSilver")
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
@@ -115,6 +121,7 @@ def build_spark() -> SparkSession:
     )
 
 
+# Tao bang daily MAIAC AOD da tong hop cho khu vuc Ha Noi.
 def ensure_table(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {ICEBERG_CATALOG}.satellite")
     spark.sql(
@@ -144,6 +151,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
     )
 
 
+# Parse va chuan hoa input cho du lieu MAIAC aerosol.
 def parse_maiac_filename(path: Path) -> dict[str, Any] | None:
     # MCD19A2.AYYYYDDD.hXXvYY.061.YYYYDDDHHMMSS.hdf
     match = re.match(
@@ -164,6 +172,7 @@ def parse_maiac_filename(path: Path) -> dict[str, Any] | None:
     }
 
 
+# Tim file local tu metadata cho du lieu MAIAC aerosol.
 def find_local_file(row: dict[str, Any], fallback_dir: Path) -> Path | None:
     candidates = [
         row.get("producer_granule_id"),
@@ -192,6 +201,7 @@ def find_local_file(row: dict[str, Any], fallback_dir: Path) -> Path | None:
     return None
 
 
+# Chuan hoa va loc moc thoi gian cho du lieu MAIAC aerosol.
 def collect_candidate_files(
     spark: SparkSession,
     source_table: str,
@@ -237,6 +247,7 @@ def collect_candidate_files(
     return deduped, rows_from_bronze
 
 
+# Doc mot SDS trong HDF4, thu lan luot theo danh sach ten thay the.
 def _load_hdf4_sds(hdf, names: list[str]):
     datasets = hdf.datasets()
     for name in names:
@@ -245,6 +256,7 @@ def _load_hdf4_sds(hdf, names: list[str]):
     raise KeyError(f"Missing SDS. Tried: {names}")
 
 
+# Chuan hoa du lieu ve ma tran 2 chieu cho du lieu MAIAC aerosol.
 def _to_2d(values):
     import numpy as np
 
@@ -259,6 +271,7 @@ def _to_2d(values):
     return arr
 
 
+# Ap dung QA mask cho du lieu MAIAC aerosol.
 def _qa_mask(qa_values, target_shape: tuple[int, int], relaxed_qa: bool):
     import numpy as np
 
@@ -275,6 +288,7 @@ def _qa_mask(qa_values, target_shape: tuple[int, int], relaxed_qa: bool):
     return qa_bits <= (2 if relaxed_qa else 1)
 
 
+# Tao luoi lat/lon cho tile cho du lieu MAIAC aerosol.
 def _tile_lat_lon(tile: str, shape: tuple[int, int]):
     import numpy as np
 
@@ -300,6 +314,7 @@ def _tile_lat_lon(tile: str, shape: tuple[int, int]):
     return lat, lon
 
 
+# Doc mot file MAIAC HDF, cat theo bbox, ap QA va tra ve thong ke tile-level.
 def read_maiac_hdf(path: Path, bbox: dict[str, float], relaxed_qa: bool) -> dict[str, Any] | None:
     import numpy as np
 
@@ -373,6 +388,7 @@ def read_maiac_hdf(path: Path, bbox: dict[str, float], relaxed_qa: bool) -> dict
     }
 
 
+# Gom nhieu tile cung ngay thanh mot daily row de downstream join theo `date`.
 def build_daily_rows(file_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[date, list[dict[str, Any]]] = {}
     for record in file_records:
@@ -386,6 +402,7 @@ def build_daily_rows(file_records: list[dict[str, Any]]) -> list[dict[str, Any]]
         source_files = sorted(row["source_file"] for row in rows)
         tiles = {row["tile"] for row in rows}
 
+        # Kiem tra co gia tri trung binh hop le cho du lieu MAIAC aerosol.
         def mean_present(key: str):
             values = [row[key] for row in rows if row.get(key) is not None]
             return float(statistics.fmean(values)) if values else None
@@ -413,6 +430,7 @@ def build_daily_rows(file_records: list[dict[str, Any]]) -> list[dict[str, Any]]
     return daily_rows
 
 
+# In metric kiem tra row count, thoi gian, duplicate va null ratio.
 def log_metrics(candidate_count: int, bronze_count: int, file_records: list[dict[str, Any]], daily_rows: list[dict[str, Any]]) -> None:
     print(f"bronze_candidate_count={bronze_count}")
     print(f"local_candidate_file_count={candidate_count}")
@@ -428,6 +446,7 @@ def log_metrics(candidate_count: int, bronze_count: int, file_records: list[dict
         print("warning=maiac_silver_empty")
 
 
+# Ghi output cho du lieu MAIAC aerosol.
 def write_iceberg(
     spark: SparkSession,
     rows: list[dict[str, Any]],
@@ -448,6 +467,7 @@ def write_iceberg(
             spark.sql(f"DELETE FROM {table_name}")
 
     df = spark.createDataFrame(rows, schema=OUTPUT_SCHEMA)
+    # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("maiac_hanoi_daily_silver_updates")
 
     assignments = ", ".join([f"t.{c} = s.{c}" for c in OUTPUT_COLUMNS])
@@ -465,6 +485,7 @@ def write_iceberg(
     )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     args = parse_args()
     tables = get_table_names()

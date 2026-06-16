@@ -1,3 +1,4 @@
+// File nay: component ban do hien thi layer PM2.5, station, trajectory va plume.
 const LAYERS = [
   ["heatmap", "PM2.5 heatmap"],
   ["trajectories", "Backward trajectories"],
@@ -6,6 +7,7 @@ const LAYERS = [
   ["stations", "Stations"],
 ];
 
+// Render component LayerControl va gan state/props cho UI.
 export default function LayerControl({ enabled, onToggle }) {
   return (
     <div className="map-panel layer-control">

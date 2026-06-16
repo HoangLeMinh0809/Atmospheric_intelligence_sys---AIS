@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 # =============================================================================
 # Backfill all sources with 7 days of historical data
 # Use this if you want to manually backfill instead of clicking UI
@@ -63,7 +64,9 @@ if [ "$REFRESH_CASSANDRA" = "true" ]; then
   echo ""
   echo "[Serving] Refresh Cassandra tables from Iceberg..."
   docker exec cassandra cqlsh -e "CREATE KEYSPACE IF NOT EXISTS ais_serving WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" || true
+  # Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
   docker exec cassandra cqlsh -e "CREATE TABLE IF NOT EXISTS ais_serving.weather_hourly_by_province_day (province text, day text, event_time timestamp, event_id text, query_date text, location_name text, lat double, lon double, temp_c double, temp_f double, humidity int, wind_kph double, wind_degree int, wind_dir text, precip_mm double, condition_text text, source text, ingest_time text, PRIMARY KEY ((province, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);" || true
+  # Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
   docker exec cassandra cqlsh -e "CREATE TABLE IF NOT EXISTS ais_serving.openaq_hourly_by_city_parameter_day (city text, parameter text, day text, event_time timestamp, event_id text, location_id bigint, location_name text, provider text, sensor_id bigint, unit text, value double, min double, max double, sd double, coverage_pct double, source text, ingest_time text, PRIMARY KEY ((city, parameter, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);" || true
   bash scripts/submit_spark.sh cassandra-weather
   bash scripts/submit_spark.sh cassandra-openaq

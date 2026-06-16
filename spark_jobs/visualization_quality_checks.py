@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -8,6 +9,7 @@ from pyspark.sql import functions as F
 from visualization_common import add_common_args, build_spark, get_tables, read_table_if_exists
 
 
+# Dam bao mot bang visualization ton tai va co du so dong toi thieu truoc khi publish/cache.
 def require_count(spark, table: str, label: str, minimum: int = 1) -> int:
     df = read_table_if_exists(spark, table)
     if df is None:
@@ -18,6 +20,7 @@ def require_count(spark, table: str, label: str, minimum: int = 1) -> int:
     return count
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Quality checks for visualization product tables")
     add_common_args(parser)
@@ -37,12 +40,15 @@ def main() -> None:
         }
         counts = {label: require_count(spark, table, label) for label, table in required.items()}
 
+        # Doc bang nguon tu Iceberg truoc khi bien doi du lieu.
         heatmap = spark.read.table(tables["visualization_heatmap_grid_gold"])
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         horizon_counts = {int(r["horizon_h"]): int(r["n"]) for r in heatmap.groupBy("horizon_h").agg(F.count("*").alias("n")).collect()}
         missing_horizons = [h for h in [0, 6, 12, 24] if horizon_counts.get(h, 0) == 0]
         if missing_horizons:
             raise RuntimeError(f"heatmap_missing_horizons missing={missing_horizons}")
 
+        # Doc bang nguon tu Iceberg truoc khi bien doi du lieu.
         manifest = spark.read.table(tables["visualization_cache_manifest_gold"])
         required_layers = {
             item.strip()

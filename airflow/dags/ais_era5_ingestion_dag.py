@@ -1,3 +1,4 @@
+# File nay: DAG Airflow dieu phoi ingest, Spark, ML, visualization hoac maintenance.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -23,6 +24,7 @@ END_DATE_TEMPLATE = "{{ dag_run.conf.get('end_date', ds) if dag_run and dag_run.
 FULL_REFRESH_TEMPLATE = "{{ dag_run.conf.get('full_refresh', 0) if dag_run and dag_run.conf else 0 }}"
 
 
+# Submit workload Spark/K8s cho du lieu ERA5.
 def submit_command(job_type: str, *, extra_env: str = "") -> str:
     env = extra_env.strip()
     env_prefix = f"{env} " if env else ""

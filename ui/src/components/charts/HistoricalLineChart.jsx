@@ -1,6 +1,8 @@
+// File nay: component bieu do hien thi timeseries, forecast hoac thong ke.
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 
+// Render component HistoricalLineChart va gan state/props cho UI.
 function HistoricalLineChart({ data, metric, title }) {
   const ref = useRef();
 

@@ -1,4 +1,5 @@
-﻿"""
+# File nay: xu ly Sentinel-5P thanh bang satellite silver/summary cho Ha Noi.
+"""
 Sentinel-5P summary Kafka -> Iceberg streaming processor.
 
 Default mode is long-running streaming.
@@ -83,10 +84,12 @@ SENTINEL5P_SCHEMA = StructType(
 )
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main() -> None:
     stop_after_batch, processing_time = parse_streaming_runtime(default_processing_time="45 seconds")
 
     spark = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder
         .appName("Sentinel5PSummary_Streaming")
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -102,6 +105,7 @@ def main() -> None:
     spark.sparkContext.setLogLevel("WARN")
 
     kafka_df = (
+        # Doc stream dau vao de xu ly lien tuc hoac catch-up.
         spark.readStream
         .format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
@@ -114,6 +118,7 @@ def main() -> None:
     parsed_df = (
         kafka_df
         .selectExpr("CAST(value AS STRING) AS json_str")
+        # Parse chuoi JSON thanh cot co schema ro rang.
         .select(col("json_str"), from_json(col("json_str"), SENTINEL5P_SCHEMA).alias("data"))
         .select("json_str", "data.*")
         .withColumnRenamed("json_str", "_raw_payload")

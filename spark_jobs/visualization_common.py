@@ -1,3 +1,4 @@
+# File nay: tao payload visualization gold/cache cho UI ban do va thong ke.
 from __future__ import annotations
 
 import argparse
@@ -25,9 +26,11 @@ from hanoi_config import (
 )
 
 
+# Khoi tao SparkSession voi Iceberg catalog, warehouse va HDFS config.
 def build_spark(app_name: str) -> SparkSession:
     packages = os.getenv("SPARK_JARS_PACKAGES", "").strip()
     builder = (
+        # Khoi tao SparkSession voi cac config cua job hien tai.
         SparkSession.builder.appName(app_name)
         .config("spark.jars.ivy", os.getenv("SPARK_IVY_DIR", "/tmp/.ivy2"))
         .config("spark.sql.session.timeZone", SPARK_SQL_SESSION_TIMEZONE)
@@ -43,6 +46,7 @@ def build_spark(app_name: str) -> SparkSession:
     return builder.getOrCreate()
 
 
+# Them tham so CLI dung chung cho payload visualization.
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--base-time", default=os.getenv("BASE_TIME", ""))
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
@@ -55,19 +59,23 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", default=os.getenv("DRY_RUN", "0"))
 
 
+# Doc bien moi truong dang float cho payload visualization.
 def _env_float(name: str, default: float) -> float:
     value = os.getenv(name, "").strip()
     return float(value) if value else default
 
 
+# Chuyen flag dang chuoi nhu 1/true/yes thanh boolean.
 def as_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
+# Lay timestamp UTC hien tai cho metadata freshness.
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Format datetime thanh chuoi ISO UTC ket thuc bang Z.
 def iso_z(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -76,6 +84,7 @@ def iso_z(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Parse va chuan hoa input cho payload visualization.
 def parse_base_time(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -86,6 +95,7 @@ def parse_base_time(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
+# Chuan hoa va loc moc thoi gian cho payload visualization.
 def end_of_date(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -93,6 +103,7 @@ def end_of_date(value: str | None) -> datetime | None:
     return day.replace(hour=23, minute=0, second=0, microsecond=0)
 
 
+# Doc bien moi truong dang int cho payload visualization.
 def _env_int(name: str, default: Any) -> int:
     raw = os.getenv(name)
     if raw is None or not str(raw).strip():
@@ -100,6 +111,7 @@ def _env_int(name: str, default: Any) -> int:
     return int(str(raw).strip())
 
 
+# Doc bien moi truong dang float cho payload visualization.
 def _env_float(name: str, default: Any) -> float:
     raw = os.getenv(name)
     if raw is None or not str(raw).strip():
@@ -107,6 +119,7 @@ def _env_float(name: str, default: Any) -> float:
     return float(str(raw).strip())
 
 
+# Chuan hoa va loc moc thoi gian cho payload visualization.
 def visualization_runtime(args: argparse.Namespace) -> dict[str, Any]:
     cfg = get_visualization_config()
     horizons = [int(v.strip()) for v in args.horizons.split(",") if v.strip()] if args.horizons else get_visualization_horizons()
@@ -127,6 +140,7 @@ def visualization_runtime(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+# Tinh gia tri muc rui ro cho payload visualization.
 def risk_value(pm25: float | None) -> str:
     if pm25 is None:
         return "unknown"
@@ -139,6 +153,7 @@ def risk_value(pm25: float | None) -> str:
     return "very_high"
 
 
+# Tao bieu thuc Spark cho muc rui ro cho payload visualization.
 def risk_expr(col: str) -> F.Column:
     return (
         F.when(F.col(col).isNull(), F.lit("unknown"))
@@ -149,12 +164,14 @@ def risk_expr(col: str) -> F.Column:
     )
 
 
+# Chay mot lan xu ly cho payload visualization.
 def run_id(prefix: str, base_time: datetime | None, product_version: str) -> str:
     stamp = iso_z(base_time or utc_now()) or iso_z(utc_now())
     payload = f"{prefix}:{stamp}:{product_version}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
+# Loc du lieu theo khoang ngay start/end duoc yeu cau.
 def apply_date_range(df: DataFrame, time_col: str, start_date: str, end_date: str) -> DataFrame:
     if start_date:
         df = df.filter(F.to_date(F.col(time_col)) >= F.to_date(F.lit(start_date)))
@@ -163,14 +180,17 @@ def apply_date_range(df: DataFrame, time_col: str, start_date: str, end_date: st
     return df
 
 
+# Doc du lieu cho payload visualization.
 def read_table_if_exists(spark: SparkSession, table_name: str) -> DataFrame | None:
     try:
+        # Doc bang nguon tu Iceberg truoc khi bien doi du lieu.
         return spark.read.table(table_name)
     except Exception as exc:
         print(f"visualization_common table_missing_or_unreadable={table_name} error={type(exc).__name__}: {exc}")
         return None
 
 
+# Lay dong moi nhat cho payload visualization.
 def latest_row(df: DataFrame, time_col: str, filters: list[F.Column] | None = None) -> dict[str, Any] | None:
     if filters:
         for condition in filters:
@@ -179,6 +199,7 @@ def latest_row(df: DataFrame, time_col: str, filters: list[F.Column] | None = No
     return rows[0].asDict(recursive=True) if rows else None
 
 
+# Lay dong moi nhat khong vuot qua as-of time cho payload visualization.
 def latest_row_asof(
     df: DataFrame,
     time_col: str,
@@ -190,6 +211,7 @@ def latest_row_asof(
     return latest_row(df, time_col, filters=filters)
 
 
+# Dien gia tri forecast fallback khi thieu cho payload visualization.
 def fallback_forecast_values(latest_pm25: float | None, trend_per_6h: float | None = None) -> dict[int, float]:
     base = float(latest_pm25 or 0.0)
     trend = max(min(float(trend_per_6h or 0.0), 18.0), -18.0)
@@ -201,6 +223,7 @@ def fallback_forecast_values(latest_pm25: float | None, trend_per_6h: float | No
     return values
 
 
+# Tinh xu huong tram theo cua so 6 gio cho payload visualization.
 def station_trend_per_6h(station_df: DataFrame | None, base_time: datetime, lookback_hours: int = 24) -> float:
     if station_df is None:
         return 0.0
@@ -209,6 +232,7 @@ def station_trend_per_6h(station_df: DataFrame | None, base_time: datetime, look
         station_df.filter(station_df.pm25.isNotNull())
         .filter(station_df.hour >= start_time)
         .filter(station_df.hour <= base_time)
+        # Bat dau gom nhom de tinh cac chi so tong hop.
         .groupBy("hour")
         .agg(F.avg("pm25").alias("pm25_value"))
         .orderBy("hour")
@@ -222,6 +246,7 @@ def station_trend_per_6h(station_df: DataFrame | None, base_time: datetime, look
     return (last - first) / hours * 6.0
 
 
+# Tao o grid cho heatmap cho payload visualization.
 def grid_cells(bbox: dict[str, float], resolution: float) -> list[dict[str, float | str]]:
     cells = []
     lat = bbox["south"]
@@ -248,12 +273,14 @@ def grid_cells(bbox: dict[str, float], resolution: float) -> list[dict[str, floa
     return cells
 
 
+# Tao feature point GeoJSON cho payload visualization.
 def point_geojson(lon: float | None, lat: float | None) -> str | None:
     if lon is None or lat is None:
         return None
     return json.dumps({"type": "Point", "coordinates": [float(lon), float(lat)]}, separators=(",", ":"))
 
 
+# Tao feature polygon GeoJSON cho payload visualization.
 def polygon_geojson(lon_min: float, lat_min: float, lon_max: float, lat_max: float) -> str:
     coords = [
         [lon_min, lat_min],
@@ -265,6 +292,7 @@ def polygon_geojson(lon_min: float, lat_min: float, lon_max: float, lat_max: flo
     return json.dumps({"type": "Polygon", "coordinates": [coords]}, separators=(",", ":"))
 
 
+# Tao feature line GeoJSON cho payload visualization.
 def line_geojson(points: list[dict[str, Any]]) -> str:
     coords = []
     for point in points:
@@ -280,10 +308,12 @@ def line_geojson(points: list[dict[str, Any]]) -> str:
     return json.dumps({"type": "LineString", "coordinates": coords}, separators=(",", ":"))
 
 
+# Gom feature thanh FeatureCollection cho payload visualization.
 def feature_collection(features: list[dict[str, Any]]) -> dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
 
+# Xu ly path va storage HDFS cho payload visualization.
 def hdfs_write_text(spark: SparkSession, uri: str, payload: str) -> None:
     jvm = spark.sparkContext._jvm
     conf = spark.sparkContext._jsc.hadoopConfiguration()
@@ -299,15 +329,18 @@ def hdfs_write_text(spark: SparkSession, uri: str, payload: str) -> None:
         out.close()
 
 
+# Tinh checksum cho payload cho payload visualization.
 def payload_checksum(payload: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+# Tao cache URI cho layer cho payload visualization.
 def cache_uri(*parts: str) -> str:
     clean = [part.strip("/") for part in parts if part]
     return "/".join([get_visualization_cache_base_uri(), *clean])
 
 
+# Ghi output cho payload visualization.
 def write_product(df: DataFrame, table: str, dry_run: bool) -> int:
     count = df.count()
     if dry_run:
@@ -316,6 +349,7 @@ def write_product(df: DataFrame, table: str, dry_run: bool) -> int:
     return count
 
 
+# Tinh khoang cach km cho payload visualization.
 def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     r = 6371.0
     phi1 = math.radians(lat1)
@@ -326,5 +360,6 @@ def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+# Lay du lieu hoac metadata cho payload visualization.
 def get_tables() -> dict[str, str]:
     return TABLES.copy()

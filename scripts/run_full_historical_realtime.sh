@@ -1,4 +1,5 @@
 #!/bin/bash
+# File nay: script van hanh local/K8s, submit Spark, check hoac cleanup infra.
 # =============================================================================
 # bootstrap_ais.sh
 # One-command AIS bootstrap:
@@ -31,6 +32,7 @@ ERA5_END_DATE="${ERA5_END_DATE:-$(date -u +%F)}"
 
 unset STOP_AFTER_BATCH || true
 
+# Kiem tra Spark app muc tieu da dang ky va dang ton tai.
 spark_app_registered() {
   local app_name="$1"
 
@@ -42,7 +44,9 @@ import urllib.request
 
 app_name = os.environ.get("APP_NAME", "")
 try:
+    # Goi HTTP request truc tiep toi endpoint dich.
     raw = urllib.request.urlopen("http://localhost:8080/json", timeout=10).read().decode("utf-8")
+    # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
     payload = json.loads(raw)
 except Exception:
     sys.exit(1)
@@ -55,6 +59,7 @@ sys.exit(1)
 PY
 }
 
+# Lay trang thai hien tai cua Spark app.
 spark_app_state() {
   local app_name="$1"
 
@@ -65,7 +70,9 @@ import urllib.request
 
 app_name = os.environ.get("APP_NAME", "")
 try:
+  # Goi HTTP request truc tiep toi endpoint dich.
   raw = urllib.request.urlopen("http://localhost:8080/json", timeout=10).read().decode("utf-8")
+  # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
   payload = json.loads(raw)
 except Exception:
   raise SystemExit(0)
@@ -77,6 +84,7 @@ for app in payload.get("activeapps", []):
 PY
 }
 
+# Kiem tra Spark app co xuat hien trong cluster hay khong.
 spark_app_present() {
   local app_name="$1"
 
@@ -88,7 +96,9 @@ import urllib.request
 
 app_name = os.environ.get("APP_NAME", "")
 try:
+  # Goi HTTP request truc tiep toi endpoint dich.
   raw = urllib.request.urlopen("http://localhost:8080/json", timeout=10).read().decode("utf-8")
+  # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
   payload = json.loads(raw)
 except Exception:
   sys.exit(1)
@@ -101,13 +111,16 @@ sys.exit(1)
 PY
 }
 
+# In snapshot trang thai Spark cluster hien tai.
 print_spark_cluster_snapshot() {
   docker exec -i spark-master python3 - <<'PY'
 import json
 import urllib.request
 
 try:
+  # Goi HTTP request truc tiep toi endpoint dich.
   raw = urllib.request.urlopen("http://localhost:8080/json", timeout=10).read().decode("utf-8")
+  # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
   payload = json.loads(raw)
 except Exception as exc:
   print(f"[WARN] Unable to query Spark master state: {exc}")
@@ -131,6 +144,7 @@ for worker in payload.get("workers", []):
 PY
 }
 
+# Tim danh sach Spark app id theo ten job.
 spark_app_ids_by_name() {
   local app_name="$1"
 
@@ -141,7 +155,9 @@ import urllib.request
 
 app_name = os.environ.get("APP_NAME", "")
 try:
+    # Goi HTTP request truc tiep toi endpoint dich.
     raw = urllib.request.urlopen("http://localhost:8080/json", timeout=10).read().decode("utf-8")
+    # Parse JSON tra ve thanh cau truc dict/list de xu ly tiep.
     payload = json.loads(raw)
 except Exception:
     raise SystemExit(0)
@@ -154,6 +170,7 @@ for app in payload.get("activeapps", []):
 PY
 }
 
+# Dung cac Spark app khop ten duoc yeu cau.
 kill_spark_app_by_name() {
   local app_name="$1"
   local ids
@@ -185,6 +202,7 @@ kill_spark_app_by_name() {
   done
 }
 
+# Dam bao tai nguyen va cau hinh can thiet da san sang truoc khi tiep tuc.
 ensure_exclusive_stream_resources() {
   local target_app="$1"
   local stream_apps=(
@@ -202,6 +220,7 @@ ensure_exclusive_stream_resources() {
   done
 }
 
+# Dam bao tai nguyen va cau hinh can thiet da san sang truoc khi tiep tuc.
 ensure_spark_app_active() {
   local app_name="$1"
   local job_type="$2"
@@ -266,6 +285,7 @@ ensure_spark_app_active() {
   return 1
 }
 
+# Cho den khi tai nguyen hoac service can dung da san sang.
 wait_for_healthy() {
   local container_name="$1"
   local timeout_sec="${2:-300}"
@@ -292,6 +312,7 @@ wait_for_healthy() {
   done
 }
 
+# In thong tin chan doan container de de debug ha tang.
 print_container_diagnostics() {
   local container_name="$1"
 
@@ -302,6 +323,7 @@ print_container_diagnostics() {
   docker logs --tail 120 "$container_name" 2>&1 || true
 }
 
+# Cho den khi tai nguyen hoac service can dung da san sang.
 wait_for_hdfs_parquet() {
   local hdfs_path="$1"
   local timeout_sec="${2:-300}"

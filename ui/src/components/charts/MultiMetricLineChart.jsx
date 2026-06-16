@@ -1,3 +1,4 @@
+// File nay: component bieu do hien thi timeseries, forecast hoac thong ke.
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 
@@ -7,6 +8,7 @@ const SERIES = [
   { key: "wind", label: "Wind", color: "#22c55e" },
 ];
 
+// Render component MultiMetricLineChart va gan state/props cho UI.
 function MultiMetricLineChart({ data, title }) {
   const ref = useRef();
 

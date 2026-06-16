@@ -1,3 +1,4 @@
+# File nay: ingest OpenAQ, chuan hoa quan trac PM2.5 va day event vao Kafka.
 import logging
 import os
 import time
@@ -54,6 +55,7 @@ if OPENAQ_API_KEY:
     HEADERS["X-API-Key"] = OPENAQ_API_KEY
 
 
+# Ep gia tri sang int an toan cho du lieu OpenAQ PM2.5.
 def _safe_int(value):
     if value in (None, ""):
         return None
@@ -63,6 +65,7 @@ def _safe_int(value):
         return None
 
 
+# Ep gia tri sang float an toan cho du lieu OpenAQ PM2.5.
 def _safe_float(value):
     if value in (None, ""):
         return None
@@ -72,6 +75,7 @@ def _safe_float(value):
         return None
 
 
+# Lay du lieu hoac metadata cho du lieu OpenAQ PM2.5.
 def get_with_retry(url: str, params: dict, max_retries: int = 4) -> dict | None:
     for attempt in range(max_retries):
         try:
@@ -88,6 +92,7 @@ def get_with_retry(url: str, params: dict, max_retries: int = 4) -> dict | None:
     return None
 
 
+# Lay du lieu hoac metadata cho du lieu OpenAQ PM2.5.
 def fetch_all_pages(url: str, base_params: dict) -> list[dict]:
     results = []
     page = 1
@@ -114,6 +119,7 @@ def fetch_all_pages(url: str, base_params: dict) -> list[dict]:
     return results
 
 
+# Kiem tra quoc gia co khop bo loc hay khong cho du lieu OpenAQ PM2.5.
 def _country_matches(country: dict, country_code: str) -> bool:
     expected = country_code.strip().upper()
     candidates = {
@@ -128,6 +134,7 @@ def _country_matches(country: dict, country_code: str) -> bool:
     return expected == "VN" and name in {"vietnam", "viet nam"}
 
 
+# Tim country id tu metadata quoc gia cho du lieu OpenAQ PM2.5.
 def resolve_country_id(country_code: str = OPENAQ_COUNTRY_CODE) -> int:
     if OPENAQ_COUNTRY_ID:
         country_id = _safe_int(OPENAQ_COUNTRY_ID)
@@ -150,6 +157,7 @@ def resolve_country_id(country_code: str = OPENAQ_COUNTRY_CODE) -> int:
     raise RuntimeError(f"Cannot resolve OpenAQ country id for {country_code!r}")
 
 
+# Lay du lieu hoac metadata cho du lieu OpenAQ PM2.5.
 def get_vietnam_locations() -> list[dict]:
     params = {"countries_id": resolve_country_id()}
     if OPENAQ_BBOX:
@@ -160,11 +168,13 @@ def get_vietnam_locations() -> list[dict]:
     return locations
 
 
+# Lay du lieu hoac metadata cho du lieu OpenAQ PM2.5.
 def get_sensors(location_id: int) -> list[dict]:
     data = get_with_retry(f"{OPENAQ_BASE_URL}/locations/{location_id}/sensors", {})
     return data.get("results", []) if data else []
 
 
+# Lay du lieu hoac metadata cho du lieu OpenAQ PM2.5.
 def get_hourly_data(sensor_id: int, start_utc: datetime, end_utc: datetime) -> list[dict]:
     return fetch_all_pages(
         f"{OPENAQ_BASE_URL}/sensors/{sensor_id}/hours",
@@ -176,6 +186,7 @@ def get_hourly_data(sensor_id: int, start_utc: datetime, end_utc: datetime) -> l
     )
 
 
+# Tao payload hoac DataFrame cho du lieu OpenAQ PM2.5.
 def build_event(
     location: dict,
     sensor: dict,
@@ -224,6 +235,7 @@ def build_event(
     }
 
 
+# Lap qua cac event nguon cho du lieu OpenAQ PM2.5.
 def iter_events(
     ingest_time: str,
     start_utc: datetime,
@@ -308,6 +320,7 @@ def iter_events(
                 )
 
 
+# Chay mot lan xu ly cho du lieu OpenAQ PM2.5.
 def run_once(producer) -> int:
     window = resolve_window(WINDOW_CONFIG)
     ingest_time = utc_now().isoformat()
@@ -348,6 +361,7 @@ def run_once(producer) -> int:
     return sent
 
 
+# Entrypoint noi cac buoc cau hinh, xu ly, ghi ket qua va cleanup.
 def main():
     logger.info("OpenAQ ingest")
     logger.info(f"  Topic:      {KAFKA_TOPIC}")
