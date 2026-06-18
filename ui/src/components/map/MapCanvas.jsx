@@ -80,10 +80,33 @@ function valueOf(feature) {
 }
 
 // Lay diem dai dien cua geometry de dat marker, label hoac anchor tren ban do.
+function planarGeometryCenter(geometry) {
+  if (!geometry) return null;
+  if (geometry.type === "Point") return [Number(geometry.coordinates[0]), Number(geometry.coordinates[1])];
+  const rings =
+    geometry.type === "Polygon"
+      ? geometry.coordinates
+      : geometry.type === "MultiPolygon"
+        ? geometry.coordinates.flat()
+        : geometry.type === "LineString"
+          ? [geometry.coordinates]
+          : geometry.type === "MultiLineString"
+            ? geometry.coordinates
+            : [];
+  const points = rings
+    .flat()
+    .filter(([lon, lat]) => Number.isFinite(Number(lon)) && Number.isFinite(Number(lat)));
+  if (!points.length) return null;
+  const uniquePoints = points.filter((point, index) => index === 0 || point[0] !== points[0][0] || point[1] !== points[0][1]);
+  const usablePoints = uniquePoints.length ? uniquePoints : points;
+  const lon = usablePoints.reduce((sum, point) => sum + Number(point[0]), 0) / usablePoints.length;
+  const lat = usablePoints.reduce((sum, point) => sum + Number(point[1]), 0) / usablePoints.length;
+  return [lon, lat];
+}
+
 function pointFromGeometry(geometry, width, height) {
   if (!geometry) return project(HANOI_CENTER[0], HANOI_CENTER[1], width, height);
-  if (geometry.type === "Point") return project(geometry.coordinates[0], geometry.coordinates[1], width, height);
-  const center = geoCentroid({ type: "Feature", geometry });
+  const center = planarGeometryCenter(geometry) || geoCentroid({ type: "Feature", geometry });
   return project(center[0], center[1], width, height);
 }
 
@@ -95,8 +118,7 @@ function lonLatFromFeature(feature) {
   }
   const geometry = feature?.geometry;
   if (!geometry) return null;
-  if (geometry.type === "Point") return [Number(geometry.coordinates[0]), Number(geometry.coordinates[1])];
-  const center = geoCentroid({ type: "Feature", geometry });
+  const center = planarGeometryCenter(geometry) || geoCentroid({ type: "Feature", geometry });
   return [Number(center[0]), Number(center[1])];
 }
 
@@ -248,6 +270,13 @@ function buildPixelGrid(heatmapFeatures, stationFeatures, cols = BASE_GRID_COLS,
     scale,
     usingFallback: false,
   };
+}
+
+// Xac dinh horizon hien tai de forecast heatmap khong bi station realtime keo ve mau latest.
+function heatmapHorizonOf(heatmap) {
+  const value = heatmap?.horizon_h ?? heatmap?.features?.[0]?.properties?.horizon_h;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 // Ve duong bao SVG cho mot o heatmap.
@@ -581,6 +610,29 @@ function stationRadius(feature) {
   return Math.max(7, Math.min(18, 5 + value / 7));
 }
 
+// Doi gia tri station marker theo horizon dang xem, dung forecast heatmap gan tram nhat.
+function stationsForHorizon(stations, heatmap, horizon) {
+  if (horizon === 0) return stations;
+  return stations.map((feature) => {
+    const lonLat = lonLatFromFeature(feature);
+    if (!lonLat) return feature;
+    const forecastValue = nearestPm25(heatmap, lonLat[0], lonLat[1]);
+    if (!Number.isFinite(forecastValue)) return feature;
+    const pm25 = Number(forecastValue.toFixed(1));
+    return {
+      ...feature,
+      properties: {
+        ...(feature.properties || {}),
+        observed_pm25_value: valueOf(feature),
+        pm25_value: pm25,
+        pm25: pm25,
+        horizon_h: horizon,
+        marker_source: "forecast_heatmap_nearest_cell",
+      },
+    };
+  });
+}
+
 // Dieu chinh ban kinh glow cua heatmap theo zoom de map khong bi bet.
 function cellGradientRadius(cell, width, height) {
   const [x0, y0] = project(cell.lon0, cell.lat0, width, height);
@@ -609,6 +661,7 @@ export default function MapCanvas({
   const selectedReceptor = controlledReceptor || localSelectedReceptor;
   const rawHeatmap = useMemo(() => layers.heatmap?.features || [], [layers.heatmap]);
   const rawStations = useMemo(() => layers.stations?.features || [], [layers.stations]);
+  const heatmapHorizon = heatmapHorizonOf(layers.heatmap);
   const plume = layers.plume?.features || [];
   const rawTrajectories = useMemo(() => layers.trajectories?.features || [], [layers.trajectories]);
   const sources = layers.sources?.features || [];
@@ -624,9 +677,14 @@ export default function MapCanvas({
     () => (selectedReceptor ? trajectoriesForReceptor(rawTrajectories, selectedReceptor, rawHeatmap, stations).map(densifyTrajectory) : []),
     [rawHeatmap, rawTrajectories, selectedReceptor, stations],
   );
+  const interpolationStations = useMemo(() => (heatmapHorizon === 0 ? stations : []), [heatmapHorizon, stations]);
   const { cells, scale, usingFallback } = useMemo(
-    () => buildPixelGrid(rawHeatmap, stations, BASE_GRID_COLS, BASE_GRID_ROWS),
-    [rawHeatmap, stations],
+    () => buildPixelGrid(rawHeatmap, interpolationStations, BASE_GRID_COLS, BASE_GRID_ROWS),
+    [interpolationStations, rawHeatmap],
+  );
+  const displayStations = useMemo(
+    () => stationsForHorizon(stations, layers.heatmap, heatmapHorizon),
+    [heatmapHorizon, layers.heatmap, stations],
   );
   const stats = latestHeatmapStats(cells);
   useEffect(() => {
@@ -883,7 +941,7 @@ export default function MapCanvas({
 
         {enabled.stations && (
           <g className="station-layer">
-            {stations.map((feature, index) => {
+            {displayStations.map((feature, index) => {
               const [x, y] = pointFromGeometry(feature.geometry, width, height);
               const value = valueOf(feature);
               return (

@@ -6,17 +6,19 @@ import FreshnessBadge from "../components/map/FreshnessBadge";
 import LayerControl from "../components/map/LayerControl";
 import MapCanvas from "../components/map/MapCanvas";
 import MapPopup from "../components/map/MapPopup";
-import SourceAttributionPanel from "../components/map/SourceAttributionPanel";
 import TimeSelector from "../components/map/TimeSelector";
 import {
   getBackwardTrajectoriesLatest,
   getForecastLatest,
   getForwardPlumeLatest,
+  getHeatmapLatest,
   getLiveHeatmapLatest,
   getPM25TimeseriesLatest,
   getSourceAttributionLatest,
   getStationsLatest,
 } from "../services/visualizationApi";
+
+const FORECAST_HORIZONS = [6, 12, 24];
 
 // Doi PM2.5 thanh risk key dung chung cho forecast panel.
 function riskForPm25(value) {
@@ -60,6 +62,157 @@ function mergeLiveNowForecast(forecast, liveHeatmap) {
       base_hour: liveHeatmap?.base_hour || forecast?.freshness?.base_hour,
       generated_at: liveHeatmap?.generated_at || forecast?.freshness?.generated_at,
     },
+  };
+}
+
+// Lay gia tri PM2.5 tu feature heatmap/station theo cac schema payload dang co.
+function pm25FromFeature(feature) {
+  const props = feature?.properties || feature || {};
+  const value = [props.pm25_value, props.pm25, props.value, props.forecast_pm25, props.pm25_mean, props.pm25_ugm3]
+    .find((item) => item !== undefined && item !== null && item !== "");
+  return value == null ? null : Number(value);
+}
+
+// Lay diem dai dien cua feature heatmap de noi receptor voi cell gan nhat.
+function lonLatFromFeature(feature) {
+  const props = feature?.properties || {};
+  if (Number.isFinite(Number(props.lon)) && Number.isFinite(Number(props.lat))) {
+    return [Number(props.lon), Number(props.lat)];
+  }
+  if (Number.isFinite(Number(props.longitude)) && Number.isFinite(Number(props.latitude))) {
+    return [Number(props.longitude), Number(props.latitude)];
+  }
+  if (Number.isFinite(Number(props.lon_min)) && Number.isFinite(Number(props.lon_max)) && Number.isFinite(Number(props.lat_min)) && Number.isFinite(Number(props.lat_max))) {
+    return [(Number(props.lon_min) + Number(props.lon_max)) / 2, (Number(props.lat_min) + Number(props.lat_max)) / 2];
+  }
+  const geometry = feature?.geometry;
+  if (!geometry) return null;
+  if (geometry.type === "Point") return [Number(geometry.coordinates[0]), Number(geometry.coordinates[1])];
+  const ring = geometry.coordinates?.[0] || [];
+  const points = ring.filter(([lon, lat]) => Number.isFinite(Number(lon)) && Number.isFinite(Number(lat)));
+  if (!points.length) return null;
+  const lon = points.reduce((sum, point) => sum + Number(point[0]), 0) / points.length;
+  const lat = points.reduce((sum, point) => sum + Number(point[1]), 0) / points.length;
+  return [lon, lat];
+}
+
+// Tim PM2.5 gan receptor nhat trong heatmap cua tung horizon.
+function nearestPm25At(heatmap, receptor) {
+  if (!Number.isFinite(Number(receptor?.lon)) || !Number.isFinite(Number(receptor?.lat))) return null;
+  let bestValue = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const feature of heatmap?.features || []) {
+    const value = pm25FromFeature(feature);
+    const lonLat = lonLatFromFeature(feature);
+    if (!lonLat || !Number.isFinite(value)) continue;
+    const dx = (lonLat[0] - Number(receptor.lon)) * Math.cos((Number(receptor.lat) * Math.PI) / 180);
+    const dy = lonLat[1] - Number(receptor.lat);
+    const distance = Math.hypot(dx, dy);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestValue = value;
+    }
+  }
+  return bestValue == null ? null : Number(bestValue.toFixed(1));
+}
+
+// Ghep forecast tai receptor dang chon tu cac heatmap horizon, tranh hien trung binh toan thanh pho.
+function mergePointForecast(forecast, heatmapsByHorizon, receptor) {
+  const pointForecast = { ...(forecast?.forecast || {}) };
+  const heatmapValues = Object.fromEntries(
+    [[0, "now"], [6, "6h"], [12, "12h"], [24, "24h"]].map(([horizonKey, cardKey]) => [
+      cardKey,
+      nearestPm25At(heatmapsByHorizon?.[horizonKey], receptor),
+    ]),
+  );
+  const forecastHeatmapValues = ["6h", "12h", "24h"]
+    .map((key) => heatmapValues[key])
+    .filter((value) => value != null && Number.isFinite(value));
+  const heatmapHasHorizonSignal =
+    forecastHeatmapValues.length >= 2 && Math.max(...forecastHeatmapValues) - Math.min(...forecastHeatmapValues) > 0.2;
+  const localNow = heatmapValues.now;
+  const cityNow = Number(forecast?.forecast?.now?.pm25 ?? forecast?.pm25_now);
+
+  for (const [horizonKey, cardKey] of [[0, "now"], [6, "6h"], [12, "12h"], [24, "24h"]]) {
+    let value = heatmapValues[cardKey];
+    const cityForecastValue = Number(forecast?.forecast?.[cardKey]?.pm25);
+    if (
+      horizonKey > 0 &&
+      !heatmapHasHorizonSignal &&
+      localNow != null &&
+      Number.isFinite(cityNow) &&
+      Number.isFinite(cityForecastValue)
+    ) {
+      value = Number(Math.max(1, localNow + (cityForecastValue - cityNow)).toFixed(1));
+    }
+    if (value == null) continue;
+    pointForecast[cardKey] = {
+      ...(pointForecast[cardKey] || {}),
+      pm25: value,
+      risk: riskForPm25(value),
+      source: horizonKey > 0 && !heatmapHasHorizonSignal ? "local_now_plus_model_delta" : `heatmap_horizon_${horizonKey}`,
+    };
+  }
+  return {
+    ...(forecast || {}),
+    location: locationIdFromName(receptor?.name),
+    location_name: receptor?.name,
+    base_hour: heatmapsByHorizon?.[0]?.base_hour || forecast?.base_hour,
+    generated_at: heatmapsByHorizon?.[0]?.generated_at || forecast?.generated_at,
+    forecast: pointForecast,
+    freshness: {
+      ...(forecast?.freshness || {}),
+      source: "selected_receptor_heatmap",
+      base_hour: heatmapsByHorizon?.[0]?.base_hour || forecast?.freshness?.base_hour,
+      generated_at: heatmapsByHorizon?.[0]?.generated_at || forecast?.freshness?.generated_at,
+    },
+  };
+}
+
+function latestHeatmapRequest(horizonH) {
+  return horizonH === 0 ? getLiveHeatmapLatest("hanoi") : getHeatmapLatest(horizonH);
+}
+
+function requestOrNull(request) {
+  return request.catch(() => null);
+}
+
+function requestLocationPayload(factory, locationId) {
+  if (locationId === "hanoi") return factory("hanoi");
+  return factory(locationId).catch(() => factory("hanoi"));
+}
+
+function timeseriesValue(point) {
+  const value = point?.pm25_value ?? point?.pm25 ?? point?.value ?? point?.pm25_mean;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+// Backend hien chi co history cap city; dich baseline do theo PM2.5 now tai receptor dang chon.
+function timeseriesForReceptor(timeseries, forecast, locationName) {
+  const points = timeseries?.points || [];
+  const localNow = Number(forecast?.forecast?.now?.pm25);
+  const latestPointValue = [...points].reverse().map(timeseriesValue).find((value) => value != null);
+  if (!Number.isFinite(localNow) || latestPointValue == null) {
+    return { ...(timeseries || {}), location_name: locationName };
+  }
+  const delta = localNow - latestPointValue;
+  return {
+    ...(timeseries || {}),
+    location_name: locationName,
+    derived_from_location_id: timeseries?.location_id || "hanoi",
+    receptor_adjustment_delta: Number(delta.toFixed(3)),
+    points: points.map((point) => {
+      const value = timeseriesValue(point);
+      if (value == null) return point;
+      const adjusted = Math.max(1, value + delta);
+      return {
+        ...point,
+        pm25_value: Number(adjusted.toFixed(1)),
+        pm25: Number(adjusted.toFixed(1)),
+        derived_for_receptor: locationName,
+      };
+    }),
   };
 }
 
@@ -139,6 +292,7 @@ export default function AirQualityMapDashboard() {
   const horizonRef = useRef(horizon);
   const fullLoadRequestIdRef = useRef(0);
   const horizonRequestIdRef = useRef(0);
+  const selectedLocationId = useMemo(() => locationIdFromName(selectedReceptor.name), [selectedReceptor.name]);
 
   useEffect(() => {
     horizonRef.current = horizon;
@@ -160,22 +314,28 @@ export default function AirQualityMapDashboard() {
     // Tai song song nhieu payload de giam do tre cho man hinh.
     Promise.all([
       getLiveHeatmapLatest("hanoi"),
+      ...FORECAST_HORIZONS.map((item) => requestOrNull(getHeatmapLatest(item))),
       trajectoryRequest(selectedReceptor),
       getForwardPlumeLatest(plumeHorizon),
-      getForecastLatest("hanoi"),
-      getPM25TimeseriesLatest("hanoi"),
-      getSourceAttributionLatest("hanoi"),
+      requestLocationPayload(getForecastLatest, selectedLocationId),
+      requestLocationPayload(getPM25TimeseriesLatest, selectedLocationId),
+      requestLocationPayload(getSourceAttributionLatest, selectedLocationId),
       getStationsLatest(),
     ])
-      .then(([liveHeatmap, trajectories, plume, forecast, timeseries, sources, stations]) => {
+      .then(([liveHeatmap, heatmap6h, heatmap12h, heatmap24h, trajectories, plume, forecast, timeseries, sources, stations]) => {
         if (!active || requestId !== fullLoadRequestIdRef.current) return;
+        const fetchedHeatmapsByHorizon = [
+          [0, liveHeatmap],
+          [6, heatmap6h],
+          [12, heatmap12h],
+          [24, heatmap24h],
+        ].reduce((result, [key, value]) => (value ? { ...result, [key]: value } : result), {});
         setData((current) => ({
-          heatmap: horizonRef.current === requestHorizon ? liveHeatmap : current.heatmap,
+          heatmap: horizonRef.current === requestHorizon ? fetchedHeatmapsByHorizon[requestHorizon] || liveHeatmap || current.heatmap : current.heatmap,
           liveHeatmap: liveHeatmap || current.liveHeatmap,
           heatmapsByHorizon: {
             ...(current.heatmapsByHorizon || {}),
-            [requestHorizon]: liveHeatmap,
-            0: liveHeatmap,
+            ...fetchedHeatmapsByHorizon,
           },
           trajectories,
           plume,
@@ -193,7 +353,7 @@ export default function AirQualityMapDashboard() {
     return () => {
       active = false;
     };
-  }, [refreshTick, selectedReceptor]);
+  }, [refreshTick, selectedLocationId, selectedReceptor]);
 
   const layerData = useMemo(
     () => ({
@@ -207,8 +367,12 @@ export default function AirQualityMapDashboard() {
     [data],
   );
   const displayForecast = useMemo(
-    () => mergeLiveNowForecast(data.forecast, data.liveHeatmap),
-    [data.forecast, data.liveHeatmap],
+    () => mergePointForecast(mergeLiveNowForecast(data.forecast, data.liveHeatmap), data.heatmapsByHorizon, selectedReceptor),
+    [data.forecast, data.heatmapsByHorizon, data.liveHeatmap, selectedReceptor],
+  );
+  const displayTimeseries = useMemo(
+    () => timeseriesForReceptor(data.timeseries, displayForecast, selectedReceptor.name),
+    [data.timeseries, displayForecast, selectedReceptor.name],
   );
   const trajectoryStats = useMemo(() => trajectorySummary(data.trajectories), [data.trajectories]);
 
@@ -232,8 +396,7 @@ export default function AirQualityMapDashboard() {
   function changeHorizon(nextHorizon) {
     horizonRef.current = nextHorizon;
     const requestId = ++horizonRequestIdRef.current;
-    const existingLiveHeatmap = data.heatmapsByHorizon?.[nextHorizon];
-    setStatus({ loading: !existingLiveHeatmap, error: "" });
+    setStatus({ loading: true, error: "" });
     setHorizon(nextHorizon);
     setData((current) => ({
       ...current,
@@ -241,7 +404,7 @@ export default function AirQualityMapDashboard() {
     }));
     // Tai song song nhieu payload de giam do tre cho man hinh.
     Promise.all([
-      existingLiveHeatmap ? Promise.resolve(existingLiveHeatmap) : getLiveHeatmapLatest("hanoi"),
+      latestHeatmapRequest(nextHorizon),
       getForwardPlumeLatest(nextHorizon === 0 ? 6 : nextHorizon),
     ])
       .then(([heatmap, plume]) => {
@@ -249,7 +412,7 @@ export default function AirQualityMapDashboard() {
         setData((current) => ({
           ...current,
           heatmap,
-          liveHeatmap: heatmap,
+          liveHeatmap: nextHorizon === 0 ? heatmap : current.liveHeatmap,
           plume,
           heatmapsByHorizon: {
             ...(current.heatmapsByHorizon || {}),
@@ -335,23 +498,14 @@ export default function AirQualityMapDashboard() {
             <em>{trajectoryStats.hotCount} red</em>
           </div>
         </section>
-        <ForecastPanel forecast={displayForecast} />
-        <SourceAttributionPanel sourceAttribution={data.sources} plume={data.plume} />
-        <PM25ForecastChart timeseries={data.timeseries} />
+        <ForecastPanel forecast={displayForecast} locationName={selectedReceptor.name} />
+        <PM25ForecastChart timeseries={displayTimeseries} locationName={selectedReceptor.name} />
       </aside>
 
       <div className="windy-legend" aria-label="PM2.5 color legend">
         <span>PM2.5 scale</span>
         <div className="legend-ramp" />
         <div className="legend-ticks"><b>0</b><b>30</b><b>60</b><b>80+</b></div>
-      </div>
-
-      <div className="windy-bottom-timeline">
-        <div className="timeline-caption">
-          <strong>{horizon === 0 ? "Latest observed/nowcast" : `Forecast +${horizon}h`}</strong>
-          <span>{data.liveHeatmap?.base_hour || data.liveHeatmap?.generated_at || "live serving"}</span>
-        </div>
-        <TimeSelector horizon={horizon} onChange={changeHorizon} />
       </div>
 
       {status.loading && <div className="status-toast windy-status">Loading Hanoi live map</div>}

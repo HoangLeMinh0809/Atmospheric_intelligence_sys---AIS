@@ -34,7 +34,7 @@ function fmtHour(value) {
 }
 
 // Render component PM25ForecastChart va gan state/props cho UI.
-export default function PM25ForecastChart({ timeseries }) {
+export default function PM25ForecastChart({ timeseries, locationName = "" }) {
   const sorted = chartPoints(timeseries);
   const [minValue, maxValue] = valueRange(sorted);
   const values = sorted.map((point) => point.pm25_value);
@@ -60,7 +60,7 @@ export default function PM25ForecastChart({ timeseries }) {
       <div className="chart-title-row">
         <div>
           <h3>PM2.5 history</h3>
-          <span>{sorted.length ? `${sorted.length} latest hourly points` : "No history points"}</span>
+          <span>{sorted.length ? `${locationName ? `${locationName} · ` : ""}${sorted.length} latest hourly points` : "No history points"}</span>
         </div>
         <strong>{fmtValue(latest)}</strong>
       </div>

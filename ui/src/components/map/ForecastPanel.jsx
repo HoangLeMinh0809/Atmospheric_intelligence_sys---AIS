@@ -7,12 +7,12 @@ const CARDS = [
 ];
 
 // Render component ForecastPanel va gan state/props cho UI.
-export default function ForecastPanel({ forecast }) {
+export default function ForecastPanel({ forecast, locationName = "" }) {
   const data = forecast?.forecast || {};
   return (
     <section className="map-panel forecast-panel">
       <div className="panel-title-row">
-        <h3>Model City Forecast</h3>
+        <h3>{locationName ? `${locationName} Forecast` : "Model City Forecast"}</h3>
         <span>{forecast?.model?.model_version || forecast?.model?.model_version_6h || "model pending"}</span>
       </div>
       <div className="forecast-grid">

@@ -205,6 +205,14 @@ def to_iso(value: Any) -> str | None:
     return str(value)
 
 
+# Cong them so gio vao timestamp va tra ISO UTC; dung cho valid_time forecast live.
+def add_hours_iso(value: Any, hours: int) -> str | None:
+    timestamp = parse_time(to_iso(value))
+    if timestamp is None:
+        return None
+    return iso_z(timestamp + timedelta(hours=hours))
+
+
 # Cast gia tri nullable sang float va giu None neu thieu.
 def float_or_none(value: Any) -> float | None:
     return float(value) if value is not None else None
@@ -838,8 +846,22 @@ def live_pm25_value(
 
 
 # Tao GeoJSON heatmap PM2.5 live tu Cassandra va spatial gradient.
-def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> dict[str, Any]:
+def build_live_cassandra_heatmap(location_id: str, date: str | None = None, horizon_h: int = 0) -> dict[str, Any]:
     data = load_cassandra_feature_state(location_id, date=date)
+    if horizon_h not in {0, 6, 12, 24}:
+        raise HTTPException(status_code=400, detail={"error": "invalid_horizon", "allowed": [0, 6, 12, 24]})
+    now_anchor = float_or_none(data.get("pm25_mean")) or float_or_none(data.get("pm25_median"))
+    forecast_delta = 0.0
+    forecast_payload = None
+    if horizon_h > 0:
+        forecast_payload = load_cassandra_forecast(location_id)
+        forecast_value = float_or_none((forecast_payload.get("forecast") or {}).get(f"{horizon_h}h", {}).get("pm25"))
+        if forecast_value is None or now_anchor is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "cassandra_forecast_horizon_missing", "location_id": location_id, "horizon_h": horizon_h},
+            )
+        forecast_delta = forecast_value - float(now_anchor)
     west, south, east, north = parse_live_bbox()
     cols = max(8, min(48, int(env("VIS_LIVE_HEATMAP_COLS", "28") or "28")))
     rows = max(6, min(36, int(env("VIS_LIVE_HEATMAP_ROWS", "20") or "20")))
@@ -856,6 +878,8 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
             lon = (x1 + x2) / 2
             lat = (y1 + y2) / 2
             pm25 = live_pm25_value(data, lon, lat, west, south, east, north, time_bucket=time_bucket, noise_ratio=noise_ratio)
+            if horizon_h > 0:
+                pm25 = max(1.0, min(250.0, pm25 + forecast_delta))
             features.append(
                 {
                     "type": "Feature",
@@ -865,8 +889,8 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
                         "location_id": location_id,
                         "pm25_value": round(pm25, 1),
                         "risk": risk_level(pm25),
-                        "horizon_h": 0,
-                        "source": "cassandra_feature_state",
+                        "horizon_h": horizon_h,
+                        "source": "cassandra_feature_state" if horizon_h == 0 else "cassandra_live_plus_forecast_delta",
                         "base_hour": to_iso(data.get("base_hour")),
                     },
                 }
@@ -875,18 +899,21 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
         "type": "FeatureCollection",
         "available": True,
         "layer_name": "pm25_heatmap",
-        "source": "cassandra",
-        "horizon_h": 0,
+        "source": "cassandra" if horizon_h == 0 else "cassandra_live_forecast",
+        "horizon_h": horizon_h,
         "location_id": location_id,
         "base_hour": to_iso(data.get("base_hour")),
+        "valid_time": add_hours_iso(data.get("base_hour"), horizon_h),
         "generated_at": iso_z(utc_now()),
         "source_loaded_at": to_iso(data.get("loaded_at")) or to_iso(data.get("created_at")),
         "live_bucket_seconds": bucket_seconds,
         "live_noise_ratio": noise_ratio,
+        "forecast_delta": round(forecast_delta, 3),
+        "forecast_source": (forecast_payload or {}).get("source") if forecast_payload else None,
         "resolution": {"cols": cols, "rows": rows, "cells": len(features)},
         "summary": {
-            "pm25_mean": float_or_none(data.get("pm25_mean")),
-            "pm25_median": float_or_none(data.get("pm25_median")),
+            "pm25_mean": None if float_or_none(data.get("pm25_mean")) is None else round(float_or_none(data.get("pm25_mean")) + forecast_delta, 3),
+            "pm25_median": None if float_or_none(data.get("pm25_median")) is None else round(float_or_none(data.get("pm25_median")) + forecast_delta, 3),
             "station_count": data.get("station_count"),
             "coverage_avg": float_or_none(data.get("coverage_avg")),
             "feature_version": data.get("feature_version"),
@@ -1211,8 +1238,8 @@ def manifest_latest(date: str | None = None) -> dict[str, Any]:
 def pm25_heatmap_latest(horizon_h: int = 0, date: str | None = None) -> JSONResponse:
     if horizon_h not in {0, 6, 12, 24}:
         raise HTTPException(status_code=400, detail={"error": "invalid_horizon", "allowed": [0, 6, 12, 24]})
-    if date is None and horizon_h == 0 and cassandra_forecast_enabled():
-        return JSONResponse(build_live_cassandra_heatmap("hanoi"))
+    if date is None and cassandra_forecast_enabled():
+        return JSONResponse(build_live_cassandra_heatmap("hanoi", horizon_h=horizon_h))
     layer = find_layer(load_manifest(date), "pm25_heatmap", horizon_h=horizon_h)
     if layer is None:
         raise HTTPException(status_code=404, detail={"error": "layer_not_found", "layer_name": "pm25_heatmap", "horizon_h": horizon_h})
