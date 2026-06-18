@@ -47,7 +47,6 @@ cqlsh_stdin <<CQL
 CREATE KEYSPACE IF NOT EXISTS ${CASSANDRA_KEYSPACE}
 WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 
-# Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
 CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_feature_state_by_location_hour (
   location_id text,
   feature_version text,
@@ -142,7 +141,6 @@ CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_feature_state_by_location_
   PRIMARY KEY ((location_id, feature_version), base_hour)
 ) WITH CLUSTERING ORDER BY (base_hour DESC);
 
-# Tao bang dich neu day la lan chay dau tien hoac moi truong vua duoc bootstrap.
 CREATE TABLE IF NOT EXISTS ${CASSANDRA_KEYSPACE}.pm25_forecast_latest_by_location (
   location_id text PRIMARY KEY,
   base_hour timestamp,

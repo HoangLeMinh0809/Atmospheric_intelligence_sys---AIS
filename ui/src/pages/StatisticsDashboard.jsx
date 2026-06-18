@@ -1,6 +1,5 @@
 // File nay: page React gom API calls, state va layout man hinh.
 import { useEffect, useMemo, useState } from "react";
-import StatCard from "../components/cards/StatCard";
 import StatisticsCharts from "../components/charts/StatisticsCharts";
 import {
   getForecastLatest,
@@ -37,6 +36,36 @@ function countWhere(values, test) {
   return values.reduce((count, value) => count + (test(value) ? 1 : 0), 0);
 }
 
+function fmt(value, digits = 1) {
+  return Number.isFinite(value) ? value.toFixed(digits) : "--";
+}
+
+function trendPoints(points) {
+  return [...(points || [])]
+    .map((row) => ({
+      timestamp: row.timestamp || row.base_hour,
+      value: numberOrNull(row.pm25_value ?? row.pm25 ?? row.value ?? row.pm25_mean),
+    }))
+    .filter((row) => row.timestamp && row.value != null)
+    .sort((left, right) => String(left.timestamp).localeCompare(String(right.timestamp)))
+    .slice(-48);
+}
+
+function sparkPath(points, width, height) {
+  if (!points.length) return "";
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  return points
+    .map((point, index) => {
+      const x = 10 + (index / Math.max(points.length - 1, 1)) * (width - 20);
+      const y = height - 14 - ((point.value - min) / span) * (height - 26);
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
 // Tai du lieu realtime va render man hinh thong ke PM2.5.
 export default function StatisticsDashboard() {
   const [data, setData] = useState({ forecast: null, heatmap: null, timeseries: null, stations: null });
@@ -57,7 +86,7 @@ export default function StatisticsDashboard() {
       .catch((error) => setStatus({ loading: false, error: error.message }));
   }, []);
 
-  const points = data.timeseries?.points || [];
+  const points = useMemo(() => data.timeseries?.points || [], [data.timeseries]);
   const distribution = useMemo(() => {
     const liveStationValues = numeric((data.stations?.features || []).map((feature) => feature?.properties?.pm25_value ?? feature?.properties?.pm25));
     const liveHeatmapValues = numeric((data.heatmap?.features || []).map((feature) => feature?.properties?.pm25_value));
@@ -84,7 +113,17 @@ export default function StatisticsDashboard() {
   const lowCount = countWhere(distribution, (value) => value < 25);
   const midCount = countWhere(distribution, (value) => value >= 25 && value < 40);
   const highCount = countWhere(distribution, (value) => value >= 40);
-  const forecast = data.forecast?.forecast || {};
+  const trend = useMemo(() => trendPoints(points), [points]);
+  const latestTrend = trend.at(-1)?.value ?? null;
+  const previousTrend = trend.length > 1 ? trend[trend.length - 2].value : null;
+  const delta = latestTrend != null && previousTrend != null ? latestTrend - previousTrend : null;
+  const coverage = liveGridCount + stationCount;
+  const hotShare = distribution.length ? (highCount / distribution.length) * 100 : null;
+  const riskBuckets = [
+    { label: "Low", value: lowCount, className: "low" },
+    { label: "Mid", value: midCount, className: "mid" },
+    { label: "High", value: highCount, className: "high" },
+  ];
   const sourceSummary = [
     { label: "Live grid", value: liveGridCount },
     { label: "Stations", value: stationCount },
@@ -102,23 +141,62 @@ export default function StatisticsDashboard() {
         <a className="dashboard-link" href="#/">Quay lại bản đồ</a>
       </header>
       {status.error ? <div className="status-toast error">{status.error}</div> : null}
-      <section className="card-grid">
-        <StatCard title="PM2.5 trung bình" value={avg == null ? "--" : avg.toFixed(1)} unit=" µg/m³" />
-        <StatCard title="PM2.5 trung vị" value={median == null ? "--" : median.toFixed(1)} unit=" µg/m³" />
-        <StatCard title="PM2.5 thấp nhất" value={min == null ? "--" : min.toFixed(1)} unit=" µg/m³" />
-        <StatCard title="PM2.5 cao nhất" value={max == null ? "--" : max.toFixed(1)} unit=" µg/m³" />
-        <StatCard title="P90 PM2.5" value={p90 == null ? "--" : p90.toFixed(1)} unit=" µg/m³" />
-        <StatCard title="P95 PM2.5" value={p95 == null ? "--" : p95.toFixed(1)} unit=" µg/m³" />
-        <StatCard title="Điểm quan sát" value={distribution.length || "--"} />
-        <StatCard title="Điểm live grid" value={liveGridCount || "--"} />
-        <StatCard title="Trạm quan trắc" value={stationCount || "--"} />
-        <StatCard title="Chuỗi thời gian" value={points.length || "--"} />
-        <StatCard title="Mức thấp" value={lowCount || "--"} />
-        <StatCard title="Mức trung bình" value={midCount || "--"} />
-        <StatCard title="Mức cao" value={highCount || "--"} />
-        <StatCard title="Dự báo +6h" value={numberOrNull(forecast["6h"]?.pm25)?.toFixed(1) || "--"} unit=" µg/m³" />
-        <StatCard title="Dự báo +12h" value={numberOrNull(forecast["12h"]?.pm25)?.toFixed(1) || "--"} unit=" µg/m³" />
-        <StatCard title="Dự báo +24h" value={numberOrNull(forecast["24h"]?.pm25)?.toFixed(1) || "--"} unit=" µg/m³" />
+      <section className="statistics-overview">
+        <div className="overview-primary">
+          <span>Live PM2.5 average</span>
+          <strong>{fmt(avg)}</strong>
+          <em>µg/m³ · P95 {fmt(p95)} · max {fmt(max)}</em>
+        </div>
+        <div className="overview-trend">
+          <div className="overview-panel-heading">
+            <span>48h history</span>
+            <strong>{delta == null ? "stable" : `${delta >= 0 ? "+" : ""}${delta.toFixed(1)}`}</strong>
+          </div>
+          <svg viewBox="0 0 420 126" role="img" aria-label="PM2.5 48 hour trend">
+            <line x1="10" x2="410" y1="90" y2="90" className="overview-threshold high" />
+            <line x1="10" x2="410" y1="64" y2="64" className="overview-threshold mid" />
+            <path d={sparkPath(trend, 420, 126)} className="overview-sparkline" />
+          </svg>
+        </div>
+        <div className="overview-risk">
+          <div className="overview-panel-heading">
+            <span>Current risk mix</span>
+            <strong>{hotShare == null ? "--" : `${hotShare.toFixed(0)}% hot`}</strong>
+          </div>
+          <div className="risk-stack">
+            {riskBuckets.map((bucket) => (
+              <i
+                key={bucket.label}
+                className={bucket.className}
+                style={{ flexGrow: Math.max(bucket.value, distribution.length ? 1 : 0) }}
+                title={`${bucket.label}: ${bucket.value}`}
+              />
+            ))}
+          </div>
+          <div className="risk-count-row">
+            {riskBuckets.map((bucket) => (
+              <span key={bucket.label}>{bucket.label} <b>{bucket.value}</b></span>
+            ))}
+          </div>
+        </div>
+        <div className="overview-forecast">
+          {forecastBars.map((item) => (
+            <span key={item.label}>
+              <em>{item.label}</em>
+              <strong>{fmt(item.value)}</strong>
+            </span>
+          ))}
+        </div>
+        <div className="overview-coverage">
+          <span>Coverage</span>
+          <strong>{coverage || "--"}</strong>
+          <em>{liveGridCount} grid · {stationCount} stations · {trend.length} history</em>
+        </div>
+        <div className="overview-quantiles">
+          <span>Distribution</span>
+          <strong>{fmt(min)} / {fmt(median)} / {fmt(p90)}</strong>
+          <em>min / median / p90</em>
+        </div>
       </section>
       {status.loading ? (
         <div className="panel">Đang tải dữ liệu thống kê...</div>

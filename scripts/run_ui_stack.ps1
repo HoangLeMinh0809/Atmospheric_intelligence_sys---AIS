@@ -4,6 +4,7 @@ param(
     [switch]$SkipVisualizationApi,
     [switch]$SkipPortForward,
     [switch]$KeepExistingPortForward,
+    [switch]$RequireVisualizationManifest,
     [switch]$UseK8sCassandra,
     [int]$UiLocalPort = 3000,
     [int]$WaitTimeoutSeconds = 180
@@ -117,6 +118,57 @@ function Patch-RuntimeConfig {
     }
 }
 
+# Check the visualization manifest endpoint. Cache may not exist yet when this
+# script is used only to bring up the UI/API stack.
+function Test-VisualizationManifestEndpoint {
+    param([Parameter(Mandatory = $true)][string]$Url)
+
+    try {
+        $manifestResponse = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 20
+        Write-Host ("[CHECK] Visualization manifest status={0} bytes={1}" -f $manifestResponse.StatusCode, $manifestResponse.Content.Length) -ForegroundColor Yellow
+        return
+    }
+    catch {
+        $statusCode = $null
+        if ($_.Exception.Response) {
+            try {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            catch {
+                $statusCode = $null
+            }
+        }
+
+        $body = ""
+        if ($_.ErrorDetails -and -not [string]::IsNullOrWhiteSpace($_.ErrorDetails.Message)) {
+            $body = $_.ErrorDetails.Message
+        }
+        elseif ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($stream) {
+                    $reader = [System.IO.StreamReader]::new($stream)
+                    $body = $reader.ReadToEnd()
+                    $reader.Dispose()
+                }
+            }
+            catch {
+                $body = ""
+            }
+        }
+
+        if ($RequireVisualizationManifest) {
+            throw
+        }
+
+        Write-Host ("[WARN] Visualization manifest is not ready yet; UI/API deployment is healthy but cache serving returned status={0}." -f $(if ($null -ne $statusCode) { $statusCode } else { "unknown" })) -ForegroundColor Yellow
+        if (-not [string]::IsNullOrWhiteSpace($body)) {
+            Write-Host ("[WARN] Manifest response: {0}" -f $body) -ForegroundColor Yellow
+        }
+        Write-Host "[WARN] Run TODO4 visualization/export steps to create hdfs://namenode:9000/visualization_cache/manifest/latest.json, or rerun with -RequireVisualizationManifest when you want this smoke test to be strict." -ForegroundColor Yellow
+    }
+}
+
 Require-Command -CommandName "docker"
 Require-Command -CommandName "kubectl"
 
@@ -182,8 +234,7 @@ Step "5) Smoke test UI and visualization API proxy" {
         $uiResponse = Invoke-WebRequest -Uri "http://127.0.0.1:${UiLocalPort}/" -UseBasicParsing -TimeoutSec 10
         Write-Host ("[CHECK] UI / status={0}" -f $uiResponse.StatusCode) -ForegroundColor Yellow
 
-        $manifestResponse = Invoke-WebRequest -Uri $manifestUrl -UseBasicParsing -TimeoutSec 20
-        Write-Host ("[CHECK] Visualization manifest status={0} bytes={1}" -f $manifestResponse.StatusCode, $manifestResponse.Content.Length) -ForegroundColor Yellow
+        Test-VisualizationManifestEndpoint -Url $manifestUrl
     }
 }
 

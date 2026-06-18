@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Cluster HYSPLIT trajectories")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--location-id", default=os.getenv("LOCATION_ID", "hanoi"))
     parser.add_argument("--full-refresh", nargs="?", const="1", default=os.getenv("FULL_REFRESH", "0"))
     parser.add_argument("--direction", choices=("backward", "forward", "all"), default=os.getenv("DIRECTION", "backward"))
     parser.add_argument("--source-table", default=os.getenv("HYSPLIT_TRAJ_SILVER_TABLE", ""))
@@ -77,6 +78,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             traj_id STRING,
+            location_id STRING,
             cluster_id INT,
             direction STRING,
             age_h INT,
@@ -94,6 +96,21 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    existing = set(spark.table(table_name).columns)
+    if "location_id" not in existing:
+        spark.sql(f"ALTER TABLE {table_name} ADD COLUMN location_id STRING")
+
+
+# Align output rows with the current target schema before append.
+def align_to_target_schema(spark: SparkSession, df, table_name: str):
+    target_schema = spark.table(table_name).schema
+    aligned = df
+    for field in target_schema:
+        if field.name not in aligned.columns:
+            aligned = aligned.withColumn(field.name, F.lit(None).cast(field.dataType))
+        else:
+            aligned = aligned.withColumn(field.name, F.col(field.name).cast(field.dataType))
+    return aligned.select([field.name for field in target_schema])
 
 
 # Chon/loc tap du lieu phu hop cho du lieu trajectory HYSPLIT.
@@ -238,6 +255,8 @@ def main() -> None:
     points = spark.table(source_table).filter(
         F.col("lat").isNotNull() & F.col("lon").isNotNull() & F.col("age_h").isNotNull()
     )
+    if "location_id" not in points.columns:
+        points = points.withColumn("location_id", F.lit(args.location_id))
     if args.direction != "all":
         points = points.filter(F.col("direction") == F.lit(args.direction))
     points = filter_by_init_window(points, args.start_date, args.end_date)
@@ -322,6 +341,7 @@ def main() -> None:
         points.join(assignments, on=["traj_id", "direction"], how="inner")
         .select(
             "traj_id",
+            "location_id",
             "cluster_id",
             "direction",
             "age_h",
@@ -360,6 +380,7 @@ def main() -> None:
 
     output_count = output.count()
     if output_count:
+        output = align_to_target_schema(spark, output, target_table)
         append_cluster_rows(output, target_table)
 
     # Bat dau gom nhom de tinh cac chi so tong hop.

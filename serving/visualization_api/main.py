@@ -205,6 +205,14 @@ def to_iso(value: Any) -> str | None:
     return str(value)
 
 
+# Cong them so gio vao timestamp va tra ISO UTC; dung cho valid_time forecast live.
+def add_hours_iso(value: Any, hours: int) -> str | None:
+    timestamp = parse_time(to_iso(value))
+    if timestamp is None:
+        return None
+    return iso_z(timestamp + timedelta(hours=hours))
+
+
 # Cast gia tri nullable sang float va giu None neu thieu.
 def float_or_none(value: Any) -> float | None:
     return float(value) if value is not None else None
@@ -496,6 +504,17 @@ LIVE_STATION_POINTS = [
     ("thanh_xuan", "Thanh Xuân", 105.8050, 20.9960),
 ]
 
+PROXY_TRAJECTORY_SECTORS = [
+    ("NW", -0.18, 0.12),
+    ("N", -0.02, 0.15),
+    ("NE", 0.17, 0.11),
+    ("W", -0.20, 0.01),
+    ("E", 0.20, -0.01),
+    ("SW", -0.16, -0.10),
+    ("S", 0.01, -0.13),
+    ("SE", 0.16, -0.09),
+]
+
 
 # Tao station cards/features realtime tu feature state Cassandra moi nhat.
 def build_cassandra_stations(location_id: str) -> dict[str, Any]:
@@ -578,6 +597,120 @@ def build_cassandra_source_attribution(location_id: str) -> dict[str, Any]:
     }
 
 
+def trajectory_style_color(score: float) -> str:
+    if score >= 0.70:
+        return "#ef4444"
+    if score >= 0.50:
+        return "#f59e0b"
+    return "#67e8f9"
+
+
+def proxy_trajectory_coords(source_lon: float, source_lat: float, receptor_lon: float, receptor_lat: float, index: int) -> list[list[float]]:
+    coords = []
+    curve_sign = -1 if index % 2 else 1
+    for step in range(12):
+        t = step / 11
+        bend = math.sin(t * math.pi) * (0.018 + (index % 3) * 0.004) * curve_sign
+        coords.append(
+            [
+                round(source_lon + (receptor_lon - source_lon) * t + bend * 0.45, 6),
+                round(source_lat + (receptor_lat - source_lat) * t - bend * 0.28, 6),
+            ]
+        )
+    return coords
+
+
+def point_to_segment_distance(lon: float, lat: float, start: list[float], end: list[float]) -> float:
+    mid_lat = (float(start[1]) + float(end[1])) / 2
+    scale_x = math.cos(math.radians(mid_lat))
+    px, py = lon * scale_x, lat
+    x1, y1 = float(start[0]) * scale_x, float(start[1])
+    x2, y2 = float(end[0]) * scale_x, float(end[1])
+    dx, dy = x2 - x1, y2 - y1
+    if dx == 0 and dy == 0:
+        return math.hypot(px - x1, py - y1)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(px - (x1 + dx * t), py - (y1 + dy * t))
+
+
+def path_pollution_intersection_score(coords: list[list[float]], data: dict[str, Any], receptor_lon: float, receptor_lat: float) -> float:
+    hazard_lon = float_or_none(data.get("traj_source_lon"))
+    hazard_lat = float_or_none(data.get("traj_source_lat"))
+    if hazard_lon is None or hazard_lat is None:
+        hazard_lon, hazard_lat = receptor_lon - 0.05, receptor_lat + 0.03
+    distances = [
+        point_to_segment_distance(hazard_lon, hazard_lat, coords[index], coords[index + 1])
+        for index in range(max(0, len(coords) - 1))
+    ]
+    if not distances:
+        return 0.0
+    return max(0.0, min(1.0, 1.0 - (min(distances) / 0.055)))
+
+
+def proxy_trajectory_risk(data: dict[str, Any], coords: list[list[float]], receptor_lon: float, receptor_lat: float) -> float:
+    pm25 = float_or_none(data.get("pm25_now")) or float_or_none(data.get("pm25_mean")) or float_or_none(data.get("pm25_median")) or 35.0
+    no2 = float_or_none(data.get("traj_path_no2_mean") or data.get("s5p_no2_mean")) or 0.0
+    aer = float_or_none(data.get("traj_path_aer_mean") or data.get("s5p_aer_ai_mean") or data.get("aod_mean")) or 0.0
+    grad = float_or_none(data.get("pm25_grad_mag")) or 0.0
+    pollution_term = max(0.0, min(1.0, (pm25 - 20.0) / 65.0))
+    intersection_term = path_pollution_intersection_score(coords, data, receptor_lon, receptor_lat)
+    satellite_term = max(0.0, min(1.0, no2 * 0.12 + aer * 0.08 + grad / 35.0))
+    score = 0.20 + pollution_term * 0.34 + intersection_term * 0.36 + satellite_term * 0.10
+    return round(max(0.05, min(0.98, score)), 3)
+
+
+def build_proxy_trajectory_features(
+    data: dict[str, Any],
+    *,
+    location_id: str,
+    location_name: str | None,
+    receptor_lon: float,
+    receptor_lat: float,
+) -> list[dict[str, Any]]:
+    sectors = list(PROXY_TRAJECTORY_SECTORS)
+    source_lon = float_or_none(data.get("traj_source_lon"))
+    source_lat = float_or_none(data.get("traj_source_lat"))
+    if source_lon is not None and source_lat is not None:
+        sectors.insert(0, ("RT", source_lon - receptor_lon, source_lat - receptor_lat))
+    features = []
+    seen: set[tuple[float, float]] = set()
+    for index, (label, dx, dy) in enumerate(sectors):
+        start_lon = receptor_lon + dx
+        start_lat = receptor_lat + dy
+        key = (round(start_lon, 3), round(start_lat, 3))
+        if key in seen:
+            continue
+        seen.add(key)
+        coords = proxy_trajectory_coords(start_lon, start_lat, receptor_lon, receptor_lat, index)
+        risk = proxy_trajectory_risk(data, coords, receptor_lon, receptor_lat)
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {
+                    "endpoint": location_name or location_id,
+                    "receptor_id": location_id,
+                    "receptor_name": location_name or location_id,
+                    "location_id": location_id,
+                    "location_name": location_name or location_id,
+                    "base_time": to_iso(data.get("hysplit_time") or data.get("base_hour")),
+                    "source": "proxy_multi_direction",
+                    "trajectory_kind": "proxy_ensemble",
+                    "direction_label": label,
+                    "risk_score": risk,
+                    "pollution_score": risk,
+                    "risk": risk_level(float_or_none(data.get("pm25_now")) or float_or_none(data.get("pm25_mean"))),
+                    "style_color": trajectory_style_color(risk),
+                    "derived_for_receptor": True,
+                    "description": f"Proxy {label} path; redder lines pass nearer the current polluted upwind signal.",
+                },
+            }
+        )
+        if len(features) >= 8:
+            break
+    return features
+
+
 # Tao payload backward trajectory, uu tien duong HYSPLIT that trong cache.
 def build_cassandra_backward_trajectories(
     location_id: str,
@@ -587,59 +720,48 @@ def build_cassandra_backward_trajectories(
     lat: float | None = None,
 ) -> dict[str, Any]:
     data = load_cassandra_feature_state("hanoi")
+    receptor_lon = lon if lon is not None else 105.8542
+    receptor_lat = lat if lat is not None else 21.0285
     cached = load_latest_cached_trajectory_payload(location_id=location_id, location_name=location_name, lon=lon, lat=lat)
     if cached is not None and cached.get("features"):
         result = dict(cached)
         result["source"] = "latest_hysplit_trajectory_with_cassandra_freshness"
         result["realtime_base_hour"] = to_iso(data.get("base_hour"))
         result["generated_at"] = iso_z(utc_now())
-        for feature in result.get("features", []):
+        for index, feature in enumerate(result.get("features", [])):
             props = dict(feature.get("properties") or {})
             props["source"] = props.get("source") or "hysplit_trajectory_cache"
             props["realtime_base_hour"] = to_iso(data.get("base_hour"))
             props["display_mode"] = "actual_latest_path"
+            props["trajectory_kind"] = props.get("trajectory_kind") or "actual_hysplit"
+            props["risk_score"] = props.get("risk_score") or round(0.35 + min(0.35, index * 0.04), 3)
+            props["style_color"] = props.get("style_color") or trajectory_style_color(float(props["risk_score"]))
             feature["properties"] = props
         return result
 
-    receptor_lon = lon if lon is not None else 105.8542
-    receptor_lat = lat if lat is not None else 21.0285
-    source_lon = float_or_none(data.get("traj_source_lon"))
-    source_lat = float_or_none(data.get("traj_source_lat"))
-    if source_lon is None or source_lat is None:
-        source_lon, source_lat = receptor_lon - 0.12, receptor_lat + 0.08
-    coords = []
-    for step in range(10):
-        t = step / 9
-        bend = math.sin(t * math.pi) * 0.025
-        coords.append(
-            [
-                round(source_lon + (receptor_lon - source_lon) * t + bend * 0.35, 6),
-                round(source_lat + (receptor_lat - source_lat) * t - bend * 0.20, 6),
-            ]
-        )
+    features = build_proxy_trajectory_features(
+        data,
+        location_id=location_id,
+        location_name=location_name,
+        receptor_lon=receptor_lon,
+        receptor_lat=receptor_lat,
+    )
     return {
         "type": "FeatureCollection",
         "available": True,
         "layer_name": "backward_trajectories",
         "source": "cassandra",
-        "display_mode": "synthetic_fallback",
+        "display_mode": "proxy_ensemble",
         "location_id": location_id,
+        "selected_location": {
+            "location_id": location_id,
+            "location_name": location_name,
+            "lon": receptor_lon,
+            "lat": receptor_lat,
+            "matched_cached_trajectory": False,
+        },
         "generated_at": iso_z(utc_now()),
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {"type": "LineString", "coordinates": coords},
-                "properties": {
-                    "endpoint": location_name or location_id,
-                    "receptor_id": location_id,
-                    "receptor_name": location_name or location_id,
-                    "base_time": to_iso(data.get("hysplit_time") or data.get("base_hour")),
-                    "source": "cassandra_feature_state",
-                    "style_color": "#67e8f9",
-                    "derived_for_receptor": True,
-                },
-            }
-        ],
+        "features": features,
     }
 
 
@@ -724,8 +846,22 @@ def live_pm25_value(
 
 
 # Tao GeoJSON heatmap PM2.5 live tu Cassandra va spatial gradient.
-def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> dict[str, Any]:
+def build_live_cassandra_heatmap(location_id: str, date: str | None = None, horizon_h: int = 0) -> dict[str, Any]:
     data = load_cassandra_feature_state(location_id, date=date)
+    if horizon_h not in {0, 6, 12, 24}:
+        raise HTTPException(status_code=400, detail={"error": "invalid_horizon", "allowed": [0, 6, 12, 24]})
+    now_anchor = float_or_none(data.get("pm25_mean")) or float_or_none(data.get("pm25_median"))
+    forecast_delta = 0.0
+    forecast_payload = None
+    if horizon_h > 0:
+        forecast_payload = load_cassandra_forecast(location_id)
+        forecast_value = float_or_none((forecast_payload.get("forecast") or {}).get(f"{horizon_h}h", {}).get("pm25"))
+        if forecast_value is None or now_anchor is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "cassandra_forecast_horizon_missing", "location_id": location_id, "horizon_h": horizon_h},
+            )
+        forecast_delta = forecast_value - float(now_anchor)
     west, south, east, north = parse_live_bbox()
     cols = max(8, min(48, int(env("VIS_LIVE_HEATMAP_COLS", "28") or "28")))
     rows = max(6, min(36, int(env("VIS_LIVE_HEATMAP_ROWS", "20") or "20")))
@@ -742,6 +878,8 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
             lon = (x1 + x2) / 2
             lat = (y1 + y2) / 2
             pm25 = live_pm25_value(data, lon, lat, west, south, east, north, time_bucket=time_bucket, noise_ratio=noise_ratio)
+            if horizon_h > 0:
+                pm25 = max(1.0, min(250.0, pm25 + forecast_delta))
             features.append(
                 {
                     "type": "Feature",
@@ -751,8 +889,8 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
                         "location_id": location_id,
                         "pm25_value": round(pm25, 1),
                         "risk": risk_level(pm25),
-                        "horizon_h": 0,
-                        "source": "cassandra_feature_state",
+                        "horizon_h": horizon_h,
+                        "source": "cassandra_feature_state" if horizon_h == 0 else "cassandra_live_plus_forecast_delta",
                         "base_hour": to_iso(data.get("base_hour")),
                     },
                 }
@@ -761,18 +899,21 @@ def build_live_cassandra_heatmap(location_id: str, date: str | None = None) -> d
         "type": "FeatureCollection",
         "available": True,
         "layer_name": "pm25_heatmap",
-        "source": "cassandra",
-        "horizon_h": 0,
+        "source": "cassandra" if horizon_h == 0 else "cassandra_live_forecast",
+        "horizon_h": horizon_h,
         "location_id": location_id,
         "base_hour": to_iso(data.get("base_hour")),
+        "valid_time": add_hours_iso(data.get("base_hour"), horizon_h),
         "generated_at": iso_z(utc_now()),
         "source_loaded_at": to_iso(data.get("loaded_at")) or to_iso(data.get("created_at")),
         "live_bucket_seconds": bucket_seconds,
         "live_noise_ratio": noise_ratio,
+        "forecast_delta": round(forecast_delta, 3),
+        "forecast_source": (forecast_payload or {}).get("source") if forecast_payload else None,
         "resolution": {"cols": cols, "rows": rows, "cells": len(features)},
         "summary": {
-            "pm25_mean": float_or_none(data.get("pm25_mean")),
-            "pm25_median": float_or_none(data.get("pm25_median")),
+            "pm25_mean": None if float_or_none(data.get("pm25_mean")) is None else round(float_or_none(data.get("pm25_mean")) + forecast_delta, 3),
+            "pm25_median": None if float_or_none(data.get("pm25_median")) is None else round(float_or_none(data.get("pm25_median")) + forecast_delta, 3),
             "station_count": data.get("station_count"),
             "coverage_avg": float_or_none(data.get("coverage_avg")),
             "feature_version": data.get("feature_version"),
@@ -814,16 +955,6 @@ def trajectory_matches_location(feature: dict[str, Any], location_id: str | None
         ]
     )
     return any(needle in haystack for needle in needles)
-
-
-# Khai bao class latest_trajectory_features de gom state, cau hinh hoac hanh vi lien quan.
-def latest_trajectory_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not features:
-        return []
-    latest_time = sorted([trajectory_time_key(feature) for feature in features if trajectory_time_key(feature)])[-1:]
-    if not latest_time:
-        return features
-    return [feature for feature in features if trajectory_time_key(feature) == latest_time[0]]
 
 
 # Khai bao class line_coordinates de gom state, cau hinh hoac hanh vi lien quan.
@@ -889,8 +1020,7 @@ def select_trajectory_payload(
     if not location_id and not location_name and lon is None and lat is None:
         return payload
     features = [feature for feature in payload.get("features", []) if isinstance(feature, dict)]
-    latest = latest_trajectory_features(features)
-    matched = [feature for feature in latest if trajectory_matches_location(feature, location_id, location_name)]
+    matched = [feature for feature in features if trajectory_matches_location(feature, location_id, location_name)]
     selected = matched
     if not selected and lon is not None and lat is not None:
         selected = [
@@ -904,12 +1034,12 @@ def select_trajectory_payload(
                     location_name=location_name,
                     index=index,
                 )
-                for index, feature in enumerate(latest[:8])
+                for index, feature in enumerate(features)
             )
             if item is not None
         ]
     result = dict(payload)
-    result["features"] = selected[:8] if selected else []
+    result["features"] = selected if selected else []
     result["selected_location"] = {
         "location_id": location_id,
         "location_name": location_name,
@@ -931,8 +1061,7 @@ def select_actual_trajectory_payload(
     lat: float | None = None,
 ) -> dict[str, Any]:
     features = [feature for feature in payload.get("features", []) if isinstance(feature, dict)]
-    latest = latest_trajectory_features(features)
-    matched = [feature for feature in latest if trajectory_matches_location(feature, location_id, location_name)]
+    matched = [feature for feature in features if trajectory_matches_location(feature, location_id, location_name)]
     selected = matched
     derived = False
     if not selected and lon is not None and lat is not None:
@@ -947,15 +1076,15 @@ def select_actual_trajectory_payload(
                     location_name=location_name,
                     index=index,
                 )
-                for index, feature in enumerate(latest[:8])
+                for index, feature in enumerate(features)
             )
             if item is not None
         ]
         derived = bool(selected)
     if not selected:
-        selected = latest[:8]
+        selected = features
     result = dict(payload)
-    result["features"] = selected[:8]
+    result["features"] = selected
     result["selected_location"] = {
         "location_id": location_id,
         "location_name": location_name,
@@ -1109,8 +1238,8 @@ def manifest_latest(date: str | None = None) -> dict[str, Any]:
 def pm25_heatmap_latest(horizon_h: int = 0, date: str | None = None) -> JSONResponse:
     if horizon_h not in {0, 6, 12, 24}:
         raise HTTPException(status_code=400, detail={"error": "invalid_horizon", "allowed": [0, 6, 12, 24]})
-    if date is None and horizon_h == 0 and cassandra_forecast_enabled():
-        return JSONResponse(build_live_cassandra_heatmap("hanoi"))
+    if date is None and cassandra_forecast_enabled():
+        return JSONResponse(build_live_cassandra_heatmap("hanoi", horizon_h=horizon_h))
     layer = find_layer(load_manifest(date), "pm25_heatmap", horizon_h=horizon_h)
     if layer is None:
         raise HTTPException(status_code=404, detail={"error": "layer_not_found", "layer_name": "pm25_heatmap", "horizon_h": horizon_h})

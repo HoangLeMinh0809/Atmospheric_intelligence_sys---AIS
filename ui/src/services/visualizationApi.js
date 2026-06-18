@@ -41,7 +41,8 @@ export function getManifestLatest(date) {
 
 // Lay du lieu hoac metadata cho payload visualization.
 export function getHeatmapLatest(horizonH, date) {
-  return requestJson(withDate(`/pm25/heatmap/latest?horizon_h=${horizonH}`, date));
+  const path = withDate(`/pm25/heatmap/latest?horizon_h=${horizonH}`, date);
+  return requestJson(date ? path : withCacheBust(path));
 }
 
 // Lay du lieu hoac metadata cho payload visualization.

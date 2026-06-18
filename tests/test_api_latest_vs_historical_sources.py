@@ -33,4 +33,5 @@ def test_visualization_api_latest_vs_historical_contract_is_encoded():
     assert "if date is None and cassandra_forecast_enabled()" in api
     assert "return JSONResponse(load_cassandra_forecast(location_id))" in api
     assert "live_heatmap_does_not_accept_date" in api
+    assert 'return JSONResponse(build_live_cassandra_heatmap("hanoi", horizon_h=horizon_h))' in api
     assert 'find_layer(load_manifest(date), "pm25_heatmap"' in api

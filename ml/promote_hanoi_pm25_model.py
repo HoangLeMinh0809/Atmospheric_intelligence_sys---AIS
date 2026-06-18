@@ -24,7 +24,11 @@ from hanoi_config import MODEL_ARTIFACT_BASE_URI, get_table_names  # noqa: E402
 # Đọc tham số CLI và biến môi trường cho bước promote model.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Promote/rollback Hanoi PM2.5 model into Iceberg registry")
-    parser.add_argument("--model-run-id", required=True)
+    parser.add_argument(
+        "--model-run-id",
+        default=os.getenv("MODEL_RUN_ID", ""),
+        help="Model run id to promote. Use 'latest' or omit to select the newest run for the horizon.",
+    )
     parser.add_argument("--location-id", default=os.getenv("LOCATION_ID", "hanoi"))
     parser.add_argument("--horizon-hour", type=int, required=True, choices=[6, 12, 24])
     parser.add_argument("--feature-version", default=os.getenv("FEATURE_VERSION", "hanoi_pm25_core_v1"))
@@ -90,12 +94,19 @@ def main() -> None:
     spark.sparkContext.setLogLevel("WARN")
 
     try:
-        run_df = spark.table(runs_table).filter(F.col("model_run_id") == F.lit(args.model_run_id))
-        run_df = run_df.filter(F.col("horizon_hour") == F.lit(int(args.horizon_hour)))
+        requested_run_id = (args.model_run_id or "").strip()
+        run_df = spark.table(runs_table).filter(F.col("horizon_hour") == F.lit(int(args.horizon_hour)))
+        if requested_run_id and requested_run_id.lower() not in {"latest", "__latest__"}:
+            run_df = run_df.filter(F.col("model_run_id") == F.lit(requested_run_id))
+        else:
+            run_df = run_df.orderBy(F.col("created_at").desc_nulls_last())
         run_row = run_df.limit(1).collect()
         if not run_row:
-            raise SystemExit(f"No model run found for model_run_id={args.model_run_id} horizon={args.horizon_hour}")
+            raise SystemExit(f"No model run found for model_run_id={requested_run_id or 'latest'} horizon={args.horizon_hour}")
         run = run_row[0].asDict()
+        selected_model_run_id = str(run.get("model_run_id") or requested_run_id).strip()
+        if not selected_model_run_id:
+            raise SystemExit(f"Selected model run has no model_run_id for horizon={args.horizon_hour}")
 
         # Ưu tiên metadata bất biến do training ghi ra; nếu thiếu thì fallback theo quy ước cũ.
         model_version = (
@@ -121,7 +132,7 @@ def main() -> None:
             "horizon_hour": int(args.horizon_hour),
             "feature_version": args.feature_version,
             "model_version": model_version,
-            "model_run_id": args.model_run_id,
+            "model_run_id": selected_model_run_id,
             "model_type": run.get("model_type"),
             "model_path": run.get("model_path") or artifact_uri,
             "artifact_uri": artifact_uri,
@@ -141,7 +152,7 @@ def main() -> None:
 
         print(
             "promotion_request "
-            f"model_run_id={args.model_run_id} location_id={args.location_id} horizon={args.horizon_hour} "
+            f"model_run_id={selected_model_run_id} location_id={args.location_id} horizon={args.horizon_hour} "
             f"feature_version={args.feature_version} model_version={model_version} status={args.status} dry_run={int(dry_run)}"
         )
 
@@ -170,7 +181,6 @@ def main() -> None:
         # Dùng MERGE để promote idempotent theo bộ khóa định danh của model registry.
         spark.sql(
             f"""
-            # Dung MERGE de upsert vao bang dich ma khong mat ban ghi cu.
             MERGE INTO {registry_table} t
             USING src s
             ON t.location_id = s.location_id

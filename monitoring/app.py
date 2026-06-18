@@ -1,4 +1,4 @@
-# File nay: monitoring app/endpoint theo doi trang thai he thong.
+# Monitoring Flask app exposing health, throughput, HDFS, and Airflow trigger endpoints.
 from __future__ import annotations
 
 import json
@@ -647,7 +647,7 @@ HTML_TEMPLATE = """
 """
 
 
-# Khai bao class airflow_request de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: airflow_request.
 def _airflow_request(method: str, path: str, payload: dict | None = None):
     return requests.request(
         method=method,
@@ -658,7 +658,7 @@ def _airflow_request(method: str, path: str, payload: dict | None = None):
     )
 
 
-# Khai bao class trigger_airflow_dag de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: trigger_airflow_dag.
 def _trigger_airflow_dag(lookback_days: int = 7) -> tuple[bool, str, str | None]:
     try:
         unpause_resp = _airflow_request("PATCH", f"/dags/{AIRFLOW_DAG_ID}", {"is_paused": False})
@@ -686,7 +686,7 @@ def _trigger_airflow_dag(lookback_days: int = 7) -> tuple[bool, str, str | None]
         return False, str(exc), None
 
 
-# Khai bao class parse_live_nodes de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: parse_live_nodes.
 def _parse_live_nodes(raw_value):
     if not raw_value:
         return {}
@@ -701,7 +701,7 @@ def _parse_live_nodes(raw_value):
     return {}
 
 
-# Khai bao class hdfs_list_status de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: hdfs_list_status.
 def _hdfs_list_status(path):
     url = f"{HDFS_WEBHDFS_BASE}{path}?op=LISTSTATUS"
     resp = requests.get(url, timeout=10)
@@ -710,7 +710,7 @@ def _hdfs_list_status(path):
     return payload.get("FileStatuses", {}).get("FileStatus", [])
 
 
-# Khai bao class walk_hdfs de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: walk_hdfs.
 def _walk_hdfs(path, max_depth: int | None = None, max_files: int | None = None):
     max_depth = HDFS_WALK_MAX_DEPTH if max_depth is None else max_depth
     max_files = HDFS_WALK_MAX_FILES if max_files is None else max_files
@@ -738,7 +738,7 @@ def _walk_hdfs(path, max_depth: int | None = None, max_files: int | None = None)
     return files
 
 
-# Khai bao class summarize_hdfs_path de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: summarize_hdfs_path.
 def _summarize_hdfs_path(path: str) -> dict:
     try:
         files = _walk_hdfs(path)
@@ -763,7 +763,7 @@ def _summarize_hdfs_path(path: str) -> dict:
         }
 
 
-# Khai bao class collect_pipeline_map de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: collect_pipeline_map.
 def collect_pipeline_map() -> dict:
     topic_counts = {}
     for topic in KAFKA_TOPICS:
@@ -795,7 +795,7 @@ def collect_pipeline_map() -> dict:
     }
 
 
-# Khai bao class collect_kafka_totals de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: collect_kafka_totals.
 def _collect_kafka_totals(topic: str):
   admin = KafkaAdminClient(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS, client_id="monitoring-admin")
   try:
@@ -817,7 +817,7 @@ def _collect_kafka_totals(topic: str):
     consumer.close()
 
 
-# Khai bao class collect_datanode_status de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: collect_datanode_status.
 def _collect_datanode_status():
     resp = requests.get(NAMENODE_JMX_URL, timeout=10)
     resp.raise_for_status()
@@ -1003,7 +1003,7 @@ def _run_ingest_thread(source: str, lookback_days: int = 7):
           _ingest_job["error_msg"] = error_msg or "Ingest subprocess failed"
 
 
-# Khai bao class service_json de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: service_json.
 def _service_json(url: str) -> tuple[dict, float]:
     started = time.perf_counter()
     response = requests.get(url, timeout=SERVICE_TIMEOUT_SEC)
@@ -1012,7 +1012,7 @@ def _service_json(url: str) -> tuple[dict, float]:
     return response.json(), latency_ms
 
 
-# Khai bao class parse_utc de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: parse_utc.
 def _parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -1020,7 +1020,7 @@ def _parse_utc(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-# Khai bao class collect_metrics de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: collect_metrics.
 def collect_metrics():
     errors = []
     now = datetime.now(timezone.utc)

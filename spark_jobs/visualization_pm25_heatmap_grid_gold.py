@@ -100,6 +100,7 @@ def main() -> None:
         station_pm25 = [float(s["pm25"]) for s in stations if s.get("pm25") is not None]
         fallback_anchor = sum(station_pm25) / len(station_pm25) if station_pm25 else 0.0
         fallback_forecasts = fallback_forecast_values(fallback_anchor, station_trend_per_6h(station_df, base_time))
+        now_anchor = (pred or {}).get("pm25_now") or fallback_anchor
 
         cells = grid_cells(runtime["bbox"], runtime["grid_resolution_deg"])
         source_label = runtime["cluster_labels"].get(int(pred["dominant_cluster"]), "Unknown source cluster") if pred and pred.get("dominant_cluster") is not None else "Observation trend proxy"
@@ -107,18 +108,20 @@ def main() -> None:
         rows = []
         for horizon in horizons:
             if horizon == 0:
-                anchor = (pred or {}).get("pm25_now") or fallback_anchor
+                anchor = now_anchor
+                forecast_delta = 0.0
                 method = "station_idw_with_observation_anchor" if pred is None else "station_idw_with_hanoi_prediction_anchor"
             else:
                 anchor = (pred or {}).get(f"pm25_{horizon}h") or fallback_forecasts[horizon]
+                forecast_delta = float(anchor) - float(now_anchor)
                 method = "observation_trend_spatial_proxy" if pred is None else "hanoi_forecast_spatial_decay_proxy"
             for cell in cells:
                 valid_time = base_time + timedelta(hours=horizon)
                 pm25, obs_count = idw_pm25(float(cell["lat"]), float(cell["lon"]), stations, anchor)
                 if pm25 is None:
                     pm25 = 0.0
-                if pred is None and horizon > 0:
-                    pm25 = max(0.0, float(pm25) + (fallback_forecasts[horizon] - fallback_anchor))
+                if horizon > 0 and obs_count > 0:
+                    pm25 = max(0.0, float(pm25) + forecast_delta)
                 dist = distance_km(float(cell["lat"]), float(cell["lon"]), HANOI_LAT, HANOI_LON)
                 if pm25 is not None and horizon > 0:
                     pm25 = float(pm25) * max(0.55, 1.0 - min(dist, 260.0) / 650.0)
