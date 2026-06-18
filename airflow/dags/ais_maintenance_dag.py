@@ -1,4 +1,4 @@
-# File nay: DAG Airflow dieu phoi ingest, Spark, ML, visualization hoac maintenance.
+# Airflow DAG for Iceberg maintenance and serving reconciliation.
 from __future__ import annotations
 
 from datetime import datetime, timedelta

@@ -61,6 +61,8 @@ def main() -> None:
     max_paths = max(1, int(runtime.get("max_trajectories", 150)))
     max_points = max(2, int(runtime.get("max_points_per_trajectory", 100)))
     pm25_threshold = float(os.getenv("VIS_TRAJECTORY_PM25_THRESHOLD", os.getenv("PM25_TRIGGER_THRESHOLD", "30") or "30"))
+    historical_fallback_enabled = as_bool(os.getenv("VIS_TRAJECTORY_HISTORICAL_FALLBACK", "true"))
+    min_paths = max(1, int(os.getenv("VIS_MIN_TRAJECTORY_PATHS", "8") or "8"))
 
     try:
         traj = read_table_if_exists(spark, tables["hysplit_cluster_silver"])
@@ -77,18 +79,20 @@ def main() -> None:
         # Select trajectories by their init/source time (age_h=0), not by every point timestamp.
         # Backward points can be 72h earlier than init_time; filtering all points by date can
         # silently truncate or drop valid trajectory lines.
-        init_df = (
+        base_init_df = (
             points.filter(F.col("age_h") == F.lit(0))
             # Bat dau gom nhom de tinh cac chi so tong hop.
             .groupBy("traj_id")
             .agg(F.max("timestamp").alias("init_time"))
         )
+        init_df = base_init_df
         if asof_time is not None:
             init_df = init_df.filter(F.col("init_time") <= F.lit(asof_time.replace(tzinfo=None)))
         if args.start_date:
             init_df = init_df.filter(F.to_date("init_time") >= F.to_date(F.lit(args.start_date)))
         if args.end_date:
             init_df = init_df.filter(F.to_date("init_time") <= F.to_date(F.lit(args.end_date)))
+        candidate_init_df = init_df
 
         pm25_col = None
         aq_df = read_table_if_exists(spark, tables["openaq_hourly_silver"])
@@ -97,19 +101,63 @@ def main() -> None:
                 if candidate in aq_df.columns:
                     pm25_col = candidate
                     break
-        if aq_df is not None and pm25_col is not None and pm25_threshold > 0:
+        if aq_df is not None and pm25_col is not None:
             pm25_hours = (
                 aq_df.select(
                     F.col("hour").alias("init_time"),
                     F.col(pm25_col).cast("double").alias("trajectory_pm25"),
                 )
-                .filter(F.col("trajectory_pm25") >= F.lit(pm25_threshold))
                 .dropDuplicates(["init_time"])
             )
-            init_df = init_df.join(pm25_hours, on="init_time", how="inner")
+            candidate_init_df = candidate_init_df.join(pm25_hours, on="init_time", how="left")
+            init_df = candidate_init_df
+            if pm25_threshold > 0:
+                threshold_df = candidate_init_df.filter(F.col("trajectory_pm25") >= F.lit(pm25_threshold))
+                threshold_count = threshold_df.limit(min_paths).count()
+                if threshold_count >= min_paths:
+                    init_df = threshold_df
+        else:
+            candidate_init_df = candidate_init_df.withColumn("trajectory_pm25", F.lit(None).cast("double"))
+            init_df = candidate_init_df
 
-        selected_ids = init_df.orderBy(F.col("init_time").desc()).limit(max_paths)
+        init_df = init_df.withColumn(
+            "pm25_priority",
+            F.when(F.col("trajectory_pm25") >= F.lit(pm25_threshold), F.lit(1)).otherwise(F.lit(0)),
+        )
+        candidate_init_df = candidate_init_df.withColumn(
+            "pm25_priority",
+            F.when(F.col("trajectory_pm25") >= F.lit(pm25_threshold), F.lit(1)).otherwise(F.lit(0)),
+        )
+
+        selected_ids = init_df.orderBy(F.col("pm25_priority").desc(), F.col("init_time").desc()).limit(max_paths)
         selected_count = selected_ids.count()
+        selection_mode = "requested_window"
+        if selected_count < min_paths:
+            selected_ids = candidate_init_df.orderBy(F.col("pm25_priority").desc(), F.col("init_time").desc()).limit(max_paths)
+            selected_count = selected_ids.count()
+            selection_mode = "requested_window_threshold_relaxed"
+        if selected_count < min_paths and historical_fallback_enabled:
+            fallback_df = base_init_df
+            if asof_time is not None:
+                fallback_df = fallback_df.filter(F.col("init_time") <= F.lit(asof_time.replace(tzinfo=None)))
+            if aq_df is not None and pm25_col is not None:
+                fallback_pm25 = (
+                    aq_df.select(
+                        F.col("hour").alias("init_time"),
+                        F.col(pm25_col).cast("double").alias("trajectory_pm25"),
+                    )
+                    .dropDuplicates(["init_time"])
+                )
+                fallback_df = fallback_df.join(fallback_pm25, on="init_time", how="left")
+            else:
+                fallback_df = fallback_df.withColumn("trajectory_pm25", F.lit(None).cast("double"))
+            fallback_df = fallback_df.withColumn(
+                "pm25_priority",
+                F.when(F.col("trajectory_pm25") >= F.lit(pm25_threshold), F.lit(1)).otherwise(F.lit(0)),
+            )
+            selected_ids = fallback_df.orderBy(F.col("pm25_priority").desc(), F.col("init_time").desc()).limit(max_paths)
+            selected_count = selected_ids.count()
+            selection_mode = "latest_historical_iceberg"
         scoped = points.join(selected_ids, on="traj_id", how="inner")
         source = [r.asDict(recursive=True) for r in scoped.collect()]
         selected_meta = {str(r["traj_id"]): r.asDict(recursive=True) for r in selected_ids.collect()}
@@ -159,6 +207,9 @@ def main() -> None:
                 "path_no2_aer_ratio": evidence.get("path_no2_aer_ratio"),
                 "downsampled": len(ordered_full) > len(ordered),
                 "original_point_count": len(ordered_full),
+                "selection_mode": selection_mode,
+                "historical_fallback": selection_mode == "latest_historical_iceberg",
+                "pm25_priority": meta.get("pm25_priority"),
             }
             init_time = first.get("init_time") or first.get("timestamp") or base_time
             exported_points += len(ordered)
@@ -202,9 +253,10 @@ def main() -> None:
                 "job=visualization_backward_trajectory_paths "
                 f"selected_trajectory_count={selected_count} input_point_count={len(source)} "
                 f"trajectory_count=0 exported_point_count={exported_points} "
-                f"max_trajectories={max_paths} max_points_per_trajectory={max_points} "
+                f"max_trajectories={max_paths} min_trajectories={min_paths} max_points_per_trajectory={max_points} "
                 f"pm25_threshold={pm25_threshold} "
                 f"invalid_geometry_count={invalid} dry_run={int(dry_run)} "
+                f"selection_mode={selection_mode} historical_fallback_enabled={int(historical_fallback_enabled)} "
                 "status=no_real_trajectory_rows"
             )
             return
@@ -214,9 +266,10 @@ def main() -> None:
             "job=visualization_backward_trajectory_paths "
             f"selected_trajectory_count={selected_count} input_point_count={len(source)} "
             f"trajectory_count={len(rows)} exported_point_count={exported_points} "
-            f"max_trajectories={max_paths} max_points_per_trajectory={max_points} "
+            f"max_trajectories={max_paths} min_trajectories={min_paths} max_points_per_trajectory={max_points} "
             f"pm25_threshold={pm25_threshold} "
             f"invalid_geometry_count={invalid} dry_run={int(dry_run)} "
+            f"selection_mode={selection_mode} historical_fallback_enabled={int(historical_fallback_enabled)} "
             f"status={'dry_run_success' if dry_run else 'written'} table_rows={count}"
         )
     finally:

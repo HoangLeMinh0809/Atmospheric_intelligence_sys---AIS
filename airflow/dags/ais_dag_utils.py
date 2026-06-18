@@ -1,4 +1,4 @@
-# File nay: DAG Airflow dieu phoi ingest, Spark, ML, visualization hoac maintenance.
+# Shared Airflow command builders for AIS ingest, Spark, Cassandra, and health checks.
 from __future__ import annotations
 
 import os
@@ -73,7 +73,7 @@ def _stream_checkpoint_env(job_file: str, extra_args: str) -> str:
     hdfs = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000").rstrip("/")
     return f"CHECKPOINT_PATH={hdfs}/checkpoints/{checkpoint_name}/bootstrap/${{AIRFLOW_CTX_DAG_RUN_ID:-manual}} "
 
-# Khai bao class spark_submit_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: spark_submit_command.
 def spark_submit_command(
     app_name: str,
     job_file: str,
@@ -115,7 +115,7 @@ def spark_submit_command(
     )
 
 
-# Khai bao class k8s_job_type_for_file de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: k8s_job_type_for_file.
 def _k8s_job_type_for_file(job_file: str, *, extra_args: str = "", with_cassandra: bool = False) -> str:
     if with_cassandra:
         dataset = extra_args.strip().split()[0] if extra_args.strip() else ""
@@ -167,7 +167,7 @@ def _k8s_job_type_for_file(job_file: str, *, extra_args: str = "", with_cassandr
         raise ValueError(f"No Spark-on-K8s job mapping for {job_file}") from exc
 
 
-# Khai bao class spark_cassandra_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: spark_cassandra_command.
 def spark_cassandra_command(dataset: str) -> str:
     return spark_submit_command(
         app_name=f"IcebergToCassandra_{dataset.capitalize()}",
@@ -177,7 +177,7 @@ def spark_cassandra_command(dataset: str) -> str:
     )
 
 
-# Khai bao class ensure_topics_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: ensure_topics_command.
 def ensure_topics_command() -> str:
     return (
         "set -euo pipefail\n"
@@ -186,7 +186,7 @@ def ensure_topics_command() -> str:
     )
 
 
-# Khai bao class ensure_iceberg_tables_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: ensure_iceberg_tables_command.
 def ensure_iceberg_tables_command() -> str:
     return spark_submit_command(
         app_name="AIS_EnsureIcebergTables",
@@ -194,18 +194,18 @@ def ensure_iceberg_tables_command() -> str:
     )
 
 
-# Khai bao class ensure_cassandra_schema_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: ensure_cassandra_schema_command.
 def ensure_cassandra_schema_command() -> str:
     return (
         "set -euo pipefail\n"
         "docker exec cassandra cqlsh -e \"CREATE KEYSPACE IF NOT EXISTS ais_serving WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};\"\n"
         "docker exec cassandra cqlsh -e \"CREATE TABLE IF NOT EXISTS ais_serving.weather_hourly_by_province_day (province text, day text, event_time timestamp, event_id text, query_date text, location_name text, lat double, lon double, temp_c double, temp_f double, humidity int, wind_kph double, wind_degree int, wind_dir text, precip_mm double, condition_text text, source text, ingest_time text, PRIMARY KEY ((province, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);\"\n"
         "docker exec cassandra cqlsh -e \"CREATE TABLE IF NOT EXISTS ais_serving.openaq_hourly_by_city_parameter_day (city text, parameter text, day text, event_time timestamp, event_id text, location_id bigint, location_name text, provider text, sensor_id bigint, unit text, value double, min double, max double, sd double, coverage_pct double, source text, ingest_time text, PRIMARY KEY ((city, parameter, day), event_time)) WITH CLUSTERING ORDER BY (event_time DESC);\"\n"
-        "bash /opt/ais/scripts/ensure_cassandra_online_schema.sh"
+        "bash /opt/ais/scripts/ensure_cassandra_online_schema.sh \n"
     )
 
 
-# Khai bao class compose_ingest_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: compose_ingest_command.
 def compose_ingest_command(
     service: str,
     script_name: str,
@@ -231,7 +231,7 @@ def compose_ingest_command(
     )
 
 
-# Khai bao class ensure_streaming_job_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: ensure_streaming_job_command.
 def ensure_streaming_job_command(job_type: str) -> str:
     return (
         "set -euo pipefail\n"
@@ -240,7 +240,7 @@ def ensure_streaming_job_command(job_type: str) -> str:
     )
 
 
-# Khai bao class kafka_lag_check_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: kafka_lag_check_command.
 def kafka_lag_check_command(group_id: str, topic: str, max_lag: int = 50000) -> str:
     return (
         "set -euo pipefail\n"
@@ -249,7 +249,7 @@ def kafka_lag_check_command(group_id: str, topic: str, max_lag: int = 50000) -> 
     )
 
 
-# Khai bao class operational_health_check_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: operational_health_check_command.
 def operational_health_check_command() -> str:
     return (
         "set -euo pipefail\n"
@@ -261,7 +261,7 @@ def operational_health_check_command() -> str:
     )
 
 
-# Khai bao class reconcile_serving_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: reconcile_serving_command.
 def reconcile_serving_command(lookback_hours: int = 24, tolerance: float = 0.95) -> str:
     return spark_submit_command(
         app_name="AIS_ReconcileServing",
@@ -271,7 +271,7 @@ def reconcile_serving_command(lookback_hours: int = 24, tolerance: float = 0.95)
     )
 
 
-# Khai bao class iceberg_maintenance_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: iceberg_maintenance_command.
 def iceberg_maintenance_command(retention_hours: int = 168) -> str:
     return spark_submit_command(
         app_name="AIS_IcebergMaintenance",
@@ -280,7 +280,7 @@ def iceberg_maintenance_command(retention_hours: int = 168) -> str:
     )
 
 
-# Khai bao class visualization_spark_command de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: visualization_spark_command.
 def visualization_spark_command(job_type: str, *, dry_run: str = "0", extra_args: str = "") -> str:
     suffix = f" {extra_args.strip()}" if extra_args.strip() else ""
     return (

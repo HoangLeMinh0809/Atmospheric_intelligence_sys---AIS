@@ -373,7 +373,7 @@ services:
       HDFS_OUTPUT_PATH: /warehouse/iceberg
       NAMENODE_JMX_URL: http://namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystem
       AIRFLOW_API_BASE: http://airflow-webserver:8080/api/v1
-      AIRFLOW_DAG_ID: ais_hanoi_silver_gold
+      AIRFLOW_DAG_ID: ais_batch_orchestration
       AIRFLOW_USERNAME: admin
       AIRFLOW_PASSWORD: admin
       VISUALIZATION_READY_URL: ${VISUALIZATION_READY_URL:-http://host.docker.internal:3000/api/v1/visualization/manifest/latest}
@@ -534,6 +534,8 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     user: "0:0"
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -570,6 +572,8 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     user: "0:0"
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -599,6 +603,8 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     user: "0:0"
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor

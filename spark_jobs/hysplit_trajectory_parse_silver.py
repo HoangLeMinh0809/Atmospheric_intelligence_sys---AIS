@@ -48,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Parse HYSPLIT tdump outputs into Iceberg")
     parser.add_argument("--start-date", default=os.getenv("START_DATE", ""))
     parser.add_argument("--end-date", default=os.getenv("END_DATE", ""))
+    parser.add_argument("--location-id", default=os.getenv("LOCATION_ID", "hanoi"))
     parser.add_argument("--full-refresh", nargs="?", const="1", default=os.getenv("FULL_REFRESH", "0"))
     parser.add_argument("--runs-table", default=os.getenv("HYSPLIT_RUNS_TABLE", ""))
     parser.add_argument("--target-table", default=os.getenv("HYSPLIT_TRAJ_SILVER_TABLE", ""))
@@ -81,6 +82,7 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             traj_id STRING,
+            location_id STRING,
             direction STRING,
             traj_no INT,
             year INT,
@@ -101,6 +103,21 @@ def ensure_table(spark: SparkSession, table_name: str) -> None:
         TBLPROPERTIES ('format-version'='2')
         """
     )
+    existing = set(spark.table(table_name).columns)
+    if "location_id" not in existing:
+        spark.sql(f"ALTER TABLE {table_name} ADD COLUMN location_id STRING")
+
+
+# Align the update DataFrame to the current Iceberg table schema before MERGE.
+def align_to_target_schema(spark: SparkSession, df, table_name: str):
+    target_schema = spark.table(table_name).schema
+    aligned = df
+    for field in target_schema:
+        if field.name not in aligned.columns:
+            aligned = aligned.withColumn(field.name, F.lit(None).cast(field.dataType))
+        else:
+            aligned = aligned.withColumn(field.name, F.col(field.name).cast(field.dataType))
+    return aligned.select([field.name for field in target_schema])
 
 
 # Chuan hoa nam 2 chu so trong tdump ve nam 4 chu so.
@@ -215,6 +232,7 @@ def load_runs(spark: SparkSession, runs_table: str, start_date: str, end_date: s
 
 # Gop va upsert ban ghi vao state dich cho du lieu trajectory HYSPLIT.
 def merge_trajectory_rows(spark: SparkSession, df, table_name: str) -> None:
+    df = align_to_target_schema(spark, df, table_name)
     # Dang ky DataFrame tam de co the dung SQL o cac buoc sau.
     df.createOrReplaceTempView("hysplit_trajectory_updates")
     spark.sql(
@@ -268,7 +286,11 @@ def main() -> None:
 
     raw_rdd = spark.sparkContext.union(rdds)
     parsed_rdd = raw_rdd.map(parse_line).filter(lambda value: value is not None)
-    parsed_df = spark.createDataFrame(parsed_rdd, schema=SCHEMA).withColumn("spark_processed_at", F.current_timestamp())
+    parsed_df = (
+        spark.createDataFrame(parsed_rdd, schema=SCHEMA)
+        .withColumn("location_id", F.lit(args.location_id))
+        .withColumn("spark_processed_at", F.current_timestamp())
+    )
 
     input_count = raw_rdd.count()
     output_count = parsed_df.count()

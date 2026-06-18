@@ -96,6 +96,19 @@ function trajectoryRequest(receptor) {
   });
 }
 
+// Tom tat payload trajectory de panel hien dung trang thai actual/proxy.
+function trajectorySummary(payload) {
+  const features = payload?.features || [];
+  const proxyCount = features.filter((feature) => feature?.properties?.trajectory_kind === "proxy_ensemble").length;
+  const hotCount = features.filter((feature) => Number(feature?.properties?.risk_score ?? feature?.properties?.pollution_score) >= 0.7).length;
+  const matched = payload?.selected_location?.matched_cached_trajectory;
+  return {
+    count: features.length,
+    hotCount,
+    mode: matched || (features.length && proxyCount === 0) ? "HYSPLIT" : "Proxy",
+  };
+}
+
 // Dieu phoi API realtime va render man hinh ban do chat luong khong khi.
 export default function AirQualityMapDashboard() {
   const [horizon, setHorizon] = useState(Number(import.meta.env.VITE_DEFAULT_HORIZON_H || 0));
@@ -197,6 +210,7 @@ export default function AirQualityMapDashboard() {
     () => mergeLiveNowForecast(data.forecast, data.liveHeatmap),
     [data.forecast, data.liveHeatmap],
   );
+  const trajectoryStats = useMemo(() => trajectorySummary(data.trajectories), [data.trajectories]);
 
   const handleMapStats = useCallback((nextStats) => {
     setMapStats((current) =>
@@ -314,6 +328,11 @@ export default function AirQualityMapDashboard() {
                 {receptor.name}
               </button>
             ))}
+          </div>
+          <div className="trajectory-summary-row">
+            <span>{trajectoryStats.mode}</span>
+            <strong>{trajectoryStats.count} paths</strong>
+            <em>{trajectoryStats.hotCount} red</em>
           </div>
         </section>
         <ForecastPanel forecast={displayForecast} />

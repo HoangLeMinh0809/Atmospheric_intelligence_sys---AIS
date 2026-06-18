@@ -14,6 +14,18 @@ const BASE_GRID_COLS = 42;
 const BASE_GRID_ROWS = 32;
 const MAX_IDW_SAMPLES = 420;
 const MAX_BASEMAP_ROADS = 700;
+const MIN_TRAJECTORY_ENSEMBLE = 6;
+const MAX_TRAJECTORY_RENDER = 240;
+const CLIENT_PROXY_TRAJECTORY_SECTORS = [
+  ["NW", -0.17, 0.12],
+  ["N", -0.02, 0.15],
+  ["NE", 0.16, 0.11],
+  ["W", -0.2, 0.01],
+  ["E", 0.19, -0.02],
+  ["SW", -0.16, -0.1],
+  ["S", 0.01, -0.13],
+  ["SE", 0.16, -0.09],
+];
 
 // Parse GeoJSON asset va fallback ve collection rong neu loi.
 function parseGeoJson(raw) {
@@ -394,39 +406,107 @@ function featureMatchesReceptor(feature, receptor) {
   return haystack.includes(normalizeText(receptor.name));
 }
 
-// Chi giu nhom trajectory moi nhat de tranh ve chong nhieu dot cu.
-function latestTrajectoryGroup(features, receptor = DEFAULT_RECEPTOR) {
-  if (!features.length) return features;
-  const baseTimes = features
-    .map((feature) => feature.properties?.base_time || feature.properties?.base_hour || feature.properties?.timestamp)
-    .filter(Boolean)
-    .sort();
-  const selectedBaseTime = baseTimes[baseTimes.length - 1];
-  const sameBaseTime = selectedBaseTime
-    ? features.filter((feature) => {
-        const props = feature.properties || {};
-        return (props.base_time || props.base_hour || props.timestamp) === selectedBaseTime;
-      })
-    : features;
-  const receptorMatches = sameBaseTime.filter((feature) => featureMatchesReceptor(feature, receptor));
-  const candidates = receptorMatches.length ? receptorMatches : normalizeText(receptor.name).includes("hoan kiem") ? sameBaseTime : [];
-  const endpointGroups = new Map();
-  for (const feature of candidates) {
-    const props = feature.properties || {};
-    const key = props.endpoint || props.receptor_id || props.location_id || "default";
-    if (!endpointGroups.has(key)) endpointGroups.set(key, []);
-    endpointGroups.get(key).push(feature);
+// Do khoang cach tu mot mau PM2.5 toi mot doan trajectory theo xap xi phang.
+function pointToSegmentDistance(lon, lat, start, end) {
+  const midLat = (Number(start[1]) + Number(end[1])) / 2;
+  const scaleX = Math.cos((midLat * Math.PI) / 180);
+  const px = lon * scaleX;
+  const py = lat;
+  const x1 = Number(start[0]) * scaleX;
+  const y1 = Number(start[1]);
+  const x2 = Number(end[0]) * scaleX;
+  const y2 = Number(end[1]);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  if (!dx && !dy) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t));
+}
+
+// Cham diem proxy theo viec duong di cat gan cac mau PM2.5 cao tren map hien tai.
+function pathPollutionRisk(coords, heatmapFeatures = [], stationFeatures = []) {
+  const samples = [...samplesFromFeatures(heatmapFeatures), ...samplesFromFeatures(stationFeatures)].slice(0, 260);
+  if (coords.length < 2 || !samples.length) return 0.35;
+  let score = 0.22;
+  for (const sample of samples) {
+    const pollution = Math.max(0, Math.min(1, (sample.pm25 - 30) / 45));
+    if (pollution <= 0) continue;
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < coords.length - 1; index += 1) {
+      minDistance = Math.min(minDistance, pointToSegmentDistance(sample.lon, sample.lat, coords[index], coords[index + 1]));
+    }
+    const crossing = Math.max(0, 1 - minDistance / 0.045);
+    score = Math.max(score, 0.24 + pollution * 0.52 + crossing * 0.32);
   }
-  if (!endpointGroups.size) return [];
-  return [...endpointGroups.values()].sort((a, b) => b.length - a.length)[0].slice(0, 8);
+  return Math.max(0.1, Math.min(0.98, score));
+}
+
+function proxyTrajectoryCoordsForReceptor(receptor, dx, dy, index) {
+  const receptorLon = Number(receptor.lon);
+  const receptorLat = Number(receptor.lat);
+  const sourceLon = receptorLon + dx;
+  const sourceLat = receptorLat + dy;
+  const curve = (index % 2 === 0 ? 1 : -1) * (0.025 + (index % 3) * 0.006);
+  return Array.from({ length: 14 }).map((_, step) => {
+    const t = step / 13;
+    const bend = Math.sin(t * Math.PI) * curve;
+    return [
+      sourceLon + (receptorLon - sourceLon) * t + bend * 0.48,
+      sourceLat + (receptorLat - sourceLat) * t - bend * 0.32,
+    ];
+  });
+}
+
+function buildClientProxyTrajectories(receptor, heatmapFeatures, stationFeatures, skipCount = 0) {
+  return CLIENT_PROXY_TRAJECTORY_SECTORS.slice(0, Math.max(0, 8 - skipCount)).map(([label, dx, dy], index) => {
+    const coords = proxyTrajectoryCoordsForReceptor(receptor, dx, dy, index);
+    const risk = pathPollutionRisk(coords, heatmapFeatures, stationFeatures);
+    return {
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: coords },
+      properties: {
+        endpoint: receptor.name,
+        receptor_name: receptor.name,
+        location_name: receptor.name,
+        trajectory_kind: "client_proxy_ensemble",
+        direction_label: label,
+        risk_score: Number(risk.toFixed(3)),
+        pollution_score: Number(risk.toFixed(3)),
+        style_color: risk >= 0.7 ? "#ef4444" : risk >= 0.5 ? "#f59e0b" : "#67e8f9",
+        derived_for_receptor: true,
+        source: "ui_proxy_when_backend_sparse",
+      },
+    };
+  });
+}
+
+function withMinimumTrajectoryEnsemble(features, receptor, heatmapFeatures = [], stationFeatures = []) {
+  if (!Number.isFinite(Number(receptor?.lon)) || !Number.isFinite(Number(receptor?.lat))) return features;
+  if (features.length > 0) return features;
+  const proxies = buildClientProxyTrajectories(receptor, heatmapFeatures, stationFeatures, 0);
+  return proxies.slice(0, MIN_TRAJECTORY_ENSEMBLE);
 }
 
 // Loc trajectory theo receptor hien tai, uu tien path that backend da chon san.
-function trajectoriesForReceptor(features, receptor = DEFAULT_RECEPTOR) {
-  const matched = latestTrajectoryGroup(features, receptor);
-  if (matched.length) return matched.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
-  const latest = latestTrajectoryGroup(features, DEFAULT_RECEPTOR);
-  return latest.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
+function trajectoriesForReceptor(features, receptor = DEFAULT_RECEPTOR, heatmapFeatures = [], stationFeatures = []) {
+  const allFeatures = features.slice(0, MAX_TRAJECTORY_RENDER);
+  const matched = allFeatures.filter((feature) => featureMatchesReceptor(feature, receptor));
+  if (matched.length) {
+    const selected = matched.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } }));
+    return withMinimumTrajectoryEnsemble(selected, receptor, heatmapFeatures, stationFeatures);
+  }
+  if (Number.isFinite(Number(receptor?.lon)) && Number.isFinite(Number(receptor?.lat))) {
+    const translated = allFeatures
+      .map((feature, index) => translateTrajectoryToReceptor(feature, receptor, index))
+      .filter(Boolean);
+    if (translated.length) return withMinimumTrajectoryEnsemble(translated, receptor, heatmapFeatures, stationFeatures);
+  }
+  return withMinimumTrajectoryEnsemble(
+    allFeatures.map((feature) => ({ ...feature, properties: { ...(feature.properties || {}), derived_for_receptor: false } })),
+    receptor,
+    heatmapFeatures,
+    stationFeatures,
+  );
 }
 
 // Tinh tien mot trajectory co san sang receptor moi ma van giu hinh dang duong di.
@@ -448,9 +528,22 @@ function translateTrajectoryToReceptor(feature, receptor, index = 0) {
       receptor_name: receptor.name,
       location_name: receptor.name,
       derived_for_receptor: true,
-      style_color: feature.properties?.style_color || ["#93c5fd", "#67e8f9", "#99f6e4", "#fde68a"][index % 4],
+      style_color: feature.properties?.style_color || ["#93c5fd", "#67e8f9", "#f59e0b", "#ef4444"][index % 4],
     },
   };
+}
+
+// Tinh mau trajectory tu risk_score, giu mau backend neu backend da tinh san.
+function trajectoryRiskColor(feature, index = 0) {
+  const props = feature?.properties || {};
+  if (props.style_color || props.color) return props.style_color || props.color;
+  const score = Number(props.risk_score ?? props.pollution_score ?? props.contribution_score);
+  if (Number.isFinite(score)) {
+    if (score >= 0.7) return "#ef4444";
+    if (score >= 0.5) return "#f59e0b";
+    return "#67e8f9";
+  }
+  return ["#93c5fd", "#67e8f9", "#f59e0b", "#ef4444"][index % 4];
 }
 
 // Chen them diem trung gian de duong trajectory ve ra muot hon khi phong to.
@@ -518,10 +611,6 @@ export default function MapCanvas({
   const rawStations = useMemo(() => layers.stations?.features || [], [layers.stations]);
   const plume = layers.plume?.features || [];
   const rawTrajectories = useMemo(() => layers.trajectories?.features || [], [layers.trajectories]);
-  const trajectories = useMemo(
-    () => (selectedReceptor ? trajectoriesForReceptor(rawTrajectories, selectedReceptor).map(densifyTrajectory) : []),
-    [rawTrajectories, selectedReceptor],
-  );
   const sources = layers.sources?.features || [];
   const stations = useMemo(
     () =>
@@ -530,6 +619,10 @@ export default function MapCanvas({
         return lonLat && inUrbanBbox(lonLat[0], lonLat[1], 0.02);
       }),
     [rawStations],
+  );
+  const trajectories = useMemo(
+    () => (selectedReceptor ? trajectoriesForReceptor(rawTrajectories, selectedReceptor, rawHeatmap, stations).map(densifyTrajectory) : []),
+    [rawHeatmap, rawTrajectories, selectedReceptor, stations],
   );
   const { cells, scale, usingFallback } = useMemo(
     () => buildPixelGrid(rawHeatmap, stations, BASE_GRID_COLS, BASE_GRID_ROWS),
@@ -700,12 +793,21 @@ export default function MapCanvas({
                 const end = coords.length ? coords[coords.length - 1] : null;
                 const endPoint = end ? project(end[0], end[1], width, height) : null;
                 if (!d) return null;
-                const color = feature.properties?.style_color || feature.properties?.color || "#e0f2fe";
+                const color = trajectoryRiskColor(feature, index);
+                const dense = trajectories.length > 40;
+                const veryDense = trajectories.length > 100;
                 return (
                   <g key={`traj-${index}`} onClick={() => onSelect({ ...feature, properties: { ...(feature.properties || {}), layer_name: "Backward trajectory" } })}>
                     <path className="trajectory-click-target" d={d} />
-                    <path className="trajectory-line" d={d} style={{ stroke: color }} markerEnd="url(#trajArrow)" />
-                    {endPoint && <circle className="trajectory-endpoint" cx={endPoint[0]} cy={endPoint[1]} r="5.5" />}
+                    <path className="trajectory-halo" d={d} />
+                    <path
+                      className="trajectory-line"
+                      d={d}
+                      style={{ stroke: color, strokeWidth: veryDense ? 1.1 : dense ? 1.6 : undefined, strokeOpacity: veryDense ? 0.58 : dense ? 0.72 : undefined }}
+                      markerEnd={veryDense ? undefined : "url(#trajArrow)"}
+                    />
+                    {!veryDense && <path className="trajectory-pulse" d={d} style={{ stroke: color, animationDelay: `${index * -0.18}s` }} />}
+                    {endPoint && <circle className="trajectory-endpoint" cx={endPoint[0]} cy={endPoint[1]} r={dense ? "3.4" : "5.5"} style={{ fill: color }} />}
                   </g>
                 );
               })}

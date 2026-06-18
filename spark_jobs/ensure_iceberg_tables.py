@@ -692,6 +692,7 @@ def ensure_tables(spark: SparkSession) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {TABLES["hysplit_traj_silver"]} (
             traj_id STRING,
+            location_id STRING,
             direction STRING,
             traj_no INT,
             year INT,
@@ -717,6 +718,7 @@ def ensure_tables(spark: SparkSession) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {TABLES["hysplit_cluster_silver"]} (
             traj_id STRING,
+            location_id STRING,
             cluster_id INT,
             direction STRING,
             age_h INT,

@@ -47,13 +47,19 @@ param(
     [ValidateSet("Static", "Refresh")][string]$HourlyContextMode = "Static",
     [switch]$EnableOnlineCron,
     [switch]$RunOnlineCycleNow,
+    [switch]$ForceOnlineBootstrapWhileStreaming,
+    [switch]$ForceAirflowStreamingSupervision,
     [switch]$SkipInitialRuntimeCleanup,
     [switch]$KeepFinishedBatchJobs = $true,
     [switch]$UseComposeCassandra = $true,
     [switch]$AllowTrajectoryDegraded = $true,
+    [bool]$UseHistoricalTrajectoryFallback = $true,
     [ValidateSet("Auto", "Require", "Refresh", "SnapshotOnly")][string]$BackfillCacheMode = "Auto",
     [switch]$ResetKafkaBackfillTopics,
-    [ValidateRange(1, 20)][int]$ResumeFromStep = 1
+    [switch]$EnableAirflow = $true,
+    [string]$RawRunLogPath = "logs/run_todo4_stack.raw.log",
+    [switch]$DisableRawRunLog,
+    [ValidateRange(1, 21)][int]$ResumeFromStep = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,7 +69,58 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Resolve-Path (Join-Path $scriptDir "..")
 Set-Location $rootDir
 
-# Khai bao class Step de gom state, cau hinh hoac hanh vi lien quan.
+$script:RunTodo4TranscriptStarted = $false
+if (-not $DisableRawRunLog) {
+    if ([string]::IsNullOrWhiteSpace($RawRunLogPath)) {
+        $RawRunLogPath = "logs/run_todo4_stack.raw.log"
+    }
+    $resolvedRawRunLogPath = if ([System.IO.Path]::IsPathRooted($RawRunLogPath)) {
+        $RawRunLogPath
+    }
+    else {
+        Join-Path $rootDir $RawRunLogPath
+    }
+
+    $rawRunLogStartedAt = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+    $rawRunLogExtension = [System.IO.Path]::GetExtension($resolvedRawRunLogPath)
+    $rawRunLogBase = if ([string]::IsNullOrWhiteSpace($rawRunLogExtension)) {
+        $resolvedRawRunLogPath
+    }
+    else {
+        $resolvedRawRunLogPath.Substring(0, $resolvedRawRunLogPath.Length - $rawRunLogExtension.Length)
+    }
+    $rawRunLogFallbackPath = if ([string]::IsNullOrWhiteSpace($rawRunLogExtension)) {
+        "$rawRunLogBase.$rawRunLogStartedAt"
+    }
+    else {
+        "$rawRunLogBase.$rawRunLogStartedAt$rawRunLogExtension"
+    }
+    $rawRunLogCandidates = @($resolvedRawRunLogPath, $rawRunLogFallbackPath)
+    $rawRunLogLastError = ""
+    foreach ($candidateRawRunLogPath in $rawRunLogCandidates) {
+        $rawRunLogDir = Split-Path -Parent $candidateRawRunLogPath
+        if (-not [string]::IsNullOrWhiteSpace($rawRunLogDir)) {
+            New-Item -ItemType Directory -Force -Path $rawRunLogDir | Out-Null
+        }
+        try {
+            Add-Content -LiteralPath $candidateRawRunLogPath -Encoding UTF8 -ErrorAction Stop -Value ("`n===== run_todo4_stack start {0} =====" -f (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"))
+            Start-Transcript -Path $candidateRawRunLogPath -Append -ErrorAction Stop | Out-Null
+            $script:RunTodo4TranscriptStarted = $true
+            $resolvedRawRunLogPath = $candidateRawRunLogPath
+            Write-Host "[INFO] Raw TODO4 log: $resolvedRawRunLogPath" -ForegroundColor Yellow
+            break
+        }
+        catch {
+            $rawRunLogLastError = $_.Exception.Message
+            Write-Host "[WARN] Could not use raw TODO4 log path ${candidateRawRunLogPath}: $rawRunLogLastError" -ForegroundColor Yellow
+        }
+    }
+    if (-not $script:RunTodo4TranscriptStarted) {
+        Write-Host "[WARN] Continuing without raw TODO4 transcript; last logging error: $rawRunLogLastError" -ForegroundColor Yellow
+    }
+}
+
+# Step wrapper with consistent logging and optional cleanup.
 function Step {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -83,7 +140,7 @@ function Step {
     }
 }
 
-# Khai bao class Require de gom state, cau hinh hoac hanh vi lien quan.
+# Fail fast when a required CLI tool is missing.
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$CommandName)
     if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
@@ -91,7 +148,7 @@ function Require-Command {
     }
 }
 
-# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
+# Resolve the requested historical and realtime date window.
 function Resolve-DateRange {
     $today = (Get-Date).Date
 
@@ -126,7 +183,7 @@ function Resolve-DateRange {
     }
 }
 
-# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
+# Run a Bash command and surface failures clearly.
 function Invoke-Bash {
     param([Parameter(Mandatory = $true)][string]$Command)
     & bash -lc $Command | Out-Host
@@ -135,7 +192,7 @@ function Invoke-Bash {
     }
 }
 
-# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
+# Run kubectl and stop on non-zero exit.
 function Invoke-Kubectl {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     & kubectl @Arguments | Out-Host
@@ -144,7 +201,7 @@ function Invoke-Kubectl {
     }
 }
 
-# Khai bao class Set de gom state, cau hinh hoac hanh vi lien quan.
+# Suspend or resume a Kubernetes CronJob.
 function Set-K8sCronJobSuspended {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -162,7 +219,7 @@ function Set-K8sCronJobSuspended {
     }
 }
 
-# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
+# Run docker compose and stop on non-zero exit.
 function Invoke-DockerCompose {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     & docker compose @Arguments | Out-Host
@@ -171,7 +228,7 @@ function Invoke-DockerCompose {
     }
 }
 
-# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
+# Check whether a host TCP port is already listening.
 function Test-HostPortInUse {
     param([Parameter(Mandatory = $true)][int]$Port)
 
@@ -179,7 +236,7 @@ function Test-HostPortInUse {
     return $connections.Count -gt 0
 }
 
-# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
+# Choose an HDFS host port, preferring an existing published one.
 function Resolve-HdfsHostPort {
     param([int]$RequestedPort = 0)
 
@@ -224,7 +281,7 @@ function Resolve-HdfsHostPort {
     throw "No free HDFS host port found. Tried: $($candidatePorts -join ', ')"
 }
 
-# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
+# Choose a free Spark master UI host port.
 function Resolve-SparkMasterUiHostPort {
     param([int]$RequestedPort = 0)
 
@@ -242,7 +299,7 @@ function Resolve-SparkMasterUiHostPort {
     throw "No free Spark Master UI host port found. Tried: $($candidatePorts -join ', ')"
 }
 
-# Khai bao class Patch de gom state, cau hinh hoac hanh vi lien quan.
+# Patch the runtime ConfigMap consumed by K8s workloads.
 function Patch-RuntimeConfig {
     param([Parameter(Mandatory = $true)][hashtable]$Data)
 
@@ -257,7 +314,7 @@ function Patch-RuntimeConfig {
     }
 }
 
-# Khai bao class Patch de gom state, cau hinh hoac hanh vi lien quan.
+# Point bridge Endpoints at the Docker host so K8s jobs can reach Compose HDFS.
 function Patch-ComposeBridgeEndpoints {
     param([Parameter(Mandatory = $true)][string]$HostAddress)
 
@@ -306,7 +363,7 @@ subsets:
     }
 }
 
-# Khai bao class Repair de gom state, cau hinh hoac hanh vi lien quan.
+# Repair the shared HDFS write path used by Spark-on-Kubernetes jobs.
 function Repair-HdfsWritePath {
     Write-Host "[WARN] Refreshing HDFS write path for Spark-on-Kubernetes." -ForegroundColor Yellow
     Invoke-DockerCompose @("up", "-d", "namenode", "datanode")
@@ -323,7 +380,7 @@ function Repair-HdfsWritePath {
     docker exec namenode hdfs dfs -fs hdfs://namenode:9000 -rm -f $probePath | Out-Host
 }
 
-# Khai bao class Wait de gom state, cau hinh hoac hanh vi lien quan.
+# Wait until the selected Compose services are healthy or running.
 function Wait-ComposeHealthy {
     param(
         [int]$TimeoutSeconds = 300,
@@ -366,7 +423,7 @@ function Wait-ComposeHealthy {
     throw "Timeout waiting for Docker Compose services to become healthy/running within ${TimeoutSeconds}s"
 }
 
-# Khai bao class Show de gom state, cau hinh hoac hanh vi lien quan.
+# Print Compose diagnostics for the requested services.
 function Show-ComposeDiagnostics {
     param([Parameter(Mandatory = $true)][string[]]$Services)
 
@@ -382,7 +439,7 @@ function Show-ComposeDiagnostics {
     }
 }
 
-# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
+# Detect the host bridge address reachable from the Kubernetes cluster.
 function Resolve-K8sHostAddress {
     param([string]$RequestedHost = "")
 
@@ -435,7 +492,7 @@ function Resolve-K8sHostAddress {
     return $resolved
 }
 
-# Khai bao class Replace de gom state, cau hinh hoac hanh vi lien quan.
+# Swap host.docker.internal with the resolved bridge IP for K8s consumers.
 function Replace-EndpointHost {
     param(
         [Parameter(Mandatory = $true)][string]$Endpoint,
@@ -444,7 +501,7 @@ function Replace-EndpointHost {
     return $Endpoint.Replace("host.docker.internal", $TargetHost)
 }
 
-# Khai bao class Remove de gom state, cau hinh hoac hanh vi lien quan.
+# Remove leftover HA HDFS containers that conflict with the single-node setup.
 function Remove-HdfsHaLeftovers {
     $haContainers = @(
         "zkfc1",
@@ -469,7 +526,7 @@ function Remove-HdfsHaLeftovers {
     }
 }
 
-# Khai bao class Clear de gom state, cau hinh hoac hanh vi lien quan.
+# Clear stale ZooKeeper broker registration before restarting Kafka.
 function Clear-KafkaBrokerRegistration {
     param([int]$BrokerId = 1)
 
@@ -491,7 +548,7 @@ function Clear-KafkaBrokerRegistration {
     }
 }
 
-# Khai bao class Ensure de gom state, cau hinh hoac hanh vi lien quan.
+# Ensure Cassandra is available either on Compose or Kubernetes.
 function Ensure-K8sCassandra {
     if ($UseComposeCassandra) {
         Write-Host "[INFO] UseComposeCassandra enabled; keeping Cassandra on Docker Compose." -ForegroundColor Yellow
@@ -507,17 +564,43 @@ function Ensure-K8sCassandra {
     Invoke-Kubectl @("wait", "--for=condition=ready", "pod/cassandra-0", "-n", "ais", "--timeout=${HealthWaitTimeoutSeconds}s")
 }
 
-# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
+# Start Compose Spark only for the legacy paths that still need spark-master.
+function Ensure-ComposeSparkInfra {
+    Write-Host "[INFO] Ensuring Compose Spark master/worker are running for Spark SQL or compose-mode jobs." -ForegroundColor Yellow
+    $env:SPARK_MASTER_UI_HOST_PORT = "$resolvedSparkMasterUiHostPort"
+    Invoke-DockerCompose @("up", "-d", "--build", "spark-master", "spark-worker")
+    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("spark-master", "spark-worker")
+}
+
+# Return whether the current TODO4 run needs the Compose Spark master/worker.
+function Test-NeedsComposeSparkInfra {
+    if ($UseComposeSparkForTodo1 -or $UseComposeRealtimeBronze) {
+        return $true
+    }
+
+    return $false
+}
+
+# Start the core Compose infrastructure required by TODO4.
 function Start-CoreInfra {
-    $volatileServices = @("kafka", "zookeeper", "namenode", "datanode", "spark-master", "spark-worker")
-    $recreateServices = @("namenode", "datanode", "spark-master", "spark-worker")
+    $composeSparkNeeded = Test-NeedsComposeSparkInfra
+    $volatileServices = @("kafka", "zookeeper", "namenode", "datanode")
+    $recreateServices = @("namenode", "datanode")
+    if ($composeSparkNeeded) {
+        $volatileServices += @("spark-master", "spark-worker")
+        $recreateServices += @("spark-master", "spark-worker")
+    }
 
     Write-Host "[INFO] Stopping volatile Compose services to clear stale DNS/Zookeeper sessions." -ForegroundColor Yellow
     Invoke-DockerCompose (@("stop") + $volatileServices)
+    if (-not $composeSparkNeeded) {
+        Write-Host "[INFO] Compose Spark is not needed for this K8s-first run; keeping spark-master/spark-worker stopped to save local RAM." -ForegroundColor Yellow
+        Invoke-NativeBestEffort -FilePath "docker" -Arguments @("compose", "stop", "spark-master", "spark-worker") -WarningMessage "Could not stop unused Compose Spark services; continuing." | Out-Null
+    }
     Remove-HdfsHaLeftovers
 
-    # Recreate HDFS/Spark containers so stale Docker DNS/network attachments do
-    # not survive between runs. HDFS data remains in named volumes.
+    # Recreate stateful client-facing services so stale Docker DNS/network
+    # attachments do not survive between runs. HDFS data remains in named volumes.
     Invoke-DockerCompose (@("rm", "-f") + $recreateServices)
 
     $env:HDFS_NAMENODE_HOST_PORT = "$resolvedHdfsHostPort"
@@ -531,8 +614,13 @@ function Start-CoreInfra {
     Clear-KafkaBrokerRegistration -BrokerId 1
     Invoke-DockerCompose @("up", "-d", "--build", "kafka")
     Invoke-DockerCompose @("up", "-d", "--build", "namenode", "datanode")
-    Invoke-DockerCompose @("up", "-d", "--build", "spark-master", "spark-worker")
-    $coreServices = @("zookeeper", "kafka", "namenode", "datanode", "spark-master", "spark-worker")
+    if ($composeSparkNeeded) {
+        Ensure-ComposeSparkInfra
+    }
+    $coreServices = @("zookeeper", "kafka", "namenode", "datanode")
+    if ($composeSparkNeeded) {
+        $coreServices += @("spark-master", "spark-worker")
+    }
     if ($UseComposeCassandra) {
         $coreServices += "cassandra"
     }
@@ -540,7 +628,7 @@ function Start-CoreInfra {
     Invoke-Bash "bash scripts/init_hdfs_layout.sh"
 }
 
-# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
+# Start the near-realtime source producers for Weather and OpenAQ.
 function Start-RealtimeNewData {
     $envNames = @(
         "WEATHER_WINDOW_MODE",
@@ -591,22 +679,12 @@ function Start-RealtimeNewData {
 
 }
 
-# Khai bao class Stop de gom state, cau hinh hoac hanh vi lien quan.
-function Stop-ComposeKafkaProducers {
-    $producerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest", "demo-realtime-feed")
-    Write-Host "[INFO] Stopping Compose Kafka producer services before historical catch-up." -ForegroundColor Yellow
-    Invoke-DockerCompose (@("stop") + $producerServices)
+# Keep the realtime source loop section isolated from the broader runtime helpers.
+function Start-RealtimeBronzeStreaming {
+    Start-RealtimeBronzeStreamingImpl
 }
 
-# Khai bao class Ensure de gom state, cau hinh hoac hanh vi lien quan.
-function Ensure-ComposeKafkaProducersDoNotAutoRestart {
-    $sourceProducerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest")
-    Write-Host "[INFO] Recreating source producer containers with restart=no and leaving them stopped." -ForegroundColor Yellow
-    Invoke-DockerCompose (@("up", "--no-start", "--force-recreate") + $sourceProducerServices)
-    Invoke-DockerCompose (@("stop") + $sourceProducerServices)
-}
-
-# Khai bao class Cleanup de gom state, cau hinh hoac hanh vi lien quan.
+# Clean up finished K8s compute jobs to keep the namespace readable.
 function Cleanup-FinishedK8sCompute {
     param(
         [int]$KeepNewestJobs = 8,
@@ -636,7 +714,7 @@ function Cleanup-FinishedK8sCompute {
     }
 }
 
-# Khai bao class Invoke de gom state, cau hinh hoac hanh vi lien quan.
+# Run a native command and continue on failure.
 function Invoke-NativeBestEffort {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
@@ -671,7 +749,7 @@ function Invoke-NativeBestEffort {
     }
 }
 
-# Khai bao class Stop de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Stop.
 function Stop-ExistingRuntimeWorkloads {
     Write-Host "[INFO] Stopping existing realtime/UI runtime workloads before TODO4 rerun." -ForegroundColor Yellow
 
@@ -747,7 +825,7 @@ function Stop-ExistingRuntimeWorkloads {
     }
 }
 
-# Khai bao class Reset de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Reset.
 function Reset-BackfillKafkaTopics {
     $topics = Get-BackfillKafkaTopics
     Write-Host ("[INFO] Resetting Kafka backfill topics: {0}" -f ($topics -join ", ")) -ForegroundColor Yellow
@@ -760,7 +838,7 @@ function Reset-BackfillKafkaTopics {
     Start-Sleep -Seconds 5
 }
 
-# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Test.
 function Test-ComposeSparkAppRunning {
     param([Parameter(Mandatory = $true)][string]$AppName)
 
@@ -774,13 +852,13 @@ function Test-ComposeSparkAppRunning {
     }
 }
 
-# Khai bao class ConvertTo de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: ConvertTo.
 function ConvertTo-K8sNameToken {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
     return ($Value.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
 }
 
-# Khai bao class Stop de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Stop.
 function Stop-ComposeSparkAppsByName {
     param([Parameter(Mandatory = $true)][string[]]$AppNames)
 
@@ -805,7 +883,7 @@ function Stop-ComposeSparkAppsByName {
     }
 }
 
-# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Test.
 function Test-K8sRealtimeStreamRunning {
     param([Parameter(Mandatory = $true)][string]$AppName)
 
@@ -832,7 +910,7 @@ function Test-K8sRealtimeStreamRunning {
     return $false
 }
 
-# Khai bao class Wait de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Wait.
 function Wait-K8sRealtimeDriverRunning {
     param(
         [Parameter(Mandatory = $true)][string]$AppName,
@@ -852,7 +930,7 @@ function Wait-K8sRealtimeDriverRunning {
     throw "Timed out waiting for K8s realtime Spark driver: $AppName"
 }
 
-# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Submit.
 function Submit-K8sRealtimeBronzeStream {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -895,7 +973,7 @@ function Submit-K8sRealtimeBronzeStream {
     Wait-K8sRealtimeDriverRunning -AppName $AppName
 }
 
-# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Submit.
 function Submit-ComposeRealtimeBronzeStream {
     param(
         [Parameter(Mandatory = $true)][string]$AppName,
@@ -964,8 +1042,8 @@ function Submit-ComposeRealtimeBronzeStream {
     Write-Host "[INFO] Submitted realtime Spark stream without bash: $AppName" -ForegroundColor Yellow
 }
 
-# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
-function Start-RealtimeBronzeStreaming {
+# Helper function: Start.
+function Start-RealtimeBronzeStreamingImpl {
     $runId = Get-Date -Format "yyyyMMddHHmmss"
     if (-not $UseComposeRealtimeBronze) {
         Write-Host "[INFO] Starting realtime Bronze streams on Kubernetes Spark pods." -ForegroundColor Yellow
@@ -1013,7 +1091,7 @@ function Start-RealtimeBronzeStreaming {
     }
 }
 
-# Khai bao class Ensure de gom state, cau hinh hoac hanh vi lien quan.
+# Ensure HDFS and Cassandra are ready for online serving jobs.
 function Ensure-OnlineServingInfra {
     Write-Host "[INFO] Ensuring Cassandra and HDFS are running for online serving." -ForegroundColor Yellow
     Ensure-K8sCassandra
@@ -1023,7 +1101,7 @@ function Ensure-OnlineServingInfra {
     Invoke-Bash "bash scripts/init_hdfs_layout.sh"
 }
 
-# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
+# Start the demo replay feed that turns historical rows into near-realtime batches.
 function Start-DemoRealtimeFeed {
     $envNames = @(
         "DEMO_FEED_MODE",
@@ -1068,12 +1146,217 @@ function Start-DemoRealtimeFeed {
     }
 }
 
-# Khai bao class Should de gom state, cau hinh hoac hanh vi lien quan.
+# Stop producer services before replaying or snapshotting Kafka topics.
+function Stop-ComposeKafkaProducers {
+    $producerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest", "demo-realtime-feed")
+    Write-Host "[INFO] Stopping Compose Kafka producer services before historical catch-up." -ForegroundColor Yellow
+    Invoke-DockerCompose (@("stop") + $producerServices)
+}
+
+# Keep Compose producer containers created but stopped between runs.
+function Ensure-ComposeKafkaProducersDoNotAutoRestart {
+    $sourceProducerServices = @("ingest", "openaq-ingest", "sentinel5p-ingest", "maiac-ingest")
+    Write-Host "[INFO] Recreating source producer containers with restart=no and leaving them stopped." -ForegroundColor Yellow
+    Invoke-DockerCompose (@("up", "--no-start", "--force-recreate") + $sourceProducerServices)
+    Invoke-DockerCompose (@("stop") + $sourceProducerServices)
+}
+
+# Wait until the Airflow webserver API is reachable on the host.
+function Wait-AirflowApiReady {
+    param([int]$TimeoutSeconds = 300)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $response = Invoke-WebRequest -Uri "http://localhost:8088/health" -Method Get -TimeoutSec 10 -UseBasicParsing
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
+                return
+            }
+        }
+        catch {
+            Start-Sleep -Seconds 5
+            continue
+        }
+
+        Start-Sleep -Seconds 5
+    }
+
+    Show-ComposeDiagnostics -Services @("airflow-postgres", "airflow-webserver", "airflow-scheduler", "airflow-triggerer")
+    throw "Timeout waiting for Airflow API to become ready on http://localhost:8088/health"
+}
+
+# Call the local Airflow REST API with admin basic auth.
+function Invoke-AirflowApi {
+    param(
+        [Parameter(Mandatory = $true)][string]$Method,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [object]$Body
+    )
+
+    $baseUri = "http://localhost:8088/api/v1"
+    $pair = "admin:admin"
+    $token = [Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($pair))
+    $headers = @{ Authorization = "Basic $token" }
+    $jsonBody = if ($null -eq $Body) { $null } else { $Body | ConvertTo-Json -Depth 8 -Compress }
+
+    try {
+        if ($null -eq $jsonBody) {
+            return Invoke-RestMethod -Method $Method -Uri ($baseUri + $Path) -Headers $headers -TimeoutSec 30
+        }
+
+        return Invoke-RestMethod -Method $Method -Uri ($baseUri + $Path) -Headers $headers -ContentType "application/json" -Body $jsonBody -TimeoutSec 30
+    }
+    catch {
+        $responseText = ""
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($stream) {
+                    $reader = [System.IO.StreamReader]::new($stream)
+                    $responseText = $reader.ReadToEnd()
+                    $reader.Dispose()
+                }
+            }
+            catch {
+                $responseText = ""
+            }
+        }
+        $suffix = if ([string]::IsNullOrWhiteSpace($responseText)) { "" } else { "`nResponse: $responseText" }
+        throw "Airflow API $Method $Path failed: $($_.Exception.Message)$suffix"
+    }
+}
+
+# Start Airflow services and wait until the control plane is healthy.
+function Start-AirflowControlPlane {
+    Write-Host "[INFO] Starting Airflow metadata DB and control-plane services." -ForegroundColor Yellow
+    Invoke-DockerCompose @("up", "-d", "--build", "airflow-postgres")
+    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("airflow-postgres")
+    Invoke-DockerCompose @("up", "--build", "airflow-init")
+    Invoke-DockerCompose @("up", "-d", "--force-recreate", "airflow-webserver", "airflow-scheduler", "airflow-triggerer")
+    Wait-ComposeHealthy -TimeoutSeconds $HealthWaitTimeoutSeconds -Services @("airflow-webserver", "airflow-scheduler", "airflow-triggerer")
+    Wait-AirflowApiReady -TimeoutSeconds $HealthWaitTimeoutSeconds
+}
+
+# Wait until a specific DAG is visible in the Airflow REST API.
+function Wait-AirflowDagAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string]$DagId,
+        [int]$TimeoutSeconds = 180
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            Invoke-AirflowApi -Method "GET" -Path "/dags/$DagId" | Out-Null
+            return
+        }
+        catch {
+            Start-Sleep -Seconds 5
+        }
+    }
+
+    throw "Airflow DAG was not loaded in time: $DagId"
+}
+
+# Unpause the requested Airflow DAG so scheduler/manual triggers can use it.
+function Enable-AirflowDag {
+    param([Parameter(Mandatory = $true)][string]$DagId)
+
+    Wait-AirflowDagAvailable -DagId $DagId
+    Invoke-AirflowApi -Method "PATCH" -Path "/dags/$DagId" -Body @{ is_paused = $false } | Out-Null
+    Write-Host "[INFO] Airflow DAG enabled: $DagId" -ForegroundColor Yellow
+}
+
+# Trigger an Airflow DAG run with an explicit run id and optional conf payload.
+function Trigger-AirflowDag {
+    param(
+        [Parameter(Mandatory = $true)][string]$DagId,
+        [string]$RunIdPrefix = "todo4",
+        [hashtable]$Conf = @{}
+    )
+
+    $dagRunId = "{0}_{1}_{2}" -f $RunIdPrefix, $DagId, (Get-Date -Format "yyyyMMddHHmmss")
+    Invoke-AirflowApi -Method "POST" -Path "/dags/$DagId/dagRuns" -Body @{
+        dag_run_id = $dagRunId
+        conf = $Conf
+    } | Out-Null
+    Write-Host "[INFO] Airflow DAG triggered: $DagId run_id=$dagRunId" -ForegroundColor Yellow
+}
+
+# Start Airflow and enable the runtime DAGs used after TODO4 bootstrap completes.
+function Start-AirflowRuntimeOrchestration {
+    Start-AirflowControlPlane
+
+    $runtimeDagIds = @(
+        "ais_batch_orchestration",
+        "ais_era5_ingestion",
+        "ais_hanoi_silver_gold",
+        "ais_pm25_k8s_compute",
+        "ais_visualization_product",
+        "ais_trajectory_tier2",
+        "ais_maiac_backfill",
+        "ais_maintenance"
+    )
+
+    foreach ($dagId in $runtimeDagIds) {
+        Enable-AirflowDag -DagId $dagId
+    }
+
+    $realtimeStreamingActive = Test-RealtimeBronzeStreamingActive
+    if ($realtimeStreamingActive -and -not $ForceAirflowStreamingSupervision) {
+        Write-Host "[WARN] Realtime Bronze streaming is already active; keeping Airflow DAG ais_streaming_supervision paused to avoid local duplicate stream restarts. Pass -ForceAirflowStreamingSupervision to let Airflow supervise streams immediately." -ForegroundColor Yellow
+    }
+    else {
+        Enable-AirflowDag -DagId "ais_streaming_supervision"
+        Trigger-AirflowDag -DagId "ais_streaming_supervision" -RunIdPrefix "todo4-supervision" -Conf @{
+            start_date = $resolvedStartDate
+            end_date = $resolvedEndDate
+            realtime_simulation_date = $realtimeSimulationDate
+        }
+    }
+}
+
+# Run one online feature + prediction cycle from the CronJob template to avoid a second heavy Spark-on-K8s bootstrap.
+function Start-OnlineFeatureBootstrapCycle {
+    $bootstrapJobName = "online-pm25-features-bootstrap-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    Invoke-Kubectl @("create", "job", "-n", "ais", "--from=cronjob/online-pm25-features", $bootstrapJobName)
+    Write-Host "[INFO] Started online bootstrap cycle job: $bootstrapJobName" -ForegroundColor Yellow
+    Invoke-Kubectl @("wait", "--for=condition=complete", "job/$bootstrapJobName", "-n", "ais", "--timeout=1800s")
+    Invoke-Kubectl @("logs", "job/$bootstrapJobName", "-n", "ais", "--all-containers=true", "--tail=300")
+}
+
+# Detect whether the realtime Bronze Spark streams are already active.
+function Test-RealtimeBronzeStreamingActive {
+    if ($UseComposeRealtimeBronze) {
+        if (Test-ComposeSparkAppRunning -AppName "OpenAQHourly_Streaming") {
+            return $true
+        }
+
+        if ($EnableWeatherRealtimeStream -and (Test-ComposeSparkAppRunning -AppName "WeatherHistory_Streaming")) {
+            return $true
+        }
+
+        return $false
+    }
+
+    if (Test-K8sRealtimeStreamRunning -AppName "OpenAQHourly_Streaming") {
+        return $true
+    }
+
+    if ($EnableWeatherRealtimeStream -and (Test-K8sRealtimeStreamRunning -AppName "WeatherHistory_Streaming")) {
+        return $true
+    }
+
+    return $false
+}
+
+# Return whether a numbered TODO4 step should run in the current resume mode.
 function Should-RunStep {
     param([int]$StepNumber)
     return $StepNumber -ge $ResumeFromStep
 }
-# Khai bao class Assert de gom state, cau hinh hoac hanh vi lien quan.
+
+# Verify that a Kafka topic contains at least the expected number of messages.
 function Assert-KafkaTopicHasMessages {
     param(
         [Parameter(Mandatory = $true)]
@@ -1144,12 +1427,12 @@ function Assert-KafkaTopicHasMessages {
     }
 }
 
-# Khai bao class Get de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Get.
 function Get-BackfillCacheDir {
     return Join-Path $rootDir ("cache/backfill/{0}_{1}" -f $resolvedStartDate, $resolvedEndDate)
 }
 
-# Khai bao class Get de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Get.
 function Get-BackfillKafkaTopics {
     return @(
         "openaq-hourly",
@@ -1160,7 +1443,7 @@ function Get-BackfillKafkaTopics {
     )
 }
 
-# Khai bao class Test de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Test.
 function Test-BackfillKafkaCache {
     param([Parameter(Mandatory = $true)][string]$CacheDir)
 
@@ -1183,7 +1466,7 @@ function Test-BackfillKafkaCache {
     return $true
 }
 
-# Khai bao class Restore de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Restore.
 function Restore-BackfillKafkaCache {
     param([Parameter(Mandatory = $true)][string]$CacheDir)
 
@@ -1199,7 +1482,7 @@ function Restore-BackfillKafkaCache {
     }
 }
 
-# Khai bao class Save de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Save.
 function Save-BackfillKafkaCache {
     param([Parameter(Mandatory = $true)][string]$CacheDir)
 
@@ -1256,7 +1539,7 @@ function Save-BackfillKafkaCache {
     [System.IO.File]::WriteAllText((Join-Path $CacheDir "manifest.json"), $manifest, $utf8NoBom)
 }
 
-# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Submit.
 function Submit-SparkK8s {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1288,7 +1571,7 @@ function Submit-SparkK8s {
     }
 }
 
-# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Submit.
 function Submit-SparkK8sBestEffort {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1305,7 +1588,7 @@ function Submit-SparkK8sBestEffort {
     }
 }
 
-# Khai bao class Start de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Start.
 function Start-SparkK8sAsync {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1325,7 +1608,7 @@ function Start-SparkK8sAsync {
     return $SubmitJobName
 }
 
-# Khai bao class Wait de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Wait.
 function Wait-K8sSubmitJobs {
     param(
         [Parameter(Mandatory = $true)][string[]]$JobNames,
@@ -1385,7 +1668,7 @@ function Wait-K8sSubmitJobs {
     }
 }
 
-# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Submit.
 function Submit-SparkCompose {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1393,6 +1676,7 @@ function Submit-SparkCompose {
         [switch]$NoDateRange
     )
 
+    Ensure-ComposeSparkInfra
     $dateEnv = ""
     if (-not $NoDateRange) {
         $dateEnv = "START_DATE='$resolvedStartDate' END_DATE='$resolvedEndDate' "
@@ -1400,7 +1684,7 @@ function Submit-SparkCompose {
     Invoke-Bash "${dateEnv}${ExtraEnv}FULL_REFRESH=1 bash scripts/submit_spark.sh $Job"
 }
 
-# Khai bao class Submit de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Submit.
 function Submit-Todo1Job {
     param(
         [Parameter(Mandatory = $true)][string]$Job,
@@ -1415,59 +1699,103 @@ function Submit-Todo1Job {
     }
 }
 
-# Khai bao class Promote de gom state, cau hinh hoac hanh vi lien quan.
+# Promote one horizon using a short-lived K8s job instead of Compose Spark.
+function Promote-LatestModelK8s {
+    param([Parameter(Mandatory = $true)][ValidateSet(6, 12, 24)][int]$Horizon)
+
+    $jobName = "pm25-promote-$Horizon-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    $manifest = @"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: $jobName
+  namespace: ais
+  labels:
+    app.kubernetes.io/name: pm25-promote
+    app.kubernetes.io/part-of: atmospheric-intelligence-system
+spec:
+  activeDeadlineSeconds: 900
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pm25-promote
+    spec:
+      serviceAccountName: ais-workload
+      restartPolicy: Never
+      containers:
+        - name: promote
+          image: ais-ml-runtime:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ais-runtime-config
+            - secretRef:
+                name: ais-runtime-secrets
+                optional: true
+          command: ["/opt/spark/bin/spark-submit"]
+          args:
+            - --master
+            - local[1]
+            - --deploy-mode
+            - client
+            - --conf
+            - spark.sql.shuffle.partitions=2
+            - --conf
+            - spark.default.parallelism=2
+            - --conf
+            - spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+            - --conf
+            - spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog
+            - --conf
+            - spark.sql.catalog.ais.type=hadoop
+            - --conf
+            - spark.sql.catalog.ais.warehouse=`$(ICEBERG_WAREHOUSE)
+            - --conf
+            - spark.hadoop.fs.defaultFS=`$(HDFS_NAMENODE)
+            - /opt/ais/ml/promote_hanoi_pm25_model.py
+            - --model-run-id
+            - latest
+            - --horizon-hour
+            - "$Horizon"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+"@
+
+    $manifest | kubectl apply -f - | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create promote job for horizon=$Horizon"
+    }
+    Invoke-Kubectl @("wait", "--for=condition=complete", "job/$jobName", "-n", "ais", "--timeout=900s")
+    Invoke-Kubectl @("logs", "job/$jobName", "-n", "ais", "--all-containers=true", "--tail=300")
+}
+
+# Helper function: Promote.
 function Promote-LatestModels {
     $horizons = @(6, 12, 24)
     foreach ($horizon in $horizons) {
-        $sql = "SELECT model_run_id FROM ais.models.hanoi_pm25_model_runs_gold WHERE horizon_hour=$horizon ORDER BY created_at DESC LIMIT 1;"
-        $result = docker exec spark-master /opt/spark/bin/spark-sql -S `
-            --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions `
-            --conf spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog `
-            --conf spark.sql.catalog.ais.type=hadoop `
-            --conf "spark.hadoop.fs.defaultFS=$composeHdfsNamenode" `
-            --conf "spark.sql.catalog.ais.warehouse=$composeIcebergWarehouse" `
-            -e $sql
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to query latest model_run_id for horizon=$horizon"
-        }
-
-        $runId = ($result `
-            | ForEach-Object { $_.ToString().Trim() } `
-            | Where-Object { $_ -and $_ -ne "model_run_id" } `
-            | Select-Object -First 1)
-
-        if ([string]::IsNullOrWhiteSpace($runId)) {
-            throw "No run_id found for horizon=$horizon"
-        }
-
-        Write-Host "[INFO] Promote run_id=$runId horizon=$horizon" -ForegroundColor Yellow
-        docker exec `
-            -e "HDFS_NAMENODE=$composeHdfsNamenode" `
-            -e "HDFS_DEFAULT_FS=$composeHdfsNamenode" `
-            -e "HADOOP_DEFAULT_FS=$composeHdfsNamenode" `
-            -e "ICEBERG_WAREHOUSE=$composeIcebergWarehouse" `
-            -e "MODEL_ARTIFACT_BASE_URI=$composeHdfsNamenode/models" `
-            spark-master /opt/spark/bin/spark-submit `
-            --master spark://spark-master:7077 `
-            --deploy-mode client `
-            --conf "spark.hadoop.fs.defaultFS=$composeHdfsNamenode" `
-            --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions `
-            --conf spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog `
-            --conf spark.sql.catalog.ais.type=hadoop `
-            --conf "spark.sql.catalog.ais.warehouse=$composeIcebergWarehouse" `
-            /opt/ml/promote_hanoi_pm25_model.py --model-run-id $runId --horizon-hour $horizon | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to promote model run_id=$runId horizon=$horizon"
-        }
+        Write-Host "[INFO] Promote latest model horizon=$horizon on Kubernetes" -ForegroundColor Yellow
+        Promote-LatestModelK8s -Horizon $horizon
     }
 }
 
-# Khai bao class Resolve de gom state, cau hinh hoac hanh vi lien quan.
+# Helper function: Resolve.
 function Resolve-VisualizationBaseTime {
     param(
         [Parameter(Mandatory = $true)][string]$RequestedEndDate,
         [Parameter(Mandatory = $true)][string]$RequestedBaseTime
     )
+
+    if (-not ($UseComposeSparkForTodo1 -or $UseComposeRealtimeBronze)) {
+        Write-Host "[INFO] Compose Spark is disabled for this K8s-first run; using requested visualization base time without Spark SQL probe." -ForegroundColor Yellow
+        return $RequestedBaseTime
+    }
 
     $sql = @"
 SELECT substr(cast(max(init_time) AS string), 1, 10) AS latest_date
@@ -1478,6 +1806,7 @@ WHERE direction = 'backward'
 "@
 
     try {
+        Ensure-ComposeSparkInfra
         $result = docker exec spark-master /opt/spark/bin/spark-sql -S `
             --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions `
             --conf spark.sql.catalog.ais=org.apache.iceberg.spark.SparkCatalog `
@@ -1554,6 +1883,7 @@ if ($UseLegacyPerJobSpark) {
 elseif ($UseCombinedPipelines) {
     $combinedMode = $true
 }
+$resumeMode = $ResumeFromStep -gt 1
 
 Write-Host "TODO4 requested window: $resolvedStartDate -> $realtimeSimulationDate"
 Write-Host "Historical batch range: $resolvedStartDate -> $historicalBackfillEndDate"
@@ -1562,6 +1892,7 @@ Write-Host "Simulated current time: $simulatedBaseTime (date=realtime simulation
 Write-Host "Simulated feature base hour: $simulatedBaseHour (hourly feature/prediction key)"
 Write-Host "Default demo window: StartDate=$StartDate EndDate=$EndDate. LookbackDays is used only when you pass an empty StartDate/EndDate."
 Write-Host "Resume from step: $ResumeFromStep"
+Write-Host ("Resume mode cleanup policy: {0}" -f $(if ($resumeMode) { "preserve existing pods/jobs; skip initial destructive cleanup" } else { "fresh run cleanup enabled unless -SkipInitialRuntimeCleanup" })) -ForegroundColor Yellow
 Write-Host "Backfill cache mode: $BackfillCacheMode path=$(Get-BackfillCacheDir)"
 Write-Host ("Finished batch cleanup: {0}" -f $(if ($KeepFinishedBatchJobs) { "disabled by default; keeping completed/failed K8s jobs visible for demo" } else { "enabled; deleting completed/failed K8s jobs after each step" })) -ForegroundColor Yellow
 Write-Host "Hourly context mode: $HourlyContextMode static_hour=$staticHourlyContextHour"
@@ -1572,14 +1903,20 @@ Write-Host ("Online inference feature source: {0}" -f $(if ($onlineServingEnable
 Write-Host ("New-data realtime loop: {0}" -f $(if ($SkipRealtimeNewData) { "disabled" } else { "weather/openaq poll=${RealtimePollSeconds}s lookback=${RealtimeLookbackMinutes}m bronze_trigger='$RealtimeProcessingTime'" })) -ForegroundColor Yellow
 Write-Host ("Demo near-realtime feed: {0}" -f $(if ($SkipDemoRealtimeFeed) { "disabled" } else { "enabled sources=$DemoFeedSources step=${DemoFeedStepMinutes}m ticks=$DemoFeedMaxBatches interval=${DemoFeedBatchIntervalSeconds}s noise=$DemoFeedNoiseRatio" })) -ForegroundColor Yellow
 Write-Host ("Realtime online feature loop: enabled interval=${OnlineFeatureIntervalSeconds}s lookback=${OnlineFeatureLookbackHours}h prediction_interval=${RealtimePredictionIntervalSeconds}s") -ForegroundColor Yellow
+Write-Host ("Concurrent online bootstrap while streaming: {0}" -f $(if ($ForceOnlineBootstrapWhileStreaming) { "forced" } else { "guarded for local stability" })) -ForegroundColor Yellow
+Write-Host ("Airflow streaming supervision while local streams are active: {0}" -f $(if ($ForceAirflowStreamingSupervision) { "forced" } else { "guarded for local stability" })) -ForegroundColor Yellow
+Write-Host ("Airflow control plane: {0}" -f $(if ($EnableAirflow) { "enabled" } else { "disabled" })) -ForegroundColor Yellow
 Write-Host "K8s host bridge: $k8sHostBridge" -ForegroundColor Yellow
 Write-Host "K8s Kafka bootstrap: $K8sKafkaBootstrapServers" -ForegroundColor Yellow
 Write-Host "K8s Cassandra endpoint: ${k8sCassandraHost}:9042" -ForegroundColor Yellow
 Write-Host "HDFS host endpoint: $k8sHdfsNamenode" -ForegroundColor Yellow
 Write-Host "HDFS topology: single Compose NameNode + DataNode" -ForegroundColor Yellow
-Write-Host "Spark Master UI host endpoint: http://localhost:$resolvedSparkMasterUiHostPort" -ForegroundColor Yellow
+Write-Host ("Compose Spark master/worker: {0}" -f $(if (Test-NeedsComposeSparkInfra) { "enabled on demand at http://localhost:$resolvedSparkMasterUiHostPort" } else { "stopped by default for K8s-first run" })) -ForegroundColor Yellow
 
-if (-not $SkipInitialRuntimeCleanup) {
+if ($resumeMode) {
+    Write-Host "[INFO] Resume mode detected; preserving existing pods/jobs and skipping initial runtime cleanup." -ForegroundColor Yellow
+}
+elseif (-not $SkipInitialRuntimeCleanup) {
     Stop-ExistingRuntimeWorkloads
 }
 else {
@@ -1896,14 +2233,16 @@ else { Write-Host "[SKIP] Step 12 due to -ResumeFromStep $ResumeFromStep" -Foreg
 if (-not $SkipVisualization) {
     if (Should-RunStep 13) {
         Step "13) TODO4 visualization gold tables" {
-            $visEnv = "VIS_MAX_TRAJECTORIES=$TrajectoryMaxPaths VIS_MAX_POINTS_PER_TRAJECTORY=$TrajectoryMaxPoints VIS_MAX_GEOJSON_FEATURES=$VisMaxGeoJsonFeatures "
+            $trajectoryFallbackFlag = if ($UseHistoricalTrajectoryFallback) { "true" } else { "false" }
+            $visEnv = "VIS_MAX_TRAJECTORIES=$TrajectoryMaxPaths VIS_MAX_POINTS_PER_TRAJECTORY=$TrajectoryMaxPoints VIS_MAX_GEOJSON_FEATURES=$VisMaxGeoJsonFeatures VIS_TRAJECTORY_HISTORICAL_FALLBACK='$trajectoryFallbackFlag' "
             Write-Host ("[INFO] Visualization limits max_paths={0} max_points={1} max_geojson_features={2}" -f $TrajectoryMaxPaths, $TrajectoryMaxPoints, $VisMaxGeoJsonFeatures) -ForegroundColor Yellow
+            Write-Host ("[INFO] Visualization historical trajectory fallback={0}" -f $trajectoryFallbackFlag) -ForegroundColor Yellow
             if ($combinedMode) {
                 if ($AllowTrajectoryDegraded) {
                     $coreBaseTime = $simulatedBaseTime
                     $coreBaseDate = $resolvedEndDate
                     Write-Host "[INFO] Visualization core BASE_TIME=$coreBaseTime" -ForegroundColor Yellow
-                    Submit-SparkK8s "visualization-pipeline" ($visEnv + "START_DATE='$coreBaseDate' END_DATE='$coreBaseDate' BASE_TIME='$coreBaseTime' PIPELINE_LAYERS='heatmap,source_attribution,stations,forecast,timeseries' EXPORT_CACHE=true ")
+                    Submit-SparkK8s "visualization-pipeline" ($visEnv + "START_DATE='$coreBaseDate' END_DATE='$coreBaseDate' BASE_TIME='$coreBaseTime' PIPELINE_LAYERS='heatmap,source_attribution,stations,forecast,timeseries' EXPORT_CACHE=false ")
 
                     $trajBaseTime = Resolve-VisualizationBaseTime -RequestedEndDate $resolvedEndDate -RequestedBaseTime $simulatedBaseTime
                     $trajBaseDate = $trajBaseTime.Substring(0, 10)
@@ -1912,6 +2251,7 @@ if (-not $SkipVisualization) {
                     if ($IncludeForwardTrajectory) {
                         Submit-SparkK8sBestEffort "visualization-pipeline" ($visEnv + "START_DATE='$coreBaseDate' END_DATE='$coreBaseDate' BASE_TIME='$coreBaseTime' PIPELINE_LAYERS='forward_plume' EXPORT_CACHE=false ") | Out-Null
                     }
+                    Submit-SparkK8s "visualization-export-cache" ($visEnv + "START_DATE='$coreBaseDate' END_DATE='$coreBaseDate' BASE_TIME='$coreBaseTime' ")
                 }
                 else {
                     $baseTime = Resolve-VisualizationBaseTime -RequestedEndDate $resolvedEndDate -RequestedBaseTime $simulatedBaseTime
@@ -1954,6 +2294,7 @@ if (Should-RunStep 15) {
             Write-Host "[INFO] Online serving enabled; latest forecast will be produced after realtime feature_state." -ForegroundColor Yellow
         }
         else {
+            Ensure-ComposeSparkInfra
             $verifySql = @'
 SELECT location_id, base_hour, created_at, pm25_6h, pm25_12h, pm25_24h, model_version_6h, model_version_12h, model_version_24h
 FROM ais.predictions.hanoi_pm25_forecast_gold
@@ -2027,9 +2368,21 @@ else {
     Write-Host "[INFO] Skip demo interpolated near-realtime feed due to -SkipDemoRealtimeFeed"
 }
 
+if ($EnableAirflow) {
+    if (Should-RunStep 21) {
+        Step "21) Start Airflow control plane and enable runtime DAGs" {
+            Start-AirflowRuntimeOrchestration
+        }
+    }
+    else { Write-Host "[SKIP] Step 21 due to -ResumeFromStep $ResumeFromStep" -ForegroundColor Yellow }
+}
+else {
+    Write-Host "[INFO] Skip Airflow control plane due to -EnableAirflow:`$false"
+}
+
 if ($onlineServingEnabled) {
     if (Should-RunStep 20) {
-        Step "20) Bootstrap asynchronous online feature and prediction cycle" {
+        Step "20) Build online feature state and run realtime prediction" {
             Write-Host ("[INFO] current base_time={0} online_feature_interval={1}s prediction_interval={2}s" -f $simulatedBaseTime, $OnlineFeatureIntervalSeconds, $RealtimePredictionIntervalSeconds) -ForegroundColor Yellow
             Ensure-OnlineServingInfra
             Invoke-Bash "bash scripts/ensure_cassandra_online_schema.sh"
@@ -2053,13 +2406,30 @@ if ($onlineServingEnabled) {
             kubectl apply -f deploy/k8s/ml/pm25-predict-cronjob.yaml | Out-Host
             Set-K8sCronJobSuspended -Name "pm25-predict" -Suspended $true
             Set-K8sCronJobSuspended -Name "online-pm25-features" -Suspended (-not $EnableOnlineCron)
+            $realtimeStreamingActive = Test-RealtimeBronzeStreamingActive
+            if ($realtimeStreamingActive -and -not $ForceOnlineBootstrapWhileStreaming) {
+                Write-Host "[WARN] Realtime Bronze streaming is active; skip immediate online bootstrap to avoid overloading local Docker. Re-run step 20 with -ForceOnlineBootstrapWhileStreaming after the host is stable if you need it immediately." -ForegroundColor Yellow
+            }
+            else {
+                Start-OnlineFeatureBootstrapCycle
+            }
             if ($RunOnlineCycleNow) {
-                $manualJobName = "online-pm25-features-manual-$(Get-Date -Format 'yyyyMMddHHmmss')"
-                Invoke-Kubectl @("create", "job", "-n", "ais", "--from=cronjob/online-pm25-features", $manualJobName)
-                Write-Host "[INFO] Started one manual online cycle job: $manualJobName" -ForegroundColor Yellow
+                if ($realtimeStreamingActive -and -not $ForceOnlineBootstrapWhileStreaming) {
+                    Write-Host "[WARN] Skip manual online cycle because realtime Bronze streaming is already active. Pass -ForceOnlineBootstrapWhileStreaming to override this local safety guard." -ForegroundColor Yellow
+                }
+                else {
+                    $manualJobName = "online-pm25-features-manual-$(Get-Date -Format 'yyyyMMddHHmmss')"
+                    Invoke-Kubectl @("create", "job", "-n", "ais", "--from=cronjob/online-pm25-features", $manualJobName)
+                    Write-Host "[INFO] Started one manual online cycle job: $manualJobName" -ForegroundColor Yellow
+                }
             }
             if ($EnableOnlineCron) {
-                Write-Host "[INFO] Online feature+prediction cron enabled. pm25-predict remains suspended because prediction is already run inside online-pm25-features." -ForegroundColor Yellow
+                if ($realtimeStreamingActive -and -not $ForceOnlineBootstrapWhileStreaming) {
+                    Write-Host "[WARN] Online feature+prediction cron enabled while realtime Bronze streaming is active. The cron stays installed, but the immediate bootstrap was skipped for local stability." -ForegroundColor Yellow
+                }
+                else {
+                    Write-Host "[INFO] Online feature+prediction cron enabled. pm25-predict remains suspended because prediction is already run inside online-pm25-features." -ForegroundColor Yellow
+                }
             }
             else {
                 Write-Host "[INFO] Online cronjobs installed suspended; pass -RunOnlineCycleNow for one update or -EnableOnlineCron for scheduled updates." -ForegroundColor Yellow
@@ -2080,3 +2450,11 @@ Write-Host ""
 Write-Host "TODO4 stack run completed." -ForegroundColor Green
 Write-Host "Historical batch range: $resolvedStartDate -> $historicalBackfillEndDate"
 Write-Host "Realtime simulation date: $realtimeSimulationDate"
+if ($script:RunTodo4TranscriptStarted) {
+    try {
+        Stop-Transcript | Out-Null
+    }
+    catch {
+        Write-Host "[WARN] Could not stop raw TODO4 transcript cleanly: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}

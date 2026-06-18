@@ -538,7 +538,6 @@ def write_prediction(spark: SparkSession, table: str, row: dict[str, Any]) -> No
     spark.createDataFrame([row], schema=schema).createOrReplaceTempView("prediction_src")
     spark.sql(
         f"""
-        # Dung MERGE de upsert vao bang dich ma khong mat ban ghi cu.
         MERGE INTO {table} t
         USING prediction_src s
         ON t.prediction_id = s.prediction_id

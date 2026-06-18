@@ -1,4 +1,4 @@
-# File nay: DAG Airflow dieu phoi ingest, Spark, ML, visualization hoac maintenance.
+# Airflow DAG supervising long-running streaming jobs and lag/health checks.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
